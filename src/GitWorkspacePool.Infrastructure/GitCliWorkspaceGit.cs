@@ -4,8 +4,12 @@ using GitWorkspacePool.Core.Application;
 
 namespace GitWorkspacePool.Infrastructure;
 
+/// <summary>
+/// Runs bounded Git CLI commands without shell expansion.
+/// </summary>
 public sealed class GitCliWorkspaceGit : IWorkspaceGit
 {
+    /// <inheritdoc/>
     public async Task<bool> IsRegisteredWorktreeAsync(
         string repositoryPath,
         string workspacePath,
@@ -32,6 +36,7 @@ public sealed class GitCliWorkspaceGit : IWorkspaceGit
             );
     }
 
+    /// <inheritdoc/>
     public async Task FetchPullRequestAsync(
         string repositoryPath,
         int pullRequestNumber,
@@ -40,21 +45,60 @@ public sealed class GitCliWorkspaceGit : IWorkspaceGit
     {
         await RunAsync(
             repositoryPath,
-            ["fetch", "--no-tags", "origin", $"refs/pull/{pullRequestNumber}/head:refs/git-workspace-pool/pr/{pullRequestNumber}"],
+            [
+                "fetch",
+                "--no-tags",
+                "origin",
+                $"refs/pull/{pullRequestNumber}/head:refs/git-workspace-pool/pr/{pullRequestNumber}",
+            ],
             cancellationToken
         );
     }
 
+    /// <inheritdoc/>
+    public async Task<string> GetPullRequestCommitAsync(
+        string repositoryPath,
+        int pullRequestNumber,
+        CancellationToken cancellationToken
+    )
+    {
+        string output = await RunAsync(
+            repositoryPath,
+            [
+                "rev-parse",
+                "--verify",
+                $"refs/git-workspace-pool/pr/{pullRequestNumber}^{{commit}}",
+            ],
+            cancellationToken
+        );
+        return output.Trim();
+    }
+
+    /// <inheritdoc/>
+    public async Task<string> GetWorktreeCommitAsync(
+        string workspacePath,
+        CancellationToken cancellationToken
+    )
+    {
+        string output = await RunAsync(
+            workspacePath,
+            ["rev-parse", "--verify", "HEAD^{commit}"],
+            cancellationToken
+        );
+        return output.Trim();
+    }
+
+    /// <inheritdoc/>
     public async Task CreateWorktreeAsync(
         string repositoryPath,
         string workspacePath,
-        int pullRequestNumber,
+        string commitSha,
         CancellationToken cancellationToken
     )
     {
         await RunAsync(
             repositoryPath,
-            ["worktree", "add", "--detach", workspacePath, $"refs/git-workspace-pool/pr/{pullRequestNumber}"],
+            ["worktree", "add", "--detach", workspacePath, commitSha],
             cancellationToken
         );
     }

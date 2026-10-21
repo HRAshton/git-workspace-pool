@@ -6,12 +6,12 @@ namespace GitWorkspacePool.Core.Application;
 public interface IWorkspaceGit
 {
     /// <summary>
-    /// Checks whether Git identifies the requested path as a registered worktree.
+    /// Checks whether Git identifies a path as a registered worktree.
     /// </summary>
-    /// <param name="repositoryPath">The configured source clone.</param>
-    /// <param name="workspacePath">The path to inspect.</param>
-    /// <param name="cancellationToken">Cancellation requested by the user.</param>
-    /// <returns>True if Git reports the worktree.</returns>
+    /// <param name="repositoryPath">The trusted source clone.</param>
+    /// <param name="workspacePath">The target worktree path.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Whether the worktree is registered.</returns>
     Task<bool> IsRegisteredWorktreeAsync(
         string repositoryPath,
         string workspacePath,
@@ -19,12 +19,11 @@ public interface IWorkspaceGit
     );
 
     /// <summary>
-    /// Fetches only the specified pull request head into a dedicated local ref.
+    /// Fetches a specific PR head to an internal Git ref.
     /// </summary>
-    /// <param name="repositoryPath">The configured source clone.</param>
-    /// <param name="pullRequestNumber">The pull request number.</param>
-    /// <param name="cancellationToken">Cancellation requested by the user.</param>
-    /// <returns>The asynchronous fetch operation.</returns>
+    /// <param name="repositoryPath">The trusted source clone.</param>
+    /// <param name="pullRequestNumber">The PR number.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
     Task FetchPullRequestAsync(
         string repositoryPath,
         int pullRequestNumber,
@@ -32,17 +31,37 @@ public interface IWorkspaceGit
     );
 
     /// <summary>
-    /// Creates a detached worktree at the requested location from its dedicated local PR ref.
+    /// Returns the full commit ID of the fetched PR head.
     /// </summary>
-    /// <param name="repositoryPath">The configured source clone.</param>
-    /// <param name="workspacePath">The new managed workspace location.</param>
-    /// <param name="pullRequestNumber">The pull request number.</param>
-    /// <param name="cancellationToken">Cancellation requested by the user.</param>
-    /// <returns>The asynchronous worktree creation operation.</returns>
+    /// <param name="repositoryPath">The trusted source clone.</param>
+    /// <param name="pullRequestNumber">The PR number.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The fetched immutable commit ID.</returns>
+    Task<string> GetPullRequestCommitAsync(
+        string repositoryPath,
+        int pullRequestNumber,
+        CancellationToken cancellationToken
+    );
+
+    /// <summary>
+    /// Gets the full checked-out commit ID for safe recovery reconciliation.
+    /// </summary>
+    /// <param name="workspacePath">The registered worktree.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The checked-out commit ID.</returns>
+    Task<string> GetWorktreeCommitAsync(string workspacePath, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Creates a detached worktree from an immutable pinned commit ID.
+    /// </summary>
+    /// <param name="repositoryPath">The trusted source clone.</param>
+    /// <param name="workspacePath">The free workspace path.</param>
+    /// <param name="commitSha">The full commit ID already persisted to the journal.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
     Task CreateWorktreeAsync(
         string repositoryPath,
         string workspacePath,
-        int pullRequestNumber,
+        string commitSha,
         CancellationToken cancellationToken
     );
 }

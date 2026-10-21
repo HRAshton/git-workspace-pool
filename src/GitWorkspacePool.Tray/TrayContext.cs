@@ -31,11 +31,17 @@ internal sealed class TrayContext : ApplicationContext
             Visible = true,
         };
 
+        string stateRoot = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "GitWorkspacePool"
+        );
         _open = new OpenPullRequestHandler(
             new SettingsStore(),
             new GitCliWorkspaceGit(),
             new WorkspaceDirectories(),
-            new VsCodeLauncher()
+            new VsCodeLauncher(),
+            new SqliteWorkspaceSessionJournal(Path.Combine(stateRoot, "sessions.db")),
+            new FileWorkspaceOperationLock(Path.Combine(stateRoot, "locks"))
         );
 
         _ = ListenAsync(_shutdown.Token);
