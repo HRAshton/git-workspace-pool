@@ -8,12 +8,12 @@ namespace GitWorkspacePool.Infrastructure;
 /// </summary>
 public sealed class GitHubOriginVerifier : IRepositoryOriginVerifier
 {
-    private readonly IWorkspaceGit _git;
+    private readonly IGitRemoteReader _git;
 
     /// <summary>
     /// Initializes the verifier using the Git operations boundary.
     /// </summary>
-    public GitHubOriginVerifier(IWorkspaceGit git)
+    public GitHubOriginVerifier(IGitRemoteReader git)
     {
         _git = git;
     }

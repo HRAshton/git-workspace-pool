@@ -19,14 +19,6 @@ public interface IWorkspaceGit
     );
 
     /// <summary>
-    /// Resolves the configured clone's origin URL, including Git URL rewrites.
-    /// </summary>
-    /// <param name="repositoryPath">The configured clone.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The resolved origin URL.</returns>
-    Task<string> GetOriginUrlAsync(string repositoryPath, CancellationToken cancellationToken);
-
-    /// <summary>
     /// Fetches a specific PR head to an internal Git ref.
     /// </summary>
     /// <param name="repositoryPath">The trusted source clone.</param>

@@ -7,7 +7,7 @@ namespace GitWorkspacePool.Infrastructure;
 /// <summary>
 /// Runs bounded Git CLI commands without shell expansion.
 /// </summary>
-public sealed class GitCliWorkspaceGit : IWorkspaceGit
+public sealed class GitCliWorkspaceGit : IWorkspaceGit, IGitRemoteReader
 {
     /// <inheritdoc/>
     public async Task<bool> IsRegisteredWorktreeAsync(
