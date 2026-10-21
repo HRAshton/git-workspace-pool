@@ -103,9 +103,3 @@ internal sealed class SettingsStore : IRepositoryCatalog
     }
 }
 
-internal sealed class AppSettings
-{
-    public List<RepositoryRegistration> Repositories { get; set; } = [];
-
-    public string? EditorExecutable { get; set; }
-}

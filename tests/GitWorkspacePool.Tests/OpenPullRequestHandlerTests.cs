@@ -77,8 +77,9 @@ public sealed class OpenPullRequestHandlerTests
 
     private sealed class Fixture
     {
-        public readonly FakeGit Git = new();
-        public readonly FakeEditor Editor = new();
+        public FakeGit Git { get; } = new();
+
+        public FakeEditor Editor { get; } = new();
 
         public Fixture()
         {
@@ -110,13 +111,15 @@ public sealed class OpenPullRequestHandlerTests
 
     private sealed class FakeCatalog(RepositoryRegistration registration) : IRepositoryCatalog
     {
-        public RepositoryRegistration? Find(PullRequestReference request) =>
-            request.RepositoryKey.Equals(
+        public RepositoryRegistration? Find(PullRequestReference request)
+        {
+            return request.RepositoryKey.Equals(
                 registration.RepositoryKey,
                 StringComparison.OrdinalIgnoreCase
             )
                 ? registration
                 : null;
+        }
     }
 
     private sealed class FakeGit : IWorkspaceGit
@@ -127,13 +130,13 @@ public sealed class OpenPullRequestHandlerTests
 
         public int LastFetchedPull { get; private set; }
 
+        public bool Registered { get; set; }
+
         public Task<bool> IsRegisteredWorktreeAsync(
             string repositoryPath,
             string workspacePath,
             CancellationToken cancellationToken
         ) => Task.FromResult(Registered);
-
-        public bool Registered { get; set; }
 
         public Task FetchPullRequestAsync(
             string repositoryPath,

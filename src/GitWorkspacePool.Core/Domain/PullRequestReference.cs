@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 
 namespace GitWorkspacePool.Core.Domain;
@@ -18,7 +19,7 @@ public sealed record PullRequestReference(string Provider, string Owner, string 
     /// <param name="value">The untrusted URL supplied by the browser.</param>
     /// <param name="reference">The parsed pull request, if accepted.</param>
     /// <returns>Whether the URL identifies a supported pull request.</returns>
-    public static bool TryParse(string? value, out PullRequestReference? reference)
+    public static bool TryParse(string? value, [NotNullWhen(true)] out PullRequestReference? reference)
     {
         reference = null;
 

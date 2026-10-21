@@ -10,14 +10,17 @@ internal sealed class VsCodeLauncher : IEditorLauncher
         cancellationToken.ThrowIfCancellationRequested();
 
         string? configured = SettingsStore.Read().EditorExecutable;
-        string executable = !string.IsNullOrWhiteSpace(configured)
-            ? configured
-            : Path.Combine(
+        string executable = configured ?? string.Empty;
+
+        if (string.IsNullOrWhiteSpace(executable))
+        {
+            executable = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "Programs",
                 "Microsoft VS Code",
                 "Code.exe"
             );
+        }
 
         if (!File.Exists(executable))
         {

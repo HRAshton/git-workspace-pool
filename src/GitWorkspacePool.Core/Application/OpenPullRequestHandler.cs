@@ -37,7 +37,7 @@ public sealed class OpenPullRequestHandler
         CancellationToken cancellationToken
     )
     {
-        if (!PullRequestReference.TryParse(requestUrl, out PullRequestReference? request))
+        if (!PullRequestReference.TryParse(requestUrl, out PullRequestReference? request) || request is null)
         {
             throw new ArgumentException("Unsupported pull request URL.", nameof(requestUrl));
         }
@@ -99,9 +99,3 @@ public sealed class OpenPullRequestHandler
     }
 }
 
-/// <summary>
-/// Result of opening a pull request workspace.
-/// </summary>
-/// <param name="WorkspacePath">The local worktree directory.</param>
-/// <param name="Reused">Whether an existing worktree was reopened unchanged.</param>
-public sealed record OpenPullRequestResult(string WorkspacePath, bool Reused);
