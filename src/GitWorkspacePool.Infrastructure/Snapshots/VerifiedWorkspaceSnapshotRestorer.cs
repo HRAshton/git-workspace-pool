@@ -13,6 +13,7 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
 {
     private readonly string _recoveryRoot;
     private readonly IWorkspaceGit _git;
+    private readonly IWorkspaceRestoreJournal _restoreJournal;
     private readonly GitWorktreeSnapshotScanner _scanner;
     private readonly ISnapshotCheckpointSink? _checkpoints;
 
@@ -23,12 +24,14 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
         string recoveryRoot,
         IWorkspaceGit git,
         GitWorktreeSnapshotScanner scanner,
+        IWorkspaceRestoreJournal restoreJournal,
         ISnapshotCheckpointSink? checkpoints = null
     )
     {
         _recoveryRoot = Path.GetFullPath(recoveryRoot);
         _git = git;
         _scanner = scanner;
+        _restoreJournal = restoreJournal;
         _checkpoints = checkpoints;
     }
 
@@ -175,10 +178,10 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
             throw new InvalidOperationException("Snapshot journal counters do not match its payload.");
         }
 
-        Directory.CreateDirectory(_recoveryRoot);
+        Guid restoreId = Guid.NewGuid();
         string target = Path.Combine(
             _recoveryRoot,
-            "restore-" + receipt.SnapshotId.ToString("N") + "-" + Guid.NewGuid().ToString("N")
+            "restore-" + receipt.SnapshotId.ToString("N") + "-" + restoreId.ToString("N")
         );
 
         if (Directory.Exists(target) || File.Exists(target))
@@ -186,8 +189,15 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
             throw new InvalidOperationException("The recovery destination is already occupied.");
         }
 
-        // The destination name is app-generated and never comes from a browser or manifest.
-        // A failed restoration intentionally remains isolated for manual inspection.
+        // Persist intent before Git can create or partially create its worktree.
+        await _restoreJournal.ReserveRestoreAsync(
+            restoreId,
+            receipt.SnapshotId,
+            target,
+            cancellationToken
+        );
+        Directory.CreateDirectory(_recoveryRoot);
+        // Failed attempts remain reserved for manual recovery, never automatically cleaned.
         await _git.CreateWorktreeAsync(
             session.SourcePath,
             target,
@@ -330,6 +340,7 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
             await VerifyFileAsync(targetFile, file.Sha256, file.Length, cancellationToken);
         }
 
+        await _restoreJournal.VerifyRestoreAsync(restoreId, cancellationToken);
         return target;
     }
 

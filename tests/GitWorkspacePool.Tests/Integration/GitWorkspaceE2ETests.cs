@@ -331,6 +331,51 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task RestoreJournal_DistinguishesInterruptedAndVerifiedRecoveries()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        File.WriteAllText(Path.Combine(opened.WorkspacePath, "feature.txt"), "retain me");
+        WorkspaceSnapshotReceipt snapshot = await fixture.SnapshotAsync();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.RestoreSnapshotAsync(
+                snapshot.SnapshotId,
+                new ThrowAtCheckpoint(SnapshotCheckpoint.RestoreFilesApplied)
+            )
+        );
+
+        SqliteWorkspaceSessionJournal journal = new(fixture.DatabasePath);
+        WorkspaceRestoreOperation interrupted = Assert.Single(
+            await journal.ListRecoveryRestoresAsync(CancellationToken.None)
+        );
+        Assert.Equal(WorkspaceRestoreState.Preparing, interrupted.State);
+
+        string completePath = await fixture.RestoreSnapshotAsync(snapshot.SnapshotId);
+        WorkspaceRestoreOperation[] attempts = (
+            await journal.ListRecoveryRestoresAsync(CancellationToken.None)
+        ).ToArray();
+
+        Assert.Equal(2, attempts.Length);
+        Assert.Single(attempts.Where(operation =>
+            operation.State == WorkspaceRestoreState.Verified
+            && operation.Path == completePath
+        ));
+
+        IReadOnlyList<WorkspaceRecoveryFinding> findings = await fixture.ScanRecoveryAsync();
+        Assert.Contains(findings, finding =>
+            finding.Kind == WorkspaceRecoveryKind.InterruptedRestore
+            && finding.Path == interrupted.Path
+        );
+        Assert.Contains(findings, finding =>
+            finding.Kind == WorkspaceRecoveryKind.VerifiedRecoveryWorktree
+            && finding.Path == completePath
+        );
+        Assert.Equal("retain me", File.ReadAllText(Path.Combine(opened.WorkspacePath, "feature.txt")));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task Snapshot_TamperedPayloadIsRejectedBeforeNewWorktree()
     {
         using Fixture fixture = await Fixture.CreateAsync();
@@ -663,7 +708,7 @@ public sealed class GitWorkspaceE2ETests
         IReadOnlyList<WorkspaceRecoveryFinding> orphaned = await fixture.ScanRecoveryAsync();
         WorkspaceRecoveryFinding recovery = Assert.Single(
             orphaned.Where(finding =>
-                finding.Kind == WorkspaceRecoveryKind.UnmanagedRecoveryWorktree
+                finding.Kind == WorkspaceRecoveryKind.InterruptedRestore
             )
         );
         Assert.True(await fixture.IsRegisteredWorktreeAsync(recovery.Path));
@@ -927,6 +972,7 @@ public sealed class GitWorkspaceE2ETests
                     RecoveryRoot,
                     new GitCliWorkspaceGit(),
                     new GitWorktreeSnapshotScanner(),
+                    sessions,
                     checkpoints
                 )
             );

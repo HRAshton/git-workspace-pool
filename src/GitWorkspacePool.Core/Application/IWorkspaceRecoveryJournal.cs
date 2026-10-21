@@ -15,4 +15,13 @@ public interface IWorkspaceRecoveryJournal
     Task<IReadOnlyList<WorkspaceSnapshotRecord>> ListRecoverySnapshotsAsync(
         CancellationToken cancellationToken
     );
+
+    /// <summary>
+    /// Lists durable restore attempts, including interrupted operations.
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The bounded restore inventory.</returns>
+    Task<IReadOnlyList<WorkspaceRestoreOperation>> ListRecoveryRestoresAsync(
+        CancellationToken cancellationToken
+    );
 }

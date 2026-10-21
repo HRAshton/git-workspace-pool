@@ -20,7 +20,10 @@ The recovery scanner does not recursively inspect arbitrary user directories. It
 | `IncompleteSnapshot` | A `.pending-<snapshot-id>` directory was left before atomic publication. | Keep it for investigation; do not assume it is complete or restorable. |
 | `UnjournalledSnapshot` | `snapshot-<snapshot-id>` exists, but its ownership/receipt is not committed in SQLite. | Preserve the directory and journal; normal restore refuses unjournalled snapshots. |
 | `MissingSnapshot` | SQLite has a receipt, but its expected directory is absent or not recognized. | Verify storage volume/path and backups; do not remove the journal entry. |
-| `UnmanagedRecoveryWorktree` | A `restore-...` directory is registered by Git, but is not a managed PR session. | Inspect its files and Git state. Never assume it is disposable. |
+| `UnmanagedRecoveryWorktree` | A legacy `restore-...` worktree exists without a restore journal entry. | Inspect its files and Git state. Never assume it is disposable. |
+| `InterruptedRestore` | SQLite recorded restore intent, but final verification was never committed. | Preserve and inspect; restoring again creates a separate new path. |
+| `VerifiedRecoveryWorktree` | Restore verification succeeded, but the worktree is not part of the PR pool. | Preserve it until reviewed; no automatic reclamation. |
+| `MissingRecoveryWorktree` | Restore intent exists, but its target directory is missing. | Inspect Git metadata and storage without deleting the journal record. |
 | `UnregisteredRecoveryDirectory` | A recovery directory exists without a corresponding Git worktree registration. | Inspect manually. Do not assume partial checkout means it is safe to delete. |
 | `UnverifiableRecoveryDirectory` | Git could not establish registration. | Check the original clone is accessible and retry diagnostics; preserve data. |
 | `UnknownEntry` | Unexpected name/file or a directory whose owner cannot be proven. | Do not delete; inspect ownership. |

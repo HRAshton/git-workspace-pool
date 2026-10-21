@@ -28,6 +28,15 @@ public enum WorkspaceRecoveryKind
 
     /// <summary>Git could not establish whether a recovery worktree is registered.</summary>
     UnverifiableRecoveryDirectory,
+
+    /// <summary>A recorded restore did not reach final verification.</summary>
+    InterruptedRestore,
+
+    /// <summary>A fully verified isolated recovery worktree remains outside the PR pool.</summary>
+    VerifiedRecoveryWorktree,
+
+    /// <summary>A restore has a journal intent but its directory is missing.</summary>
+    MissingRecoveryWorktree,
 }
 
 /// <summary>

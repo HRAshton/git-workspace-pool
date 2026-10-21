@@ -59,7 +59,8 @@ internal sealed class TrayContext : ApplicationContext
             new VerifiedWorkspaceSnapshotRestorer(
                 Path.Combine(stateRoot, "recovered"),
                 git,
-                new GitWorktreeSnapshotScanner()
+                new GitWorktreeSnapshotScanner(),
+                journal
             )
         );
         _recoveryInspector = new WorkspaceRecoveryInspector(

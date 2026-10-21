@@ -53,6 +53,7 @@ internal static class Program
                             args[3],
                             git,
                             new GitWorktreeSnapshotScanner(),
+                            journal,
                             sink
                         )
                     );

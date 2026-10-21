@@ -44,7 +44,8 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [x] Restore a journalled snapshot into a separate Git worktree on the saved commit; verify index, working tree files and exact Git status.
 - [x] Reject corrupted payloads and manifest path traversal before allocating a recovery worktree.
 - [x] Discover interrupted exports, published-but-unjournalled snapshots, missing receipts and unmanaged recovery worktrees without deleting data; expose findings in tray diagnostics.
-- [ ] Complete directory metadata, reparse-point race and recovery-operation journal tests before allowing release.
+- [x] Persist restore intent before worktree allocation, verify after reconstruction, and distinguish interrupted/verified/missing recovery outcomes.
+- [ ] Complete reparse-point race and safe restore-reconciliation tests before enabling release.
 - [ ] Configurable artifact retention and cleanup policies.
 - [x] Tests for interrupted worktree creation (before journal commit) and cross-handler allocation.
 - [x] Refuse snapshots of locked files without modifying the source or publishing a partial copy.

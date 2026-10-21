@@ -100,6 +100,63 @@ public sealed class SqliteWorkspaceSessionJournalTests
     }
 
     [Fact]
+    public async Task RestoreJournal_IntentionSurvivesRestartAndCompletesOnlyOnce()
+    {
+        using Fixture fixture = new();
+        SqliteWorkspaceSessionJournal journal = fixture.CreateJournal();
+        WorkspaceSession owner = await fixture.ReserveAsync(journal);
+        await journal.PinCommitAsync(owner.OperationId, new string('a', 40), CancellationToken.None);
+        await journal.ActivateAsync(owner.OperationId, CancellationToken.None);
+        WorkspaceSnapshotReceipt receipt = new(
+            Guid.NewGuid(),
+            owner.OperationId,
+            Path.Combine(fixture.LockRoot, "snapshot"),
+            1,
+            1
+        );
+        await journal.RecordSnapshotAsync(receipt, CancellationToken.None);
+
+        Guid restore = Guid.NewGuid();
+        string target = Path.Combine(fixture.LockRoot, "restored");
+        await journal.ReserveRestoreAsync(restore, receipt.SnapshotId, target, CancellationToken.None);
+
+        SqliteWorkspaceSessionJournal reopened = fixture.CreateJournal();
+        WorkspaceRestoreOperation pending = Assert.Single(
+            await reopened.ListRecoveryRestoresAsync(CancellationToken.None)
+        );
+        Assert.Equal(restore, pending.RestoreId);
+        Assert.Equal(WorkspaceRestoreState.Preparing, pending.State);
+        Assert.Equal(target, pending.Path);
+
+        await reopened.VerifyRestoreAsync(restore, CancellationToken.None);
+        Assert.Equal(
+            WorkspaceRestoreState.Verified,
+            Assert.Single(
+                await fixture.CreateJournal().ListRecoveryRestoresAsync(CancellationToken.None)
+            ).State
+        );
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => reopened.VerifyRestoreAsync(restore, CancellationToken.None)
+        );
+    }
+
+    [Fact]
+    public async Task RestoreJournal_RejectsUnknownSnapshot()
+    {
+        using Fixture fixture = new();
+        SqliteWorkspaceSessionJournal journal = fixture.CreateJournal();
+        await Assert.ThrowsAsync<SqliteException>(
+            () => journal.ReserveRestoreAsync(
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                fixture.WorkspacePath,
+                CancellationToken.None
+            )
+        );
+        Assert.Empty(await journal.ListRecoveryRestoresAsync(CancellationToken.None));
+    }
+
+    [Fact]
     public async Task FileOperationLock_SerializesIndependentInstances()
     {
         using Fixture fixture = new();

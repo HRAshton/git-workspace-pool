@@ -8,12 +8,12 @@ namespace GitWorkspacePool.Infrastructure;
 /// <summary>
 /// Durable, transactional workspace ownership and append-only operation events.
 /// </summary>
-public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IWorkspaceSnapshotSessionStore, IWorkspaceRecoveryJournal
+public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IWorkspaceSnapshotSessionStore, IWorkspaceRecoveryJournal, IWorkspaceRestoreJournal
 {
     private readonly string _connectionString;
 
     /// <summary>
-    /// Initializes or upgrades the local SQLite journal to schema version two.
+    /// Initializes or upgrades the local SQLite journal to schema version three.
     /// </summary>
     public SqliteWorkspaceSessionJournal(string databasePath)
     {
@@ -35,7 +35,7 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
         version.CommandText = "PRAGMA user_version";
         long currentVersion = (long)version.ExecuteScalar()!;
 
-        if (currentVersion > 2)
+        if (currentVersion > 3)
         {
             throw new InvalidOperationException("Session journal schema is newer than this application.");
         }
@@ -71,7 +71,16 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
                 created_utc TEXT NOT NULL
             );
 
-            PRAGMA user_version = 2;
+            CREATE TABLE IF NOT EXISTS restore_operations (
+                restore_id TEXT PRIMARY KEY,
+                snapshot_id TEXT NOT NULL REFERENCES snapshots(snapshot_id),
+                target_path TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                state TEXT NOT NULL CHECK (state IN ('Preparing', 'Verified')),
+                created_utc TEXT NOT NULL,
+                updated_utc TEXT NOT NULL
+            );
+
+            PRAGMA user_version = 3;
             """;
         schema.ExecuteNonQuery();
     }
@@ -273,6 +282,103 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
         }
 
         return Task.FromResult<IReadOnlyList<WorkspaceSnapshotRecord>>(records);
+    }
+
+    /// <inheritdoc/>
+    public Task ReserveRestoreAsync(
+        Guid restoreId,
+        Guid snapshotId,
+        string targetPath,
+        CancellationToken cancellationToken
+    )
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (restoreId == Guid.Empty || snapshotId == Guid.Empty)
+        {
+            throw new ArgumentException("Restore and snapshot identifiers must not be empty.");
+        }
+
+        using SqliteConnection connection = Open();
+        using SqliteTransaction transaction = connection.BeginTransaction();
+        using SqliteCommand command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO restore_operations(
+                restore_id, snapshot_id, target_path, state, created_utc, updated_utc
+            ) VALUES ($id, $snapshot, $path, 'Preparing', $utc, $utc)
+            """;
+        command.Parameters.AddWithValue("$id", restoreId.ToString("D"));
+        command.Parameters.AddWithValue("$snapshot", snapshotId.ToString("D"));
+        command.Parameters.AddWithValue("$path", Path.GetFullPath(targetPath));
+        command.Parameters.AddWithValue("$utc", UtcNow());
+        command.ExecuteNonQuery();
+        transaction.Commit();
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc/>
+    public Task VerifyRestoreAsync(Guid restoreId, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using SqliteConnection connection = Open();
+        using SqliteTransaction transaction = connection.BeginTransaction();
+        using SqliteCommand command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            UPDATE restore_operations
+               SET state = 'Verified', updated_utc = $utc
+             WHERE restore_id = $id AND state = 'Preparing'
+            """;
+        command.Parameters.AddWithValue("$id", restoreId.ToString("D"));
+        command.Parameters.AddWithValue("$utc", UtcNow());
+
+        if (command.ExecuteNonQuery() != 1)
+        {
+            throw new InvalidOperationException(
+                "Restore attempt was not pending or does not exist."
+            );
+        }
+
+        transaction.Commit();
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc/>
+    public Task<IReadOnlyList<WorkspaceRestoreOperation>> ListRecoveryRestoresAsync(
+        CancellationToken cancellationToken
+    )
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using SqliteConnection connection = Open();
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT restore_id, snapshot_id, target_path, state
+              FROM restore_operations
+             ORDER BY rowid LIMIT 10001
+            """;
+
+        List<WorkspaceRestoreOperation> operations = [];
+        using SqliteDataReader reader = command.ExecuteReader();
+
+        while (reader.Read())
+        {
+            if (operations.Count >= 10000)
+            {
+                throw new InvalidOperationException(
+                    "Restore journal exceeds the safe inventory limit."
+                );
+            }
+
+            operations.Add(new WorkspaceRestoreOperation(
+                Guid.Parse(reader.GetString(0)),
+                Guid.Parse(reader.GetString(1)),
+                reader.GetString(2),
+                Enum.Parse<WorkspaceRestoreState>(reader.GetString(3), ignoreCase: false)
+            ));
+        }
+
+        return Task.FromResult<IReadOnlyList<WorkspaceRestoreOperation>>(operations);
     }
 
     private const string SnapshotSelect = """

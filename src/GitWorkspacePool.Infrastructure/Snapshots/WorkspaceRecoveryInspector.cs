@@ -62,8 +62,27 @@ public sealed class WorkspaceRecoveryInspector : IWorkspaceRecoveryInspector
             byId.Add(record.Receipt.SnapshotId, record);
         }
 
+        IReadOnlyList<WorkspaceRestoreOperation> restores =
+            await _journal.ListRecoveryRestoresAsync(cancellationToken);
+        Dictionary<string, WorkspaceRestoreOperation> restorePaths = new(_paths);
+
+        foreach (WorkspaceRestoreOperation operation in restores)
+        {
+            string target = Path.GetFullPath(operation.Path);
+
+            if (!IsUnder(_recoveryRoot, target))
+            {
+                throw new InvalidOperationException(
+                    "A restore journal entry points outside the configured recovery root."
+                );
+            }
+
+            restorePaths.Add(target, operation);
+        }
+
         List<WorkspaceRecoveryFinding> findings = [];
         HashSet<string> seen = new(_paths);
+        HashSet<string> seenRestores = new(_paths);
 
         if (Directory.Exists(_snapshotRoot))
         {
@@ -176,6 +195,32 @@ public sealed class WorkspaceRecoveryInspector : IWorkspaceRecoveryInspector
                     continue;
                 }
 
+                string fullPath = Path.GetFullPath(path);
+                bool journalled = restorePaths.TryGetValue(
+                    fullPath,
+                    out WorkspaceRestoreOperation? operation
+                );
+
+                if (
+                    journalled
+                    && (operation!.SnapshotId != snapshotId
+                        || !fullPath.EndsWith(
+                            operation.RestoreId.ToString("N"),
+                            OperatingSystem.IsWindows()
+                                ? StringComparison.OrdinalIgnoreCase
+                                : StringComparison.Ordinal
+                        ))
+                )
+                {
+                    Add(findings, WorkspaceRecoveryKind.UnknownEntry, path, snapshotId);
+                    continue;
+                }
+
+                if (journalled)
+                {
+                    seenRestores.Add(fullPath);
+                }
+
                 try
                 {
                     bool registered = await _git.IsRegisteredWorktreeAsync(
@@ -183,14 +228,15 @@ public sealed class WorkspaceRecoveryInspector : IWorkspaceRecoveryInspector
                         path,
                         cancellationToken
                     );
-                    Add(
-                        findings,
-                        registered
-                            ? WorkspaceRecoveryKind.UnmanagedRecoveryWorktree
-                            : WorkspaceRecoveryKind.UnregisteredRecoveryDirectory,
-                        path,
-                        snapshotId
-                    );
+                    WorkspaceRecoveryKind kind = !registered
+                        ? WorkspaceRecoveryKind.UnregisteredRecoveryDirectory
+                        : journalled
+                            ? operation!.State == WorkspaceRestoreState.Preparing
+                                ? WorkspaceRecoveryKind.InterruptedRestore
+                                : WorkspaceRecoveryKind.VerifiedRecoveryWorktree
+                            : WorkspaceRecoveryKind.UnmanagedRecoveryWorktree;
+
+                    Add(findings, kind, path, snapshotId);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
@@ -207,6 +253,21 @@ public sealed class WorkspaceRecoveryInspector : IWorkspaceRecoveryInspector
                         snapshotId
                     );
                 }
+            }
+        }
+
+        foreach (KeyValuePair<string, WorkspaceRestoreOperation> restore in restorePaths)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (!seenRestores.Contains(restore.Key))
+            {
+                Add(
+                    findings,
+                    WorkspaceRecoveryKind.MissingRecoveryWorktree,
+                    restore.Key,
+                    restore.Value.SnapshotId
+                );
             }
         }
 
@@ -233,6 +294,9 @@ public sealed class WorkspaceRecoveryInspector : IWorkspaceRecoveryInspector
                 WorkspaceRecoveryKind.UnregisteredRecoveryDirectory => "Recovery directory is not registered as a Git worktree.",
                 WorkspaceRecoveryKind.UnsafeReparsePoint => "Symlink or junction; not traversed.",
                 WorkspaceRecoveryKind.UnverifiableRecoveryDirectory => "Git registration could not be confirmed.",
+                WorkspaceRecoveryKind.InterruptedRestore => "Restore was interrupted before complete verification.",
+                WorkspaceRecoveryKind.VerifiedRecoveryWorktree => "Verified isolated worktree; not owned by the managed PR pool.",
+                WorkspaceRecoveryKind.MissingRecoveryWorktree => "Restore intent exists but the target directory is missing.",
                 _ => "Unknown entry in app-owned recovery storage.",
             }
         ));
