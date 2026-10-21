@@ -32,7 +32,8 @@
 - [x] Export snapshot with Git index, staged blobs, working files, ignored/untracked files, hashes and manifest.
 - [x] Side-by-side restore into a new linked worktree without touching the active session.
 - [x] Restore checks checksums and validates exact Git status; corruption/path traversal tests.
-- [ ] Injectable crash/fault checkpoints at snapshot export, publish and restore milestones; test retained partial output and original ownership.
+- [x] Injectable exception/fault checkpoints at snapshot export, publish and restore milestones; tests assert preserved source, retained partial data, retry and ownership.
+- [ ] Add **real subprocess termination** tests at these boundaries; exception injection alone does not establish process-kill durability.
 - [ ] Restore operation journal (in-progress / verified / orphaned) and discoverable orphan recovery.
 - [ ] Detect changes mid-export including directory structure, reparse points, source file identity and index mutation; reject unsupported index extensions/conflicts.
 - [ ] Prove low disk, ACL/read-only, anti-virus lock, long/unicode/case-collision path handling and cancellation.

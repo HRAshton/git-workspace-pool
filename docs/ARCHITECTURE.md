@@ -53,6 +53,13 @@ The journal is an ownership protocol, not a transactional filesystem. No automat
 - Restoration output is outside the warm pool (`%LOCALAPPDATA%\\GitWorkspacePool\\recovered`), and orphaned or interrupted recovery worktrees are never automatically deleted.
 - **Restoration is now verified on offline E2E fixtures**, but explicit release, Git worktree moves, deletion, snapshot pruning and warm-pool recycling remain disabled pending fault-injection and recovery tests.
 
+## Deterministic snapshot interruption tests
+
+- `ISnapshotCheckpointSink` is an infrastructure-only, optional test seam. Production does not instantiate a sink and no external or PR-controlled input can select a checkpoint.
+- Export checkpoints follow copied index, verified pre-publication manifest, and published directory **before** the SQLite receipt. A failure never deletes the source. Pending and published-but-unjournalled snapshot directories remain available for inspection.
+- Restore checkpoints follow registered recovery worktree creation, working-file application, and Git index verification. Injected exceptions leave a separate Git worktree that must not be auto-cleaned.
+- Offline E2E covers retries, persistent ownership, and preservation of failed-operation output. **Process termination, disk-full and concurrent mutation are distinct remaining RC gates.** Exceptions only simulate interrupted control flow, not power loss or atomic filesystem durability.
+
 ## Subsequent slices
 
 - Durable session journal and safe parking/snapshot protocol.
