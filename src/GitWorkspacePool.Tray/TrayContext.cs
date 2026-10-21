@@ -1,9 +1,8 @@
 using System.Drawing;
-using System.IO.Pipes;
-using System.Text;
 using GitWorkspacePool.Core.Application;
 using GitWorkspacePool.Core.Protocol;
 using GitWorkspacePool.Infrastructure;
+using GitWorkspacePool.Infrastructure.Transport;
 using GitWorkspacePool.Tray.Infrastructure;
 
 namespace GitWorkspacePool.Tray;
@@ -71,34 +70,8 @@ internal sealed class TrayContext : ApplicationContext
     {
         try
         {
-            while (!cancellationToken.IsCancellationRequested)
-            {
-                using NamedPipeServerStream pipe = new(
-                    PipeRelay.PipeName,
-                    PipeDirection.In,
-                    1,
-                    PipeTransmissionMode.Byte,
-                    PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly
-                );
-
-                await pipe.WaitForConnectionAsync(cancellationToken);
-                using StreamReader reader = new(
-                    pipe,
-                    Encoding.UTF8,
-                    detectEncodingFromByteOrderMarks: false,
-                    leaveOpen: true
-                );
-                string? message = await reader.ReadLineAsync(cancellationToken);
-
-                if (message is not null && message.Length <= 8192)
-                {
-                    _ = HandleRequestAsync(message);
-                }
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // Normal application shutdown.
+            NamedPipeRequestServer server = new(PipeRelay.PipeName);
+            await server.ListenAsync(message => _ = HandleRequestAsync(message), cancellationToken);
         }
         catch (IOException exception)
         {
