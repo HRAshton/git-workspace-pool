@@ -73,7 +73,7 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 | UI smoke | actual browser/tray/editor | nightly or release | < 3 min |
 | Performance | large-file trees + optional ReFS | scheduled/manual | benchmark-driven |
 
-On the 2026-10-21 Windows CI run, 23 unit tests passed in 60 ms and 9 offline E2E tests passed in 11 s (test execution only, excluding build/restore). Time budgets remain goals, not hard guarantees. Fast E2E must not require network, GitHub tokens, VS Code, package install, or admin rights.
+On the 2026-10-21 Windows CI run, 46 unit tests passed in about 1 s and 13 offline E2E tests passed in 16 s (test execution only, excluding build/restore). Time budgets remain goals, not hard guarantees. Fast E2E must not require network, GitHub tokens, VS Code, package install, or admin rights.
 
 ## Product metrics
 
