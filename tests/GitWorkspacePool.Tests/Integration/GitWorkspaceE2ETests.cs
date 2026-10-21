@@ -1,0 +1,262 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using GitWorkspacePool.Core.Application;
+using GitWorkspacePool.Core.Domain;
+using GitWorkspacePool.Infrastructure;
+using Xunit;
+
+namespace GitWorkspacePool.Tests.Integration;
+
+/// <summary>
+/// Fast E2E coverage: real Git and filesystem, offline PR remote, fake editor.
+/// </summary>
+public sealed class GitWorkspaceE2ETests
+{
+    private const string PullRequestUrl = "https://github.com/owner/repo/pull/17";
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task OpenPullRequest_CreatesDetachedWorktreeFromLocalPullRequestRef()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+
+        OpenPullRequestResult result = await fixture.OpenAsync(PullRequestUrl);
+
+        Assert.False(result.Reused);
+        Assert.Equal("feature for pr 17", File.ReadAllText(Path.Combine(result.WorkspacePath, "feature.txt")));
+        Assert.Equal(result.WorkspacePath, Assert.Single(fixture.Editor.OpenedPaths));
+        Assert.True(
+            await fixture.IsRegisteredWorktreeAsync(result.WorkspacePath),
+            "The path must be present in the source clone's Git worktree registry."
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task OpenPullRequest_ReopensWithoutOverwritingLocalChanges()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult first = await fixture.OpenAsync(PullRequestUrl);
+        string changedPath = Path.Combine(first.WorkspacePath, "feature.txt");
+        string untrackedPath = Path.Combine(first.WorkspacePath, "notes.local");
+        File.WriteAllText(changedPath, "user has unsaved work");
+        File.WriteAllText(untrackedPath, "never delete me");
+
+        OpenPullRequestResult second = await fixture.OpenAsync(PullRequestUrl);
+
+        Assert.True(second.Reused);
+        Assert.Equal(first.WorkspacePath, second.WorkspacePath);
+        Assert.Equal("user has unsaved work", File.ReadAllText(changedPath));
+        Assert.Equal("never delete me", File.ReadAllText(untrackedPath));
+        Assert.Equal(2, fixture.Editor.OpenedPaths.Count);
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task OpenPullRequest_RefusesForeignDirectoryWithoutDeletingFiles()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        string path = fixture.WorkspacePath(17);
+        Directory.CreateDirectory(path);
+        File.WriteAllText(Path.Combine(path, "user.txt"), "keep");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.OpenAsync(PullRequestUrl)
+        );
+
+        Assert.Equal("keep", File.ReadAllText(Path.Combine(path, "user.txt")));
+        Assert.Empty(fixture.Editor.OpenedPaths);
+        Assert.False(await fixture.IsRegisteredWorktreeAsync(path));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task OpenPullRequest_ConcurrentRequestsAllocateOneWorktree()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+
+        OpenPullRequestResult[] results = await Task.WhenAll(
+            fixture.OpenAsync(PullRequestUrl),
+            fixture.OpenAsync(PullRequestUrl)
+        );
+
+        Assert.Single(results.Where(result => !result.Reused));
+        Assert.Single(results.Where(result => result.Reused));
+        Assert.Equal(results[0].WorkspacePath, results[1].WorkspacePath);
+        Assert.True(await fixture.IsRegisteredWorktreeAsync(results[0].WorkspacePath));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task OpenPullRequest_UnknownPullRequestDoesNotAllocateWorktree()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.OpenAsync("https://github.com/owner/repo/pull/999")
+        );
+
+        Assert.False(Directory.Exists(fixture.WorkspacePath(999)));
+        Assert.Empty(fixture.Editor.OpenedPaths);
+    }
+
+    private sealed class Fixture : IDisposable
+    {
+        private readonly string _root;
+        private readonly string _source;
+        private readonly string _workspaces;
+        private readonly OpenPullRequestHandler _handler;
+
+        private Fixture(string root, string source, string workspaces, FakeEditor editor)
+        {
+            _root = root;
+            _source = source;
+            _workspaces = workspaces;
+            Editor = editor;
+
+            RepositoryRegistration registration = new("owner/repo", _source, _workspaces);
+            _handler = new OpenPullRequestHandler(
+                new Catalog(registration),
+                new GitCliWorkspaceGit(),
+                new WorkspaceDirectories(),
+                Editor
+            );
+        }
+
+        public FakeEditor Editor { get; }
+
+        public static async Task<Fixture> CreateAsync()
+        {
+            string root = Path.Combine(
+                Path.GetTempPath(),
+                "git-workspace-pool-e2e-" + Guid.NewGuid().ToString("N")
+            );
+            string remote = Path.Combine(root, "remote.git");
+            string seed = Path.Combine(root, "seed");
+            string source = Path.Combine(root, "source");
+            string workspaces = Path.Combine(root, "workspaces");
+
+            Directory.CreateDirectory(root);
+
+            try
+            {
+                await GitAsync(root, "init", "--bare", "--initial-branch=main", remote);
+                await GitAsync(root, "init", "--initial-branch=main", seed);
+                await GitAsync(seed, "config", "user.name", "E2E Fixture");
+                await GitAsync(seed, "config", "user.email", "test@example.invalid");
+
+                File.WriteAllText(Path.Combine(seed, "README.md"), "base");
+                await GitAsync(seed, "add", "README.md");
+                await GitAsync(seed, "commit", "-m", "base");
+                await GitAsync(seed, "remote", "add", "origin", remote);
+                await GitAsync(seed, "push", "origin", "HEAD:refs/heads/main");
+
+                await GitAsync(seed, "checkout", "-b", "feature/pr-17");
+                File.WriteAllText(Path.Combine(seed, "feature.txt"), "feature for pr 17");
+                await GitAsync(seed, "add", "feature.txt");
+                await GitAsync(seed, "commit", "-m", "PR 17");
+                await GitAsync(seed, "push", "origin", "HEAD:refs/pull/17/head");
+                await GitAsync(root, "clone", "--no-local", remote, source);
+
+                return new Fixture(root, source, workspaces, new FakeEditor());
+            }
+            catch
+            {
+                Directory.Delete(root, recursive: true);
+                throw;
+            }
+        }
+
+        public Task<OpenPullRequestResult> OpenAsync(string url) =>
+            _handler.HandleAsync(url, CancellationToken.None);
+
+        public string WorkspacePath(int number) => Path.Combine(
+            _workspaces,
+            $"github-owner-repo-pr-{number}"
+        );
+
+        public Task<bool> IsRegisteredWorktreeAsync(string path) =>
+            new GitCliWorkspaceGit().IsRegisteredWorktreeAsync(
+                _source,
+                path,
+                CancellationToken.None
+            );
+
+        public void Dispose()
+        {
+            Directory.Delete(_root, recursive: true);
+        }
+
+        private static async Task GitAsync(string workingDirectory, params string[] arguments)
+        {
+            ProcessStartInfo startInfo = new("git")
+            {
+                WorkingDirectory = workingDirectory,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            startInfo.Environment["GIT_TERMINAL_PROMPT"] = "0";
+            startInfo.Environment["GIT_LFS_SKIP_SMUDGE"] = "1";
+
+            foreach (string argument in arguments)
+            {
+                startInfo.ArgumentList.Add(argument);
+            }
+
+            using Process process = Process.Start(startInfo)
+                ?? throw new InvalidOperationException("Git is not installed.");
+
+            Task<string> output = process.StandardOutput.ReadToEndAsync();
+            Task<string> error = process.StandardError.ReadToEndAsync();
+
+            using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(15));
+            try
+            {
+                await process.WaitForExitAsync(timeout.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                if (!process.HasExited)
+                {
+                    process.Kill(entireProcessTree: true);
+                    await process.WaitForExitAsync(CancellationToken.None);
+                }
+
+                throw;
+            }
+
+            string stderr = await error;
+            _ = await output;
+
+            if (process.ExitCode != 0)
+            {
+                throw new InvalidOperationException(
+                    $"Git {string.Join(' ', arguments)} failed: {stderr}"
+                );
+            }
+        }
+    }
+
+    private sealed class Catalog(RepositoryRegistration registration) : IRepositoryCatalog
+    {
+        public RepositoryRegistration? Find(PullRequestReference request) =>
+            request.RepositoryKey.Equals(registration.RepositoryKey, StringComparison.OrdinalIgnoreCase)
+                ? registration
+                : null;
+    }
+
+    private sealed class FakeEditor : IEditorLauncher
+    {
+        private readonly ConcurrentQueue<string> _openedPaths = new();
+
+        public IReadOnlyCollection<string> OpenedPaths => _openedPaths.ToArray();
+
+        public Task OpenAsync(string workspacePath, CancellationToken cancellationToken)
+        {
+            _openedPaths.Enqueue(workspacePath);
+            return Task.CompletedTask;
+        }
+    }
+}
