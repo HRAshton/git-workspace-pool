@@ -183,6 +183,48 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
             );
         }
 
+        WorkspaceSnapshotManifest manifest = new()
+        {
+            SnapshotId = snapshotId,
+            OperationId = operationId,
+            WorkspacePath = root,
+            HeadCommitSha = before.Head,
+            StatusBase64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(before.Status)),
+            GitIndexSha256 = indexHash,
+            Files = files,
+            StagedFiles = stagedFiles,
+            MissingPaths = initial.Missing,
+        };
+
+        string manifestPath = Path.Combine(staging, "manifest.json");
+        await using (FileStream stream = new(
+            manifestPath,
+            FileMode.CreateNew,
+            FileAccess.Write,
+            FileShare.None,
+            bufferSize: 4096,
+            FileOptions.WriteThrough
+        ))
+        {
+            await JsonSerializer.SerializeAsync(
+                stream,
+                manifest,
+                new JsonSerializerOptions { WriteIndented = true },
+                cancellationToken
+            );
+            await stream.FlushAsync(cancellationToken);
+            stream.Flush(flushToDisk: true);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        await CheckpointAsync(
+            SnapshotCheckpoint.ExportReadyToPublish,
+            staging,
+            cancellationToken
+        );
+
+        // The manifest was already written. Re-check the sources here, as close as
+        // possible to publication, to reject edits during manifest serialization.
         WorktreeSnapshotScan after = await _scanner.InspectAsync(root, cancellationToken);
         SnapshotTree finalTree = ExpandChanges(root, after.ChangedPaths, cancellationToken);
 
@@ -223,45 +265,6 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
             }
         }
 
-        WorkspaceSnapshotManifest manifest = new()
-        {
-            SnapshotId = snapshotId,
-            OperationId = operationId,
-            WorkspacePath = root,
-            HeadCommitSha = before.Head,
-            StatusBase64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(before.Status)),
-            GitIndexSha256 = indexHash,
-            Files = files,
-            StagedFiles = stagedFiles,
-            MissingPaths = initial.Missing,
-        };
-
-        string manifestPath = Path.Combine(staging, "manifest.json");
-        await using (FileStream stream = new(
-            manifestPath,
-            FileMode.CreateNew,
-            FileAccess.Write,
-            FileShare.None,
-            bufferSize: 4096,
-            FileOptions.WriteThrough
-        ))
-        {
-            await JsonSerializer.SerializeAsync(
-                stream,
-                manifest,
-                new JsonSerializerOptions { WriteIndented = true },
-                cancellationToken
-            );
-            await stream.FlushAsync(cancellationToken);
-            stream.Flush(flushToDisk: true);
-        }
-
-        cancellationToken.ThrowIfCancellationRequested();
-        await CheckpointAsync(
-            SnapshotCheckpoint.ExportReadyToPublish,
-            staging,
-            cancellationToken
-        );
         Directory.Move(staging, published);
         await CheckpointAsync(
             SnapshotCheckpoint.ExportPublished,

@@ -552,6 +552,70 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task Snapshot_RejectsWorkingFileMutationImmediatelyBeforePublish()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string changed = Path.Combine(opened.WorkspacePath, "feature.txt");
+        File.WriteAllText(changed, "first user change");
+
+        ISnapshotCheckpointSink mutator = new MutateAtCheckpoint(
+            SnapshotCheckpoint.ExportReadyToPublish,
+            () =>
+            {
+                File.WriteAllText(changed, "second user change");
+                return Task.CompletedTask;
+            }
+        );
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.SnapshotAsync(mutator)
+        );
+
+        Assert.Equal("second user change", File.ReadAllText(changed));
+        Assert.Empty(await fixture.ListPublishedSnapshotsAsync());
+        Assert.Empty(Directory.GetDirectories(fixture.SnapshotRoot, "snapshot-*", SearchOption.AllDirectories));
+        Assert.Equal(WorkspaceSessionState.Active, (await fixture.OwnedSessionAsync()).State);
+
+        WorkspaceSnapshotReceipt retry = await fixture.SnapshotAsync();
+        Assert.Equal(
+            "second user change",
+            File.ReadAllText(Path.Combine(retry.Folder, "files", "feature.txt"))
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task Snapshot_RejectsGitIndexMutationDuringCapture()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string changed = Path.Combine(opened.WorkspacePath, "feature.txt");
+        File.WriteAllText(changed, "unstaged v1");
+
+        ISnapshotCheckpointSink mutator = new MutateAtCheckpoint(
+            SnapshotCheckpoint.ExportIndexCopied,
+            async () =>
+            {
+                File.WriteAllText(changed, "staged v2");
+                await fixture.GitInWorkspaceAsync("add", "feature.txt");
+            }
+        );
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.SnapshotAsync(mutator)
+        );
+
+        Assert.Empty(await fixture.ListPublishedSnapshotsAsync());
+        Assert.Equal("staged v2", await fixture.ReadStagedFeatureAsync());
+        Assert.Equal(WorkspaceSessionState.Active, (await fixture.OwnedSessionAsync()).State);
+
+        WorkspaceSnapshotReceipt retry = await fixture.SnapshotAsync();
+        Assert.True(File.Exists(Path.Combine(retry.Folder, "index.bin")));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task Snapshot_RefusesLockedUserFileWithoutPublishing()
     {
         using Fixture fixture = await Fixture.CreateAsync();
@@ -586,6 +650,24 @@ public sealed class GitWorkspaceE2ETests
 
         Assert.False(Directory.Exists(fixture.WorkspacePath(999)));
         Assert.Empty(fixture.Editor.OpenedPaths);
+    }
+
+    private sealed class MutateAtCheckpoint(
+        SnapshotCheckpoint expected,
+        Func<Task> mutation
+    ) : ISnapshotCheckpointSink
+    {
+        public async ValueTask OnCheckpointAsync(
+            SnapshotCheckpoint checkpoint,
+            string operationPath,
+            CancellationToken cancellationToken
+        )
+        {
+            if (checkpoint == expected)
+            {
+                await mutation();
+            }
+        }
     }
 
     private sealed class ThrowAtCheckpoint(SnapshotCheckpoint expected) : ISnapshotCheckpointSink
