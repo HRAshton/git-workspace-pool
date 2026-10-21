@@ -132,6 +132,7 @@ public sealed class GitCliWorkspaceGit : IWorkspaceGit, IGitRemoteReader
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8,
         };
+        GitProcessSafety.Configure(startInfo);
         startInfo.ArgumentList.Add("-C");
         startInfo.ArgumentList.Add(repositoryPath);
 

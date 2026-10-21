@@ -111,6 +111,22 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task GitCli_DisablesConfiguredPostCheckoutHookDuringPrOpen()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        await fixture.ConfigureFailingCheckoutHookAsync();
+
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+
+        Assert.True(await fixture.IsRegisteredWorktreeAsync(opened.WorkspacePath));
+        Assert.Equal(
+            "feature for pr 17",
+            File.ReadAllText(Path.Combine(opened.WorkspacePath, "feature.txt"))
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task OpenPullRequest_ReopensWithoutOverwritingLocalChanges()
     {
         using Fixture fixture = await Fixture.CreateAsync();
@@ -964,6 +980,17 @@ public sealed class GitWorkspaceE2ETests
                 WorkspacePath(17),
                 "FETCH_HEAD"
             );
+        }
+
+        public async Task ConfigureFailingCheckoutHookAsync()
+        {
+            string hooks = Path.Combine(_root, "untrusted-hooks");
+            Directory.CreateDirectory(hooks);
+            File.WriteAllText(
+                Path.Combine(hooks, "post-checkout"),
+                "#!/bin/sh\nexit 91\n"
+            );
+            await GitAsync(_source, "config", "core.hooksPath", hooks);
         }
 
         public Task GitInWorkspaceAsync(params string[] arguments) =>

@@ -93,7 +93,7 @@ public sealed class GitWorktreeSnapshotScanner
             StandardOutputEncoding = new UTF8Encoding(false, true),
             StandardErrorEncoding = Encoding.UTF8,
         };
-        startInfo.Environment["GIT_TERMINAL_PROMPT"] = "0";
+        GitProcessSafety.Configure(startInfo);
         startInfo.Environment["GIT_OPTIONAL_LOCKS"] = "0";
         startInfo.ArgumentList.Add("-C");
         startInfo.ArgumentList.Add(workspacePath);

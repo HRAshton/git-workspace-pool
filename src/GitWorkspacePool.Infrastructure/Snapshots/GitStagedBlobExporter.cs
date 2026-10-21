@@ -29,7 +29,7 @@ public sealed class GitStagedBlobExporter
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
-        start.Environment["GIT_TERMINAL_PROMPT"] = "0";
+        GitProcessSafety.Configure(start);
         start.ArgumentList.Add("-C");
         start.ArgumentList.Add(workspace);
         start.ArgumentList.Add("show");

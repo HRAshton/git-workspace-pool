@@ -43,6 +43,8 @@
 - [ ] Strengthen file identity, reparse-point race protection, and unsupported index extension/conflict handling before release or eviction.
 - [x] Add conservative free-disk preflight for snapshot and restore with injected low-space E2E; neither operation allocates a new directory when the probe reports insufficient storage.
 - [ ] Prove mid-copy disk-full handling, ACL/read-only, anti-virus lock, long/unicode/case-collision path handling and cancellation.
+- [x] Override Git hook path with a private empty directory and disable external FSMonitor for app-owned Git CLI calls; offline Git E2E covers malicious configured post-checkout hooks.
+- [ ] Audit custom Git smudge/clean filters and external helpers: hook suppression alone does not guarantee that checkout cannot invoke all configured programs.
 - [ ] Migrate old manifest versions explicitly, never reinterpret unknown versions.
 - [ ] Establish snapshot budgets/settings and retention policy; preserve originals until verified recovery.
 
