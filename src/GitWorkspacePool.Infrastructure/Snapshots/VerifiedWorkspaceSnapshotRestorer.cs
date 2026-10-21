@@ -16,6 +16,7 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
     private readonly IWorkspaceRestoreJournal _restoreJournal;
     private readonly GitWorktreeSnapshotScanner _scanner;
     private readonly ISnapshotCheckpointSink? _checkpoints;
+    private readonly ISnapshotDiskSpaceProbe _diskSpace;
 
     /// <summary>
     /// Initializes recovery with a private directory outside every managed worktree.
@@ -25,7 +26,8 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
         IWorkspaceGit git,
         GitWorktreeSnapshotScanner scanner,
         IWorkspaceRestoreJournal restoreJournal,
-        ISnapshotCheckpointSink? checkpoints = null
+        ISnapshotCheckpointSink? checkpoints = null,
+        ISnapshotDiskSpaceProbe? diskSpace = null
     )
     {
         _recoveryRoot = Path.GetFullPath(recoveryRoot);
@@ -33,6 +35,7 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
         _scanner = scanner;
         _restoreJournal = restoreJournal;
         _checkpoints = checkpoints;
+        _diskSpace = diskSpace ?? new SystemSnapshotDiskSpaceProbe();
     }
 
     /// <inheritdoc/>
@@ -177,6 +180,15 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
         {
             throw new InvalidOperationException("Snapshot journal counters do not match its payload.");
         }
+
+        // Conservative preflight before any new SQLite intent or filesystem allocation.
+        // Checkout may need more space than the saved changes alone; subsequent
+        // I/O failures still retain incomplete recovery artifacts for inspection.
+        SnapshotStorageBudget.RequireSpace(
+            _diskSpace,
+            _recoveryRoot,
+            receipt.CopiedBytes
+        );
 
         Guid restoreId = Guid.NewGuid();
         string target = Path.Combine(

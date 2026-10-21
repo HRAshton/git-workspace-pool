@@ -40,7 +40,8 @@
 - [ ] Reconcile/repair orphan restore attempts safely; diagnostics never authorizes deletion or adoption.
 - [x] Recheck status, index hash, file digests and enumerated paths immediately before snapshot publication; E2E verifies a last-moment working-file edit and concurrent Git index mutation both reject publication.
 - [ ] Strengthen file identity, reparse-point race protection, and unsupported index extension/conflict handling before release or eviction.
-- [ ] Prove low disk, ACL/read-only, anti-virus lock, long/unicode/case-collision path handling and cancellation.
+- [x] Add conservative free-disk preflight for snapshot and restore with injected low-space E2E; neither operation allocates a new directory when the probe reports insufficient storage.
+- [ ] Prove mid-copy disk-full handling, ACL/read-only, anti-virus lock, long/unicode/case-collision path handling and cancellation.
 - [ ] Migrate old manifest versions explicitly, never reinterpret unknown versions.
 - [ ] Establish snapshot budgets/settings and retention policy; preserve originals until verified recovery.
 

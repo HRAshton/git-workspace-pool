@@ -17,6 +17,7 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
     private readonly string _snapshotRoot;
     private readonly GitWorktreeSnapshotScanner _scanner;
     private readonly ISnapshotCheckpointSink? _checkpoints;
+    private readonly ISnapshotDiskSpaceProbe _diskSpace;
     private static readonly StringComparer PathComparer = OperatingSystem.IsWindows()
         ? StringComparer.OrdinalIgnoreCase
         : StringComparer.Ordinal;
@@ -27,12 +28,14 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
     public VerifiedWorkspaceSnapshotExporter(
         string snapshotRoot,
         GitWorktreeSnapshotScanner scanner,
-        ISnapshotCheckpointSink? checkpoints = null
+        ISnapshotCheckpointSink? checkpoints = null,
+        ISnapshotDiskSpaceProbe? diskSpace = null
     )
     {
         _snapshotRoot = Path.GetFullPath(snapshotRoot);
         _scanner = scanner;
         _checkpoints = checkpoints;
+        _diskSpace = diskSpace ?? new SystemSnapshotDiskSpaceProbe();
     }
 
     /// <inheritdoc/>
@@ -50,6 +53,24 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
         WorktreeSnapshotScan before = await _scanner.InspectAsync(root, cancellationToken);
         SnapshotTree initial = ExpandChanges(root, before.ChangedPaths, cancellationToken);
 
+        // Check known payload sizes before creating the app-owned staging directory.
+        // Staged blobs may add more bytes, so this is a conservative early rejection,
+        // not a guarantee against exhaustion during copying.
+        long estimatedBytes = new FileInfo(before.IndexPath).Length;
+        foreach (string relative in initial.Files)
+        {
+            estimatedBytes = checked(
+                estimatedBytes + new FileInfo(Resolve(root, relative)).Length
+            );
+        }
+
+        if (estimatedBytes > MaxSnapshotBytes)
+        {
+            throw new InvalidOperationException("Snapshot exceeds its configured byte budget.");
+        }
+
+        SnapshotStorageBudget.RequireSpace(_diskSpace, _snapshotRoot, estimatedBytes);
+
         string ownerDirectory = Path.Combine(_snapshotRoot, operationId.ToString("N"));
         Directory.CreateDirectory(ownerDirectory);
         Guid snapshotId = Guid.NewGuid();
@@ -65,6 +86,11 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
         long copiedBytes = 0;
 
         string indexTarget = Path.Combine(staging, "index.bin");
+        SnapshotStorageBudget.RequireSpace(
+            _diskSpace,
+            _snapshotRoot,
+            new FileInfo(before.IndexPath).Length
+        );
         (string indexHash, long indexLength) = await CopyVerifiedAsync(
             before.IndexPath,
             indexTarget,
@@ -117,6 +143,7 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
                 );
             }
 
+            SnapshotStorageBudget.RequireSpace(_diskSpace, _snapshotRoot, length);
             FileAttributes attributes = File.GetAttributes(source);
             DateTime lastWrite = File.GetLastWriteTimeUtc(source);
             (string digest, long actualLength) = await CopyVerifiedAsync(
@@ -148,6 +175,7 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
         foreach (string relative in GitStagedBlobExporter.FindStagedFiles(before.Status))
         {
             cancellationToken.ThrowIfCancellationRequested();
+            SnapshotStorageBudget.RequireSpace(_diskSpace, _snapshotRoot, 0);
 
             if (fileCount >= MaxSnapshotFiles)
             {

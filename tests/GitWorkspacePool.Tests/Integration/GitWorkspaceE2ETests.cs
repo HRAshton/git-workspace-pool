@@ -728,6 +728,52 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task Snapshot_InsufficientDiskSpaceFailsBeforeStaging()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string userFile = Path.Combine(opened.WorkspacePath, "feature.txt");
+        File.WriteAllText(userFile, "important local work");
+
+        await Assert.ThrowsAsync<IOException>(
+            () => fixture.SnapshotAsync(diskSpace: new FixedDiskSpaceProbe(0))
+        );
+
+        Assert.Equal("important local work", File.ReadAllText(userFile));
+        Assert.False(Directory.Exists(fixture.SnapshotRoot));
+        Assert.Empty(await fixture.ListPublishedSnapshotsAsync());
+        Assert.Equal(WorkspaceSessionState.Active, (await fixture.OwnedSessionAsync()).State);
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task Restore_InsufficientDiskSpaceDoesNotAllocateOrReserve()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        File.WriteAllText(Path.Combine(opened.WorkspacePath, "feature.txt"), "important local work");
+        WorkspaceSnapshotReceipt snapshot = await fixture.SnapshotAsync();
+
+        await Assert.ThrowsAsync<IOException>(
+            () => fixture.RestoreSnapshotAsync(
+                snapshot.SnapshotId,
+                diskSpace: new FixedDiskSpaceProbe(0)
+            )
+        );
+
+        Assert.False(Directory.Exists(fixture.RecoveryRoot));
+        Assert.Empty(
+            await new SqliteWorkspaceSessionJournal(fixture.DatabasePath)
+                .ListRecoveryRestoresAsync(CancellationToken.None)
+        );
+        Assert.Equal(
+            "important local work",
+            File.ReadAllText(Path.Combine(opened.WorkspacePath, "feature.txt"))
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task Snapshot_RefusesLockedUserFileWithoutPublishing()
     {
         using Fixture fixture = await Fixture.CreateAsync();
@@ -762,6 +808,11 @@ public sealed class GitWorkspaceE2ETests
 
         Assert.False(Directory.Exists(fixture.WorkspacePath(999)));
         Assert.Empty(fixture.Editor.OpenedPaths);
+    }
+
+    private sealed class FixedDiskSpaceProbe(long bytes) : ISnapshotDiskSpaceProbe
+    {
+        public long AvailableBytes(string targetPath) => bytes;
     }
 
     private sealed class MutateAtCheckpoint(
@@ -940,7 +991,8 @@ public sealed class GitWorkspaceE2ETests
         }
 
         public async Task<WorkspaceSnapshotReceipt> SnapshotAsync(
-            ISnapshotCheckpointSink? checkpoints = null
+            ISnapshotCheckpointSink? checkpoints = null,
+            ISnapshotDiskSpaceProbe? diskSpace = null
         )
         {
             WorkspaceSession session = await OwnedSessionAsync();
@@ -952,7 +1004,8 @@ public sealed class GitWorkspaceE2ETests
                 new VerifiedWorkspaceSnapshotExporter(
                     SnapshotRoot,
                     new GitWorktreeSnapshotScanner(),
-                    checkpoints
+                    checkpoints,
+                    diskSpace
                 )
             );
             return await handler.CaptureAsync(session.OperationId, CancellationToken.None);
@@ -960,7 +1013,8 @@ public sealed class GitWorkspaceE2ETests
 
         public async Task<string> RestoreSnapshotAsync(
             Guid snapshotId,
-            ISnapshotCheckpointSink? checkpoints = null
+            ISnapshotCheckpointSink? checkpoints = null,
+            ISnapshotDiskSpaceProbe? diskSpace = null
         )
         {
             SqliteWorkspaceSessionJournal sessions = new(
@@ -973,7 +1027,8 @@ public sealed class GitWorkspaceE2ETests
                     new GitCliWorkspaceGit(),
                     new GitWorktreeSnapshotScanner(),
                     sessions,
-                    checkpoints
+                    checkpoints,
+                    diskSpace
                 )
             );
             return await service.RestoreAsync(snapshotId, CancellationToken.None);
