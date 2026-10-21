@@ -4,7 +4,7 @@ using GitWorkspacePool.Core.Application;
 
 namespace GitWorkspacePool.Infrastructure;
 
-internal sealed class GitCliWorkspaceGit : IWorkspaceGit
+public sealed class GitCliWorkspaceGit : IWorkspaceGit
 {
     public async Task<bool> IsRegisteredWorktreeAsync(
         string repositoryPath,
