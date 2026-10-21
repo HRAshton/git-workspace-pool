@@ -48,7 +48,10 @@ The journal is an ownership protocol, not a transactional filesystem. No automat
 - Snapshot payloads are content-hashed and rechecked against the source. A versioned manifest records files, missing paths, original HEAD and status.
 - Snapshot storage refuses symlink/junction paths and mixed snapshot/worktree ancestors. Each operation stages under `.pending-*`, publishes with a directory rename, then records the receipt in SQLite.
 - The exporter deliberately rejects snapshots exceeding a conservative file/byte budget. No automatic cleanup of incomplete snapshots.
-- **Snapshot restoration is not implemented.** No session release, Git worktree move, deletion, or warm-pool recycling may be enabled based solely on an exported snapshot.
+- `RestoreWorkspaceSnapshotService` accepts only receipts that were recorded in SQLite and retrieves their original owner. `VerifiedWorkspaceSnapshotRestorer` validates all listed payloads and hashes **before** invoking `git worktree add`.
+- Restore builds a new isolated linked worktree at the captured immutable commit. It reapplies working files and recorded deletions, reinstates the saved Git index and verifies the exact porcelain status against the original. The active PR path and ownership record remain unchanged.
+- Restoration output is outside the warm pool (`%LOCALAPPDATA%\\GitWorkspacePool\\recovered`), and orphaned or interrupted recovery worktrees are never automatically deleted.
+- **Restoration is now verified on offline E2E fixtures**, but explicit release, Git worktree moves, deletion, snapshot pruning and warm-pool recycling remain disabled pending fault-injection and recovery tests.
 
 ## Subsequent slices
 

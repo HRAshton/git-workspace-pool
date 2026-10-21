@@ -266,7 +266,7 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
         CancellationToken cancellationToken
     )
     {
-        EnsureNotReparse(source);
+        WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(source);
         await using (FileStream input = new(
             source,
             FileMode.Open,
@@ -307,7 +307,7 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
         CancellationToken cancellationToken
     )
     {
-        EnsureNotReparse(path);
+        WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(path);
         await using FileStream stream = new(
             path,
             FileMode.Open,
@@ -335,6 +335,7 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
             cancellationToken.ThrowIfCancellationRequested();
             string relative = pending.Pop().TrimEnd('/');
             string path = Resolve(root, relative);
+            WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(path);
 
             FileAttributes attributes;
 

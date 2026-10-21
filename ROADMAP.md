@@ -39,7 +39,10 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [ ] Extend state machine to released / warm / parked with safe ownership transfers.
 - [ ] Explicit release only. No release inferred from editor lifecycle.
 - [x] Implement explicit non-destructive snapshot export for staged/unstaged, untracked, ignored and binary files, with independent staged blobs and a Git index.
-- [ ] Implement and test actual snapshot restoration, race protection, file identity, and configurable artifact policies before releasing any worktree.
+- [x] Restore a journalled snapshot into a separate Git worktree on the saved commit; verify index, working tree files and exact Git status.
+- [x] Reject corrupted payloads and manifest path traversal before allocating a recovery worktree.
+- [ ] Cover systematic fault injection, directory metadata, reparse-point races and orphan recovery before allowing worktree release.
+- [ ] Configurable artifact retention and cleanup policies.
 - [x] Tests for interrupted worktree creation (before journal commit) and cross-handler allocation.
 - [x] Refuse snapshots of locked files without modifying the source or publishing a partial copy.
 - [ ] Add systematic snapshot fault injection and tests for restoration, moves, park and eviction.
@@ -76,7 +79,7 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 | Suite | Scope | Run | Target |
 | --- | --- | --- | --- |
 | Unit | domain and use-case behavior | every change | < 10 s |
-| Fast E2E | real local Git, protocol, named pipe + fake editor | every PR | < 20 s |
+| Fast E2E | real local Git, snapshot restore, protocol, named pipe + fake editor | every PR | < 45 s |
 | IPC integration | real named pipes and protocol launcher | every PR, Windows | < 10 s |
 | Fault injection | interrupted snapshot/move/checkout | every PR after P1 | < 60 s |
 | UI smoke | actual browser/tray/editor | nightly or release | < 3 min |

@@ -350,6 +350,35 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task Snapshot_PathTraversalManifestIsRejectedBeforeCheckout()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        File.WriteAllText(Path.Combine(opened.WorkspacePath, "feature.txt"), "preserve this");
+
+        WorkspaceSnapshotReceipt saved = await fixture.SnapshotAsync();
+        string manifestPath = Path.Combine(saved.Folder, "manifest.json");
+        WorkspaceSnapshotManifest manifest = JsonSerializer.Deserialize<WorkspaceSnapshotManifest>(
+            File.ReadAllText(manifestPath)
+        )!;
+        int firstFile = manifest.Files.FindIndex(file => !file.IsDirectory);
+        Assert.True(firstFile >= 0);
+        manifest.Files[firstFile] = manifest.Files[firstFile] with
+        {
+            RelativePath = "../outside.txt",
+        };
+        File.WriteAllText(manifestPath, JsonSerializer.Serialize(manifest));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.RestoreSnapshotAsync(saved.SnapshotId)
+        );
+
+        Assert.Equal("preserve this", File.ReadAllText(Path.Combine(opened.WorkspacePath, "feature.txt")));
+        Assert.False(Directory.Exists(fixture.RecoveryRoot));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task Snapshot_UnknownSnapshotCannotAllocateRecoveryWorktree()
     {
         using Fixture fixture = await Fixture.CreateAsync();

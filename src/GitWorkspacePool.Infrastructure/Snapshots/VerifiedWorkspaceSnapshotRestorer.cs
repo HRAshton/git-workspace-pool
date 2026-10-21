@@ -235,6 +235,7 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
                 WorkspaceSnapshotPathPolicy.EnsureNotReparse(destination);
             }
 
+            WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(source);
             File.Copy(source, destination, overwrite: true);
             File.SetAttributes(destination, file.Attributes);
             File.SetLastWriteTimeUtc(destination, file.LastWriteUtc);
@@ -271,7 +272,15 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
         WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(
             Path.GetDirectoryName(newIndexPath)!
         );
+        WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(indexFile);
+        WorkspaceSnapshotPathPolicy.EnsureNotReparse(newIndexPath);
         File.Copy(indexFile, newIndexPath, overwrite: true);
+        await VerifyFileAsync(
+            newIndexPath,
+            manifest.GitIndexSha256,
+            null,
+            cancellationToken
+        );
 
         WorktreeSnapshotScan restored = await _scanner.InspectAsync(target, cancellationToken);
 
@@ -283,7 +292,14 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
             );
         }
 
-        // Verifies copy output after restoring the Git index.
+        // Verify the preserved index as well as the working file payloads.
+        await VerifyFileAsync(
+            newIndexPath,
+            manifest.GitIndexSha256,
+            null,
+            cancellationToken
+        );
+
         foreach (WorkspaceSnapshotFile file in manifest.Files.Where(item => !item.IsDirectory))
         {
             string targetFile = WorkspaceSnapshotPathPolicy.Resolve(
