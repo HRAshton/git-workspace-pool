@@ -44,7 +44,8 @@
 - [x] Add conservative free-disk preflight for snapshot and restore with injected low-space E2E; neither operation allocates a new directory when the probe reports insufficient storage.
 - [ ] Prove mid-copy disk-full handling, ACL/read-only, anti-virus lock, long/unicode/case-collision path handling and cancellation.
 - [x] Override Git hook path with a private empty directory and disable external FSMonitor for app-owned Git CLI calls; offline Git E2E covers malicious configured post-checkout hooks.
-- [ ] Audit custom Git smudge/clean filters and external helpers: hook suppression alone does not guarantee that checkout cannot invoke all configured programs.
+- [x] Refuse checkout if effective Git config contains any non-LFS executable filter driver (smudge/clean/process). Force LFS smudge/process to identity by command-line overrides and skip actual LFS downloads. Offline E2E covers PR creation and snapshot restoration refusal without touching existing user files.
+- [ ] Extend hardening to Git external transport/authentication helpers and conditional configuration; explicit provider and user trust decisions may be required.
 - [ ] Migrate old manifest versions explicitly, never reinterpret unknown versions.
 - [ ] Establish snapshot budgets/settings and retention policy; preserve originals until verified recovery.
 

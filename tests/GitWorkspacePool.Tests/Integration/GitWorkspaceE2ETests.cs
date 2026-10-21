@@ -127,6 +127,51 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task GitCli_RefusesCustomSmudgeDriverBeforeCheckout()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        await fixture.ConfigureDangerousFilterAsync();
+
+        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.OpenAsync(PullRequestUrl)
+        );
+
+        Assert.Contains("external filter driver", exception.Message);
+        Assert.False(Directory.Exists(fixture.WorkspacePath(17)));
+        Assert.False(await fixture.IsRegisteredWorktreeAsync(fixture.WorkspacePath(17)));
+        Assert.Empty(fixture.Editor.OpenedPaths);
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task Restore_RefusesCustomSmudgeDriverBeforeCheckout()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string changed = Path.Combine(opened.WorkspacePath, "feature.txt");
+        File.WriteAllText(changed, "preserve original");
+        WorkspaceSnapshotReceipt snapshot = await fixture.SnapshotAsync();
+
+        await fixture.ConfigureDangerousFilterAsync();
+
+        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.RestoreSnapshotAsync(snapshot.SnapshotId)
+        );
+
+        Assert.Contains("external filter driver", exception.Message);
+        Assert.Equal("preserve original", File.ReadAllText(changed));
+        Assert.Empty(Directory.Exists(fixture.RecoveryRoot)
+            ? Directory.GetDirectories(fixture.RecoveryRoot)
+            : []);
+        WorkspaceRestoreOperation intent = Assert.Single(
+            await new SqliteWorkspaceSessionJournal(fixture.DatabasePath)
+                .ListRecoveryRestoresAsync(CancellationToken.None)
+        );
+        Assert.Equal(WorkspaceRestoreState.Preparing, intent.State);
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task OpenPullRequest_ReopensWithoutOverwritingLocalChanges()
     {
         using Fixture fixture = await Fixture.CreateAsync();
@@ -980,6 +1025,14 @@ public sealed class GitWorkspaceE2ETests
                 WorkspacePath(17),
                 "FETCH_HEAD"
             );
+        }
+
+        public async Task ConfigureDangerousFilterAsync()
+        {
+            // No malicious command is executed; a configured external process
+            // is sufficient to prove checkout must be refused.
+            await GitAsync(_source, "config", "filter.untrusted.smudge", "should-not-run");
+            await GitAsync(_source, "config", "filter.untrusted.process", "should-not-run");
         }
 
         public async Task ConfigureFailingCheckoutHookAsync()

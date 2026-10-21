@@ -110,6 +110,15 @@ public sealed class GitCliWorkspaceGit : IWorkspaceGit, IGitRemoteReader
         CancellationToken cancellationToken
     )
     {
+        // Worktree checkout can invoke filter drivers configured by the clone.
+        // Fail closed before Git creates a checkout if any arbitrary driver exists.
+        string filterConfig = await RunAsync(
+            repositoryPath,
+            ["config", "--list", "--name-only", "--null"],
+            cancellationToken
+        );
+        GitProcessSafety.RejectExecutableFilters(filterConfig);
+
         await RunAsync(
             repositoryPath,
             ["worktree", "add", "--detach", workspacePath, commitSha],

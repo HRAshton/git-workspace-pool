@@ -27,7 +27,48 @@ internal static class GitProcessSafety
         startInfo.ArgumentList.Add("-c");
         startInfo.ArgumentList.Add("core.fsmonitor=false");
 
+        // Explicitly make Git LFS checkout an identity filter. External git-lfs
+        // must not run while the application checks out an untrusted PR.
+        startInfo.ArgumentList.Add("-c");
+        startInfo.ArgumentList.Add("filter.lfs.process=");
+        startInfo.ArgumentList.Add("-c");
+        startInfo.ArgumentList.Add("filter.lfs.smudge=");
+        startInfo.ArgumentList.Add("-c");
+        startInfo.ArgumentList.Add("filter.lfs.required=false");
+
         startInfo.Environment["GIT_TERMINAL_PROMPT"] = "0";
         startInfo.Environment["GIT_LFS_SKIP_SMUDGE"] = "1";
+    }
+
+    /// <summary>
+    /// Rejects any effective executable Git filter except LFS, which is explicitly disabled.
+    /// </summary>
+    /// <param name="nullDelimitedNames">Effective Git configuration key names.</param>
+    public static void RejectExecutableFilters(string nullDelimitedNames)
+    {
+        foreach (string name in nullDelimitedNames.Split(
+            '\0',
+            StringSplitOptions.RemoveEmptyEntries
+        ))
+        {
+            if (!name.StartsWith("filter.", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            bool executable = name.EndsWith(".process", StringComparison.OrdinalIgnoreCase)
+                || name.EndsWith(".smudge", StringComparison.OrdinalIgnoreCase)
+                || name.EndsWith(".clean", StringComparison.OrdinalIgnoreCase);
+
+            // Even a globally configured LFS filter cannot run: Configure()
+            // overrides its process/smudge commands with empty values.
+            if (executable && !name.StartsWith("filter.lfs.", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    "The Git clone configures an external filter driver. "
+                    + "The application refuses checkout to avoid running project-controlled code."
+                );
+            }
+        }
     }
 }
