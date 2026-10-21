@@ -9,7 +9,8 @@ public sealed class OpenPullRequestHandlerTests
     [Fact]
     public async Task HandleAsync_ReopensExistingWorktreeWithoutFetchingOrCheckout()
     {
-        Fixture fixture = new() { AlreadyExists = true, Registered = true };
+        Fixture fixture = new() { AlreadyExists = true };
+        fixture.Git.Registered = true;
 
         OpenPullRequestResult result = await fixture.Handler.HandleAsync(
             "https://github.com/owner/repo/pull/17",
@@ -42,7 +43,7 @@ public sealed class OpenPullRequestHandlerTests
     [Fact]
     public async Task HandleAsync_RefusesForeignFolderWithoutModifyingIt()
     {
-        Fixture fixture = new() { AlreadyExists = true, Registered = false };
+        Fixture fixture = new() { AlreadyExists = true };
 
         await Assert.ThrowsAsync<InvalidOperationException>(
             () =>
@@ -96,8 +97,6 @@ public sealed class OpenPullRequestHandlerTests
         }
 
         public bool AlreadyExists { get; init; }
-
-        public bool Registered { get; init; }
 
         public OpenPullRequestHandler Handler { get; }
 
