@@ -33,13 +33,16 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 ## P1 — Session ownership and snapshots
 
 - [x] Durable operation journal for PR acquisition: reservation, immutable commit pin, verification, activation, quarantine.
-- [ ] Extend journal to session release, snapshots, moves, parking, and eviction.
+- [x] Extend the journal to record published snapshot receipts and audit events (SQLite schema v2).
+- [ ] Extend the journal to session release, moves, parking, and eviction.
 - [x] Minimal state machine for acquisition: preparing / active / recovery-required.
 - [ ] Extend state machine to released / warm / parked with safe ownership transfers.
 - [ ] Explicit release only. No release inferred from editor lifecycle.
-- [ ] Preserve tracked/staged/untracked/binary/ignored files according to policy.
+- [x] Implement explicit non-destructive snapshot export for staged/unstaged, untracked, ignored and binary files, with independent staged blobs and a Git index.
+- [ ] Implement and test actual snapshot restoration, race protection, file identity, and configurable artifact policies before releasing any worktree.
 - [x] Tests for interrupted worktree creation (before journal commit) and cross-handler allocation.
-- [ ] Fault injection around snapshot, move, park, and eviction (after those operations exist).
+- [x] Refuse snapshots of locked files without modifying the source or publishing a partial copy.
+- [ ] Add systematic snapshot fault injection and tests for restoration, moves, park and eviction.
 
 **Gate:** every destructive transition can recover after simulated kill; unknown/user data is never silently removed.
 
@@ -61,6 +64,12 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [ ] Multi-repository settings UI, per-user installer, signed binaries.
 - [ ] Diagnostics, opt-in performance traces, reproducible benchmark suite.
 - [ ] Full Windows smoke test: installed userscript + browser + protocol handler + actual VS Code (separate slow CI/manual lane).
+
+## CI resource usage
+
+- GitHub Actions runs use concurrency grouping by workflow and branch, cancelling superseded runs.
+- Markdown-only pushes and PR changes skip the expensive Windows test workflow.
+- Prefer complete, meaningful code batches over many tiny `main` pushes.
 
 ## Test pyramid and time budgets (targets, not measured results)
 

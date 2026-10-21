@@ -31,9 +31,15 @@ dotnet test tests/GitWorkspacePool.Tests/GitWorkspacePool.Tests.csproj --filter 
 
 These tests run on every PR in Windows CI. [Roadmap and acceptance gates](ROADMAP.md) distinguish this fast lane from the later, slower installed-browser-and-editor smoke test.
 
+## Experimental workspace snapshots
+
+The tray menu provides **Snapshot active PR...** for an explicit, non-destructive snapshot. Captures include the Git index, staged blobs independently from unstaged working files, tracked changes, untracked and ignored files (including binary data), deletions and a SHA-256 manifest. Snapshots are stored under `%LOCALAPPDATA%\\GitWorkspacePool\\snapshots`. Only explicitly selected active sessions are eligible.
+
+A snapshot has a conservative **50,000-file / 2 GiB** budget and refuses symlinks/junctions. It does not clean, release, rename, or recycle a worktree. Incomplete snapshots remain marked `.pending-*` for inspection; a published snapshot remains intact if journal registration fails. The **restore command has not been implemented or validated yet**, so snapshots must not be treated as proven backups for destructive cleanup.
+
 ## Non-goals
 
-The app never runs build, npm install, dotnet restore or untrusted PR scripts. Worktree recycling, snapshots, artifact policies, GitLab/Bitbucket adapters and intelligent selection are planned later; **do not use this preview to auto-clean or reassign worktrees**.
+The app never runs build, npm install, dotnet restore or untrusted PR scripts. Worktree recycling, snapshot restoration, artifact policies, GitLab/Bitbucket adapters and intelligent selection are planned later; **do not use this preview to auto-clean or reassign worktrees**.
 
 ## Engineering principles
 

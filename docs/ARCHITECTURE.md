@@ -40,6 +40,16 @@ This is a modular monolith, not a network daemon.
 
 The journal is an ownership protocol, not a transactional filesystem. No automatic deletion, renaming, parking, artifact reuse, or cross-PR reassignment exists yet. `RecoveryRequired` means stop and inspect; it never grants permission to clean.
 
+## Non-destructive workspace snapshot boundary
+
+- `CaptureWorkspaceSnapshotService` is independent of `OpenPullRequestHandler` and `WorkspaceAcquisitionService`.
+- An explicit, active session ID is checked against SQLite, then locked and rechecked. Capture verifies worktree registration without changing HEAD, index or working files.
+- Git status is collected using NUL-delimited porcelain, with ignored and untracked files included. The linked Git index and staged blobs are copied separately from working files.
+- Snapshot payloads are content-hashed and rechecked against the source. A versioned manifest records files, missing paths, original HEAD and status.
+- Snapshot storage refuses symlink/junction paths and mixed snapshot/worktree ancestors. Each operation stages under `.pending-*`, publishes with a directory rename, then records the receipt in SQLite.
+- The exporter deliberately rejects snapshots exceeding a conservative file/byte budget. No automatic cleanup of incomplete snapshots.
+- **Snapshot restoration is not implemented.** No session release, Git worktree move, deletion, or warm-pool recycling may be enabled based solely on an exported snapshot.
+
 ## Subsequent slices
 
 - Durable session journal and safe parking/snapshot protocol.
