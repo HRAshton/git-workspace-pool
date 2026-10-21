@@ -3,8 +3,9 @@
 ## Direction of dependencies
 
 - **Core/Domain**: PR identity, validation, and workspace/session invariants. No Git, Windows, or UI dependencies.
-- **Core/Application**: narrow use cases (open a PR); depends on interfaces for Git and editor actions.
-- **Tray/Infrastructure**: Git CLI, local configuration, Windows protocol registration, named-pipe transport, VS Code launch. No business decisions in the user interface.
+- **Core/Application**: narrow use cases (open a PR); depends on interfaces for Git, session journal, interprocess lock, origin verification and editor actions.
+- **Infrastructure**: Git CLI, SQLite journal, file-based interprocess locks, GitHub remote identity and named-pipe transport. Provider identity checks are isolated from session state changes.
+- **Tray**: local configuration, Windows protocol registration, VS Code launch and composition root. No business decisions in the user interface.
 - **Userscript**: source-specific PR URL recognition and a versioned `prworkspace://open?url=...` message; never shell commands.
 
 This is a modular monolith, not a network daemon.
@@ -12,7 +13,7 @@ This is a modular monolith, not a network daemon.
 ## Invariants
 
 1. Existing worktree paths are never cleaned, switched, or deleted by an open request.
-2. A local repository must be explicitly configured before any fetch or worktree creation.
+2. A local repository must be explicitly configured, and its resolved Git `origin` must match the requested GitHub repository before any fetch, journal reservation or worktree creation.
 3. The request URL is untrusted; no arbitrary file path, executable, ref, or command can be supplied by the browser.
 4. New worktrees are created at deterministic paths beneath a configured workspace root.
 5. Concurrent requests for the same workspace are serialized. PR commits use a dedicated Git ref rather than shared FETCH_HEAD.

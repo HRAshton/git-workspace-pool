@@ -24,7 +24,8 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [x] **Transport E2E:** versioned protocol URL validation, real user-scoped named-pipe transport, and URL → pipe → Git handler → fake editor in an offline fixture.
 - [ ] **Single-instance process E2E:** spawn second protocol launcher, verify mutex forwarding into the existing tray instance, and verify error handling.
 - [x] Recover a pinned checkout after interruption; quarantine mismatching/unknown paths without cleanup.
-- [ ] Validate registered Git remotes and reject mismatching/ambiguous repositories.
+- [x] Verify the configured GitHub clone's resolved `origin` (HTTPS or SSH) before allocating; reject lookalike hosts and mismatching repositories.
+- [ ] Extend remote identity validation to each newly supported Git provider.
 - [x] Prevent concurrent or cross-process duplicate allocations via SQLite unique ownership and OS file locks.
 
 **Gate:** tests cover create, reopen, unchanged local edits, reject unknown folders, invalid URLs, concurrent clicks, and interrupted Git operations. No network dependency in the fast lane.
