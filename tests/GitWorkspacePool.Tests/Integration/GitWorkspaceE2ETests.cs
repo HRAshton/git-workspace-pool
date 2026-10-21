@@ -164,6 +164,38 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task OpenPullRequest_RecoversInterruptedCheckoutAfterRestart()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        await fixture.SimulateInterruptedPreparationAsync(17);
+        string workspacePath = fixture.WorkspacePath(17);
+        File.WriteAllText(Path.Combine(workspacePath, "notes.local"), "saved user notes");
+
+        OpenPullRequestResult result = await fixture.OpenWithFreshHandlerAsync(PullRequestUrl);
+
+        Assert.True(result.Reused);
+        Assert.Equal("saved user notes", File.ReadAllText(Path.Combine(workspacePath, "notes.local")));
+        Assert.Equal(workspacePath, Assert.Single(fixture.Editor.OpenedPaths));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task OpenPullRequest_DifferentHandlersCannotDoubleAllocate()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+
+        OpenPullRequestResult[] results = await Task.WhenAll(
+            fixture.OpenAsync(PullRequestUrl),
+            fixture.OpenWithFreshHandlerAsync(PullRequestUrl)
+        );
+
+        Assert.Single(results.Where(result => !result.Reused));
+        Assert.Single(results.Where(result => result.Reused));
+        Assert.True(await fixture.IsRegisteredWorktreeAsync(results[0].WorkspacePath));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task OpenPullRequest_UnknownPullRequestDoesNotAllocateWorktree()
     {
         using Fixture fixture = await Fixture.CreateAsync();
@@ -190,13 +222,8 @@ public sealed class GitWorkspaceE2ETests
             _workspaces = workspaces;
             Editor = editor;
 
-            RepositoryRegistration registration = new("owner/repo", _source, _workspaces);
-            _handler = new OpenPullRequestHandler(
-                new Catalog(registration),
-                new GitCliWorkspaceGit(),
-                new WorkspaceDirectories(),
-                Editor
-            );
+            _handler = CreateHandler();
+
         }
 
         public FakeEditor Editor { get; }
@@ -245,6 +272,53 @@ public sealed class GitWorkspaceE2ETests
 
         public Task<OpenPullRequestResult> OpenAsync(string url) =>
             _handler.HandleAsync(url, CancellationToken.None);
+
+        public Task<OpenPullRequestResult> OpenWithFreshHandlerAsync(string url) =>
+            CreateHandler().HandleAsync(url, CancellationToken.None);
+
+        public async Task SimulateInterruptedPreparationAsync(int pullRequestNumber)
+        {
+            string statePath = Path.Combine(_root, "state", "sessions.db");
+            SqliteWorkspaceSessionJournal journal = new(statePath);
+            WorkspaceSession session = await journal.GetOrCreateAsync(
+                "github:owner/repo",
+                pullRequestNumber,
+                _source,
+                WorkspacePath(pullRequestNumber),
+                CancellationToken.None
+            );
+            GitCliWorkspaceGit git = new();
+            await git.FetchPullRequestAsync(_source, pullRequestNumber, CancellationToken.None);
+            string pinned = await git.GetPullRequestCommitAsync(
+                _source,
+                pullRequestNumber,
+                CancellationToken.None
+            );
+            await journal.PinCommitAsync(session.OperationId, pinned, CancellationToken.None);
+            Directory.CreateDirectory(_workspaces);
+            await git.CreateWorktreeAsync(
+                _source,
+                WorkspacePath(pullRequestNumber),
+                pinned,
+                CancellationToken.None
+            );
+
+            // Simulate process termination before the journal's Activated transition.
+        }
+
+        private OpenPullRequestHandler CreateHandler()
+        {
+            RepositoryRegistration registration = new("owner/repo", _source, _workspaces);
+            string stateDirectory = Path.Combine(_root, "state");
+            return new OpenPullRequestHandler(
+                new Catalog(registration),
+                new GitCliWorkspaceGit(),
+                new WorkspaceDirectories(),
+                Editor,
+                new SqliteWorkspaceSessionJournal(Path.Combine(stateDirectory, "sessions.db")),
+                new FileWorkspaceOperationLock(Path.Combine(stateDirectory, "locks"))
+            );
+        }
 
         public string WorkspacePath(int number) => Path.Combine(
             _workspaces,
