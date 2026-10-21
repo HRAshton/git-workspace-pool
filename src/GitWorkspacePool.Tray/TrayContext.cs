@@ -18,6 +18,7 @@ internal sealed class TrayContext : ApplicationContext
     private readonly IWorkspaceSnapshotSessionStore _sessions;
     private readonly CaptureWorkspaceSnapshotService _snapshot;
     private readonly RestoreWorkspaceSnapshotService _restore;
+    private readonly IWorkspaceRecoveryInspector _recoveryInspector;
 
     public TrayContext(string? initialRequest)
     {
@@ -61,6 +62,12 @@ internal sealed class TrayContext : ApplicationContext
                 new GitWorktreeSnapshotScanner()
             )
         );
+        _recoveryInspector = new WorkspaceRecoveryInspector(
+            Path.Combine(stateRoot, "snapshots"),
+            Path.Combine(stateRoot, "recovered"),
+            journal,
+            git
+        );
         WorkspaceAcquisitionService acquisition = new(
             git,
             new WorkspaceDirectories(),
@@ -81,6 +88,10 @@ internal sealed class TrayContext : ApplicationContext
         ToolStripMenuItem restoreMenu = new("Restore snapshot to new worktree...");
         restoreMenu.DropDownOpening += async (_, _) => await PopulateRestoresAsync(restoreMenu);
         menu.Items.Insert(2, restoreMenu);
+
+        ToolStripMenuItem recoveryMenu = new("Recovery diagnostics...");
+        recoveryMenu.DropDownOpening += async (_, _) => await PopulateRecoveryDiagnosticsAsync(recoveryMenu);
+        menu.Items.Insert(3, recoveryMenu);
 
         _ = ListenAsync(_shutdown.Token);
 
@@ -226,6 +237,55 @@ internal sealed class TrayContext : ApplicationContext
         catch (Exception exception)
         {
             Notify("Recovery could not be verified", exception.Message);
+        }
+    }
+
+    private async Task PopulateRecoveryDiagnosticsAsync(ToolStripMenuItem menu)
+    {
+        menu.DropDownItems.Clear();
+
+        try
+        {
+            IReadOnlyList<WorkspaceRecoveryFinding> findings =
+                await _recoveryInspector.ScanAsync(_shutdown.Token);
+
+            if (findings.Count == 0)
+            {
+                menu.DropDownItems.Add(new ToolStripMenuItem("No recovery issues found")
+                {
+                    Enabled = false,
+                });
+                return;
+            }
+
+            foreach (WorkspaceRecoveryFinding finding in findings.Take(25))
+            {
+                menu.DropDownItems.Add(new ToolStripMenuItem(
+                    $"{finding.Kind}: {Path.GetFileName(finding.Path)}"
+                )
+                {
+                    ToolTipText = finding.Description + Environment.NewLine + finding.Path,
+                    Enabled = false,
+                });
+            }
+
+            if (findings.Count > 25)
+            {
+                menu.DropDownItems.Add(new ToolStripMenuItem(
+                    $"{findings.Count - 25} more entries require inspection"
+                )
+                {
+                    Enabled = false,
+                });
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Application is exiting.
+        }
+        catch (Exception exception)
+        {
+            Notify("Recovery inspection failed", exception.Message);
         }
     }
 

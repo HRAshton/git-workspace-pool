@@ -616,6 +616,73 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task RecoveryInventory_DiscoversPendingAndUnjournalledSnapshotAfterFailure()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string sourceFile = Path.Combine(opened.WorkspacePath, "feature.txt");
+        File.WriteAllText(sourceFile, "user edits must survive");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.SnapshotAsync(
+                new ThrowAtCheckpoint(SnapshotCheckpoint.ExportIndexCopied)
+            )
+        );
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.SnapshotAsync(
+                new ThrowAtCheckpoint(SnapshotCheckpoint.ExportPublished)
+            )
+        );
+
+        IReadOnlyList<WorkspaceRecoveryFinding> findings = await fixture.ScanRecoveryAsync();
+
+        Assert.Contains(findings, finding => finding.Kind == WorkspaceRecoveryKind.IncompleteSnapshot);
+        Assert.Contains(findings, finding => finding.Kind == WorkspaceRecoveryKind.UnjournalledSnapshot);
+        Assert.Empty(await fixture.ListPublishedSnapshotsAsync());
+        Assert.Equal("user edits must survive", File.ReadAllText(sourceFile));
+        Assert.Equal(WorkspaceSessionState.Active, (await fixture.OwnedSessionAsync()).State);
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task RecoveryInventory_FindsUnmanagedRestoreAndMissingJournalledSnapshot()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string sourceFile = Path.Combine(opened.WorkspacePath, "feature.txt");
+        File.WriteAllText(sourceFile, "keep me");
+        WorkspaceSnapshotReceipt receipt = await fixture.SnapshotAsync();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.RestoreSnapshotAsync(
+                receipt.SnapshotId,
+                new ThrowAtCheckpoint(SnapshotCheckpoint.RestoreIndexApplied)
+            )
+        );
+
+        IReadOnlyList<WorkspaceRecoveryFinding> orphaned = await fixture.ScanRecoveryAsync();
+        WorkspaceRecoveryFinding recovery = Assert.Single(
+            orphaned.Where(finding =>
+                finding.Kind == WorkspaceRecoveryKind.UnmanagedRecoveryWorktree
+            )
+        );
+        Assert.True(await fixture.IsRegisteredWorktreeAsync(recovery.Path));
+
+        // Simulate external removal/movement without ever deleting user data.
+        Directory.Move(receipt.Folder, receipt.Folder + "-relocated");
+        IReadOnlyList<WorkspaceRecoveryFinding> findings = await fixture.ScanRecoveryAsync();
+        Assert.Contains(
+            findings,
+            finding =>
+                finding.Kind == WorkspaceRecoveryKind.MissingSnapshot
+                && finding.SnapshotId == receipt.SnapshotId
+        );
+        Assert.Equal("keep me", File.ReadAllText(sourceFile));
+        Assert.Equal(WorkspaceSessionState.Active, (await fixture.OwnedSessionAsync()).State);
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task Snapshot_RefusesLockedUserFileWithoutPublishing()
     {
         using Fixture fixture = await Fixture.CreateAsync();
@@ -805,6 +872,18 @@ public sealed class GitWorkspaceE2ETests
                 await journal.ListActiveAsync(CancellationToken.None)
             );
             return session;
+        }
+
+        public Task<IReadOnlyList<WorkspaceRecoveryFinding>> ScanRecoveryAsync()
+        {
+            SqliteWorkspaceSessionJournal sessions = new(DatabasePath);
+            WorkspaceRecoveryInspector inspector = new(
+                SnapshotRoot,
+                RecoveryRoot,
+                sessions,
+                new GitCliWorkspaceGit()
+            );
+            return inspector.ScanAsync(CancellationToken.None);
         }
 
         public Task<IReadOnlyList<WorkspaceSnapshotRecord>> ListPublishedSnapshotsAsync()

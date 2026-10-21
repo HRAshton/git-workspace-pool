@@ -35,7 +35,8 @@
 - [x] Injectable exception/fault checkpoints at snapshot export, publish and restore milestones; tests assert preserved source, retained partial data, retry and ownership.
 - [x] Run real parent-initiated OS process kills at snapshot pre-publish/post-publish and restore worktree-created/index-applied boundaries; assert no original-data loss, persistent orphan state, and successful retry.
 - [ ] Expand process-kill coverage to every remaining operation checkpoint and add low-space/concurrent-mutation tests before enabling cleanup.
-- [ ] Restore operation journal (in-progress / verified / orphaned) and discoverable orphan recovery.
+- [x] Read-only inventory of pending exports, unjournalled/missing snapshots and unmanaged recovery worktrees, exposed in tray diagnostics.
+- [ ] Add durable restore operation journal (in-progress / verified / orphaned); inventory alone does not permit automated cleanup.
 - [x] Recheck status, index hash, file digests and enumerated paths immediately before snapshot publication; E2E verifies a last-moment working-file edit and concurrent Git index mutation both reject publication.
 - [ ] Strengthen file identity, reparse-point race protection, and unsupported index extension/conflict handling before release or eviction.
 - [ ] Prove low disk, ACL/read-only, anti-virus lock, long/unicode/case-collision path handling and cancellation.

@@ -8,7 +8,7 @@ namespace GitWorkspacePool.Infrastructure;
 /// <summary>
 /// Durable, transactional workspace ownership and append-only operation events.
 /// </summary>
-public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IWorkspaceSnapshotSessionStore
+public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IWorkspaceSnapshotSessionStore, IWorkspaceRecoveryJournal
 {
     private readonly string _connectionString;
 
@@ -241,6 +241,34 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
 
         while (reader.Read())
         {
+            records.Add(MapSnapshot(reader));
+        }
+
+        return Task.FromResult<IReadOnlyList<WorkspaceSnapshotRecord>>(records);
+    }
+
+    /// <inheritdoc/>
+    public Task<IReadOnlyList<WorkspaceSnapshotRecord>> ListRecoverySnapshotsAsync(
+        CancellationToken cancellationToken
+    )
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using SqliteConnection connection = Open();
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = SnapshotSelect
+            + " ORDER BY snapshots.rowid LIMIT 10001";
+        List<WorkspaceSnapshotRecord> records = [];
+        using SqliteDataReader reader = command.ExecuteReader();
+
+        while (reader.Read())
+        {
+            if (records.Count >= 10000)
+            {
+                throw new InvalidOperationException(
+                    "The recovery journal exceeds the safe inventory limit."
+                );
+            }
+
             records.Add(MapSnapshot(reader));
         }
 

@@ -61,6 +61,13 @@ The journal is an ownership protocol, not a transactional filesystem. No automat
 - Offline E2E covers retries, persistent ownership, and preservation of failed-operation output. A dedicated `GitWorkspacePool.CrashProbe` executable can block at a checkpoint while the test runner **kills the actual child process**. Tests verify Windows releases its interprocess locks and preserves orphaned worktrees and user data.
 - Coverage so far includes kill-before-publication, kill-after-publication-before-receipt, and recovery-worktree creation/index checkpoints. **Power loss, low disk and concurrent mutation remain separate RC gates.**
 
+## Read-only recovery inventory
+
+- `IWorkspaceRecoveryInspector` reports incomplete exports, snapshots missing an SQLite receipt, journalled snapshots missing their directory, and isolated recovery worktrees.
+- The infrastructure inspector uses `IWorkspaceRecoveryJournal` to read **all** snapshot receipts, not the UI's last 50; scans are bounded and never change ownership, Git state or filesystem contents.
+- Junctions/symlinks are flagged but not traversed. A recovered worktree is verified against its original clone's Git registration where possible.
+- `Recovery diagnostics...` in the tray shows findings for manual inspection only. Do not automatically delete orphaned data, including after a reboot.
+
 ## Subsequent slices
 
 - Durable session journal and safe parking/snapshot protocol.
