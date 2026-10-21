@@ -1,5 +1,7 @@
 # Roadmap
 
+**Full gated implementation plan through RC1:** [Release Candidate Plan](docs/RELEASE_CANDIDATE_PLAN.md). This roadmap tracks current implementation status; the RC plan defines complete scope, dependencies, test strategy and release gates.
+
 > Goal: minimize time from opening a pull request to editing it locally, with minimum reasonable disk overhead and no loss of user changes.
 
 This is a Windows tray app + Tampermonkey userscript. The application **never** builds projects, restores dependencies, runs tests from a PR, or predicts which PR will be opened next.
@@ -45,7 +47,7 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [ ] Configurable artifact retention and cleanup policies.
 - [x] Tests for interrupted worktree creation (before journal commit) and cross-handler allocation.
 - [x] Refuse snapshots of locked files without modifying the source or publishing a partial copy.
-- [ ] Add systematic snapshot fault injection and tests for restoration, moves, park and eviction.
+- [ ] Add systematic snapshot fault injection and tests for restoration, moves, park and eviction. See M1/M2 in the [RC plan](docs/RELEASE_CANDIDATE_PLAN.md).
 
 **Gate:** every destructive transition can recover after simulated kill; unknown/user data is never silently removed.
 
