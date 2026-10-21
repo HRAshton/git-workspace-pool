@@ -5,13 +5,15 @@ namespace GitWorkspacePool.Tray;
 
 internal static class PipeRelay
 {
+    public const string PipeName = "GitWorkspacePool.Requests.v1";
+
     public static async Task SendAsync(string message, CancellationToken cancellationToken)
     {
         for (int attempt = 0; attempt < 10; attempt++)
         {
             using NamedPipeClientStream client = new(
                 ".",
-                ProtocolRequest.PipeName,
+                PipeName,
                 PipeDirection.Out,
                 PipeOptions.Asynchronous
             );

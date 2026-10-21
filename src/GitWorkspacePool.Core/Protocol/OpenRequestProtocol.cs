@@ -1,11 +1,9 @@
 using GitWorkspacePool.Core.Domain;
 
-namespace GitWorkspacePool.Tray;
+namespace GitWorkspacePool.Core.Protocol;
 
-internal static class ProtocolRequest
+public static class OpenRequestProtocol
 {
-    public const string PipeName = "GitWorkspacePool.Requests.v1";
-
     public static bool TryExtract(string? raw, out string requestUrl)
     {
         requestUrl = string.Empty;

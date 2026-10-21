@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using GitWorkspacePool.Core.Application;
 using GitWorkspacePool.Core.Domain;
+using GitWorkspacePool.Core.Protocol;
 using GitWorkspacePool.Infrastructure;
 using Xunit;
 
@@ -13,6 +14,22 @@ namespace GitWorkspacePool.Tests.Integration;
 public sealed class GitWorkspaceE2ETests
 {
     private const string PullRequestUrl = "https://github.com/owner/repo/pull/17";
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task OpenPullRequest_ProtocolUrlToRealGitWorktree()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        string protocolUrl = "prworkspace://open?url="
+            + Uri.EscapeDataString(PullRequestUrl)
+            + "&v=1";
+
+        Assert.True(OpenRequestProtocol.TryExtract(protocolUrl, out string requestUrl));
+        OpenPullRequestResult result = await fixture.OpenAsync(requestUrl);
+
+        Assert.True(await fixture.IsRegisteredWorktreeAsync(result.WorkspacePath));
+        Assert.Equal(result.WorkspacePath, Assert.Single(fixture.Editor.OpenedPaths));
+    }
 
     [Fact]
     [Trait("Category", "FastE2E")]

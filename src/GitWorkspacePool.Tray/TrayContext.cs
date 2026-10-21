@@ -2,6 +2,7 @@ using System.Drawing;
 using System.IO.Pipes;
 using System.Text;
 using GitWorkspacePool.Core.Application;
+using GitWorkspacePool.Core.Protocol;
 using GitWorkspacePool.Infrastructure;
 using GitWorkspacePool.Tray.Infrastructure;
 
@@ -73,7 +74,7 @@ internal sealed class TrayContext : ApplicationContext
             while (!cancellationToken.IsCancellationRequested)
             {
                 using NamedPipeServerStream pipe = new(
-                    ProtocolRequest.PipeName,
+                    PipeRelay.PipeName,
                     PipeDirection.In,
                     1,
                     PipeTransmissionMode.Byte,
@@ -107,7 +108,7 @@ internal sealed class TrayContext : ApplicationContext
 
     private async Task HandleRequestAsync(string raw)
     {
-        if (!ProtocolRequest.TryExtract(raw, out string requestUrl))
+        if (!OpenRequestProtocol.TryExtract(raw, out string requestUrl))
         {
             Notify("Rejected URL", "Only configured GitHub pull requests are accepted.");
             return;
