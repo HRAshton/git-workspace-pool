@@ -6,7 +6,7 @@ namespace GitWorkspacePool.Infrastructure.Snapshots;
 public sealed class WorkspaceSnapshotManifest
 {
     /// <summary>Manifest version used for future restore compatibility.</summary>
-    public int Version { get; init; } = 1;
+    public int Version { get; init; } = 2;
 
     /// <summary>Snapshot identity.</summary>
     public required Guid SnapshotId { get; init; }
@@ -29,24 +29,10 @@ public sealed class WorkspaceSnapshotManifest
     /// <summary>Copied file and directory metadata.</summary>
     public required List<WorkspaceSnapshotFile> Files { get; init; }
 
+    /// <summary>Git index stage-zero blob payloads preserved independently from the working tree.</summary>
+    public required List<WorkspaceSnapshotFile> StagedFiles { get; init; }
+
     /// <summary>Paths missing from the worktree, including tracked deletions.</summary>
     public required List<string> MissingPaths { get; init; }
 }
 
-/// <summary>
-/// Metadata of one captured file or directory under files/.
-/// </summary>
-/// <param name="RelativePath">Git-style forward-slash relative path.</param>
-/// <param name="IsDirectory">Whether this is a directory.</param>
-/// <param name="Sha256">Content hash for a file; null for a directory.</param>
-/// <param name="Length">File length or zero for a directory.</param>
-/// <param name="Attributes">Original filesystem attributes.</param>
-/// <param name="LastWriteUtc">Original last write time.</param>
-public sealed record WorkspaceSnapshotFile(
-    string RelativePath,
-    bool IsDirectory,
-    string? Sha256,
-    long Length,
-    FileAttributes Attributes,
-    DateTime LastWriteUtc
-);

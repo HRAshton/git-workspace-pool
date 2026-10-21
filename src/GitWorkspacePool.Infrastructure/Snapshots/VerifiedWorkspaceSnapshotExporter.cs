@@ -130,6 +130,50 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
             );
         }
 
+        // A staged file can differ from the current working copy; back up both versions.
+        GitStagedBlobExporter stagedExporter = new();
+        List<WorkspaceSnapshotFile> stagedFiles = [];
+        string stagedRoot = Path.Combine(staging, "staged");
+        Directory.CreateDirectory(stagedRoot);
+
+        foreach (string relative in GitStagedBlobExporter.FindStagedFiles(before.Status))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (fileCount >= MaxSnapshotFiles)
+            {
+                throw new InvalidOperationException("Snapshot exceeds its staged-file budget.");
+            }
+
+            string destination = Resolve(stagedRoot, relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            long length = await stagedExporter.ExportAsync(
+                root,
+                relative,
+                destination,
+                cancellationToken
+            );
+
+            copiedBytes += length;
+            fileCount++;
+
+            if (copiedBytes > MaxSnapshotBytes)
+            {
+                throw new InvalidOperationException("Snapshot exceeds its staged-byte budget.");
+            }
+
+            stagedFiles.Add(
+                new WorkspaceSnapshotFile(
+                    relative,
+                    false,
+                    await HashFileAsync(destination, cancellationToken),
+                    length,
+                    File.GetAttributes(destination),
+                    File.GetLastWriteTimeUtc(destination)
+                )
+            );
+        }
+
         WorktreeSnapshotScan after = await _scanner.InspectAsync(root, cancellationToken);
         SnapshotTree finalTree = ExpandChanges(root, after.ChangedPaths, cancellationToken);
 
@@ -179,6 +223,7 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
             StatusBase64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(before.Status)),
             GitIndexSha256 = indexHash,
             Files = files,
+            StagedFiles = stagedFiles,
             MissingPaths = initial.Missing,
         };
 
