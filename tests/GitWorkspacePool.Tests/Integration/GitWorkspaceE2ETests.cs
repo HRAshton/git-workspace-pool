@@ -179,7 +179,7 @@ public sealed class GitWorkspaceE2ETests
             }
             catch
             {
-                Directory.Delete(root, recursive: true);
+                DeleteFixtureTree(root);
                 throw;
             }
         }
@@ -201,7 +201,18 @@ public sealed class GitWorkspaceE2ETests
 
         public void Dispose()
         {
-            Directory.Delete(_root, recursive: true);
+            DeleteFixtureTree(_root);
+        }
+
+        private static void DeleteFixtureTree(string root)
+        {
+            // Git object files are read-only on Windows. This is disposable test data only.
+            foreach (string file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+            {
+                File.SetAttributes(file, FileAttributes.Normal);
+            }
+
+            Directory.Delete(root, recursive: true);
         }
 
         private static async Task GitAsync(string workingDirectory, params string[] arguments)
