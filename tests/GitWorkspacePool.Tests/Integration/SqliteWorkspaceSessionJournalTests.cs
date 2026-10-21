@@ -27,7 +27,7 @@ public sealed class SqliteWorkspaceSessionJournalTests
         Assert.Equal(WorkspaceSessionState.Active, restored.State);
         Assert.Equal(new string('a', 40), restored.PinnedCommitSha);
 
-        using SqliteConnection connection = new($"Data Source={fixture.DatabasePath}");
+        using SqliteConnection connection = new($"Data Source={fixture.DatabasePath};Pooling=False");
         connection.Open();
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = """
