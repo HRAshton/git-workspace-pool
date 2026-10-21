@@ -19,6 +19,18 @@ This is a modular monolith, not a network daemon.
 6. There is no background compilation, dependency installation or PR prediction.
 7. No attempt is made to infer workspace release from VS Code process state.
 
+## Durable ownership for PR acquisition
+
+- `SqliteWorkspaceSessionJournal` (infrastructure) records a unique PR/worktree owner and append-only transition events under `%LOCALAPPDATA%\\GitWorkspacePool\\sessions.db`. The database uses a direct ADO.NET adapter rather than a generic repository.
+- `FileWorkspaceOperationLock` holds a `FileShare.None` lock on a per-workspace file. It works across process boundaries, and the OS releases it on process termination. A single in-process semaphore alone is insufficient.
+- Before checkout: persist `Preparing`, fetch the PR, resolve its **full commit SHA**, persist the SHA, then create a detached worktree at that exact commit. Never use moving `FETCH_HEAD` for recovery.
+- After checkout: verify both filesystem presence and Git worktree registration, then compare the checked-out HEAD to the pinned SHA before marking `Active`.
+- On retry after interruption: a matching pinned/registered worktree can be reactivated without checkout; a missing worktree may resume from the pinned commit; conflicting paths are marked `RecoveryRequired` without modifying files.
+- Once `Active`, a PR worktree is always reopened **unchanged**. The user may commit or change branches. Missing active worktrees are quarantined, never silently reallocated.
+- A previous preview worktree without an ownership journal is deliberately **not silently adopted**; a future explicit adoption/migration flow is required.
+
+The journal is an ownership protocol, not a transactional filesystem. No automatic deletion, renaming, parking, artifact reuse, or cross-PR reassignment exists yet. `RecoveryRequired` means stop and inspect; it never grants permission to clean.
+
 ## Subsequent slices
 
 - Durable session journal and safe parking/snapshot protocol.

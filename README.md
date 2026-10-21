@@ -4,7 +4,7 @@ A Windows tray application that opens GitHub pull requests in local VS Code work
 
 ## Status
 
-Early MVP. The initial vertical slice uses explicitly configured local repositories and creates or reopens a dedicated worktree per PR. It does **not** compile projects, install packages, recycle occupied worktrees, or delete user files.
+Early MVP. The initial vertical slice uses explicitly configured local repositories and creates or reopens a dedicated worktree per PR. New workspaces are reserved in a local SQLite journal before checkout and Git commit identity is pinned for safe recovery. It does **not** compile projects, install packages, recycle occupied worktrees, or delete user files.
 
 ## Getting started (Windows, .NET 10 SDK)
 
@@ -13,6 +13,8 @@ Early MVP. The initial vertical slice uses explicitly configured local repositor
 3. Configure a local repository and workspace root in `settings.json` using the documented example there.
 4. Run the tray application and install `userscript/git-workspace-pool.user.js` in Tampermonkey.
 5. Open a GitHub PR and click **Open locally**. The first request fetches that PR and creates a detached worktree. Subsequent requests reopen it without checkout, protecting local edits.
+
+Session ownership data is stored in `%LOCALAPPDATA%\\GitWorkspacePool\\sessions.db`. The app can reconcile a previously interrupted checkout; it will **refuse to overwrite unknown or previously untracked existing worktrees**, including worktrees created by older preview builds. Manual adoption is not implemented yet. Back up existing preview workspaces before upgrading.
 
 No admin rights or background Windows service are required. The browser protocol is untrusted input: only recognized GitHub PR URLs matching configured repositories are accepted.
 

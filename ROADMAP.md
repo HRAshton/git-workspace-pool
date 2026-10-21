@@ -23,19 +23,22 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [x] **Fast local Git E2E:** temporary bare remote + local clone + fake `refs/pull/N/head`; real `git fetch` and `git worktree add`; fake editor; no network, browser or UI automation.
 - [x] **Transport E2E:** versioned protocol URL validation, real user-scoped named-pipe transport, and URL → pipe → Git handler → fake editor in an offline fixture.
 - [ ] **Single-instance process E2E:** spawn second protocol launcher, verify mutex forwarding into the existing tray instance, and verify error handling.
-- [ ] Worktree recovery on partial Git failures; no auto-clean of unknown paths.
+- [x] Recover a pinned checkout after interruption; quarantine mismatching/unknown paths without cleanup.
 - [ ] Validate registered Git remotes and reject mismatching/ambiguous repositories.
-- [ ] Prevent concurrent or cross-process duplicate allocations.
+- [x] Prevent concurrent or cross-process duplicate allocations via SQLite unique ownership and OS file locks.
 
 **Gate:** tests cover create, reopen, unchanged local edits, reject unknown folders, invalid URLs, concurrent clicks, and interrupted Git operations. No network dependency in the fast lane.
 
 ## P1 — Session ownership and snapshots
 
-- [ ] Durable operation journal: intent, validate, execute, verify, commit.
-- [ ] Session state machine: preparing / active / released / warm / parked / recovery-required.
+- [x] Durable operation journal for PR acquisition: reservation, immutable commit pin, verification, activation, quarantine.
+- [ ] Extend journal to session release, snapshots, moves, parking, and eviction.
+- [x] Minimal state machine for acquisition: preparing / active / recovery-required.
+- [ ] Extend state machine to released / warm / parked with safe ownership transfers.
 - [ ] Explicit release only. No release inferred from editor lifecycle.
 - [ ] Preserve tracked/staged/untracked/binary/ignored files according to policy.
-- [ ] Crash recovery and fault injection around each filesystem operation.
+- [x] Tests for interrupted worktree creation (before journal commit) and cross-handler allocation.
+- [ ] Fault injection around snapshot, move, park, and eviction (after those operations exist).
 
 **Gate:** every destructive transition can recover after simulated kill; unknown/user data is never silently removed.
 
