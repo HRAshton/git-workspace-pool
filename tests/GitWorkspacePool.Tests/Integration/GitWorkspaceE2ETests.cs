@@ -196,6 +196,26 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task RepositoryOrigin_RealGitReaderRejectsMismatchedLocalRemote()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        PullRequestReference request = new("github", "owner", "repo", 17);
+        RepositoryRegistration registration = new(
+            request.RepositoryKey,
+            fixture.SourcePath,
+            fixture.WorkspacePath(17)
+        );
+
+        GitHubOriginVerifier verifier = new(new GitCliWorkspaceGit());
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => verifier.VerifyAsync(request, registration, CancellationToken.None)
+        );
+        Assert.False(Directory.Exists(fixture.WorkspacePath(17)));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task OpenPullRequest_UnknownPullRequestDoesNotAllocateWorktree()
     {
         using Fixture fixture = await Fixture.CreateAsync();
@@ -225,6 +245,8 @@ public sealed class GitWorkspaceE2ETests
             _handler = CreateHandler();
 
         }
+
+        public string SourcePath => _source;
 
         public FakeEditor Editor { get; }
 
