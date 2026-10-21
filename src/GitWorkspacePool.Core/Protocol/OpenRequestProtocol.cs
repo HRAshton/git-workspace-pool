@@ -2,8 +2,17 @@ using GitWorkspacePool.Core.Domain;
 
 namespace GitWorkspacePool.Core.Protocol;
 
+/// <summary>
+/// Parses the narrow, versioned browser-to-local-application URL contract.
+/// </summary>
 public static class OpenRequestProtocol
 {
+    /// <summary>
+    /// Validates the protocol payload and extracts only an accepted pull request URL.
+    /// </summary>
+    /// <param name="raw">The untrusted external protocol URL.</param>
+    /// <param name="requestUrl">The parsed PR URL if accepted.</param>
+    /// <returns>Whether the protocol URL was accepted.</returns>
     public static bool TryExtract(string? raw, out string requestUrl)
     {
         requestUrl = string.Empty;
