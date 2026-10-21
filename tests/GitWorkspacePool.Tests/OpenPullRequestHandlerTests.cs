@@ -250,6 +250,18 @@ public sealed class OpenPullRequestHandlerTests
             return Task.CompletedTask;
         }
 
+        public Task SuspendAsync(Guid operationId, CancellationToken cancellationToken)
+        {
+            _session = _session! with { State = WorkspaceSessionState.Suspended };
+            return Task.CompletedTask;
+        }
+
+        public Task ResumeAsync(Guid operationId, CancellationToken cancellationToken)
+        {
+            _session = _session! with { State = WorkspaceSessionState.Active };
+            return Task.CompletedTask;
+        }
+
         public Task RequireRecoveryAsync(Guid operationId, CancellationToken cancellationToken)
         {
             _session = _session! with { State = WorkspaceSessionState.RecoveryRequired };

@@ -51,7 +51,9 @@
 
 ### M2 — ownership and parking
 
-- [ ] Model explicit allowed transitions and generation IDs (the pool never infers ownership from folder names).
+- [x] Add a strictly non-destructive `Suspended` session state: explicit tray command keeps the same owned worktree and resumes on opening its PR; SQLite migration v4 and E2E verify no file changes.
+- [x] Prevent automatic reactivation of `RecoveryRequired` sessions; only an explicitly audited recovery may clear quarantine.
+- [ ] Model explicit release/park transitions and generation IDs (the pool never infers ownership from folder names).
 - [ ] `ReleaseSession` use case: confirm → lock → inspect → snapshot and round-trip verify (where required) → journal intent → prepare disposition → verify → commit; otherwise `RecoveryRequired`.
 - [ ] `ParkSession` use case: retain identity, staged/untracked/ignored, editor-associated context where safely possible; ensure enough disk space for snapshot.
 - [ ] `RestoreParkedSession` with safe location allocation, exact content validation and explicit activation.

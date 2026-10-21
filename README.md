@@ -31,6 +31,10 @@ dotnet test tests/GitWorkspacePool.Tests/GitWorkspacePool.Tests.csproj --filter 
 
 These tests run on every PR in Windows CI. [Roadmap and acceptance gates](ROADMAP.md) distinguish this fast lane from the later, slower installed-browser-and-editor smoke test.
 
+## Explicit session suspension
+
+The tray menu provides **Suspend active PR (keep worktree)...**. This only changes the durable activity state: the original Git worktree, all local modifications and exclusive PR ownership stay untouched. Opening the same PR resumes it. **Suspension does not free disk space, release a warm slot or enable recycling.** A worktree in `RecoveryRequired` can no longer be reactivated by normal PR opening.
+
 ## Experimental workspace snapshots
 
 The tray menu provides **Snapshot active PR...** for an explicit, non-destructive snapshot. Captures include the Git index, staged blobs independently from unstaged working files, tracked changes, untracked and ignored files (including binary data), deletions and a SHA-256 manifest. Snapshots are stored under `%LOCALAPPDATA%\\GitWorkspacePool\\snapshots`. Only explicitly selected active sessions are eligible.

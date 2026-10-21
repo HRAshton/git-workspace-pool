@@ -19,6 +19,7 @@ internal sealed class TrayContext : ApplicationContext
     private readonly CaptureWorkspaceSnapshotService _snapshot;
     private readonly RestoreWorkspaceSnapshotService _restore;
     private readonly IWorkspaceRecoveryInspector _recoveryInspector;
+    private readonly SuspendWorkspaceSessionService _suspend;
 
     public TrayContext(string? initialRequest)
     {
@@ -45,6 +46,13 @@ internal sealed class TrayContext : ApplicationContext
         SqliteWorkspaceSessionJournal journal = new(Path.Combine(stateRoot, "sessions.db"));
         FileWorkspaceOperationLock locks = new(Path.Combine(stateRoot, "locks"));
         _sessions = journal;
+        _suspend = new SuspendWorkspaceSessionService(
+            journal,
+            journal,
+            locks,
+            git,
+            new WorkspaceDirectories()
+        );
         _snapshot = new CaptureWorkspaceSnapshotService(
             journal,
             locks,
@@ -93,6 +101,10 @@ internal sealed class TrayContext : ApplicationContext
         ToolStripMenuItem recoveryMenu = new("Recovery diagnostics...");
         recoveryMenu.DropDownOpening += async (_, _) => await PopulateRecoveryDiagnosticsAsync(recoveryMenu);
         menu.Items.Insert(3, recoveryMenu);
+
+        ToolStripMenuItem suspendMenu = new("Suspend active PR (keep worktree)...");
+        suspendMenu.DropDownOpening += async (_, _) => await PopulateSuspensionsAsync(suspendMenu);
+        menu.Items.Insert(4, suspendMenu);
 
         _ = ListenAsync(_shutdown.Token);
 
@@ -287,6 +299,76 @@ internal sealed class TrayContext : ApplicationContext
         catch (Exception exception)
         {
             Notify("Recovery inspection failed", exception.Message);
+        }
+    }
+
+    private async Task PopulateSuspensionsAsync(ToolStripMenuItem menu)
+    {
+        menu.DropDownItems.Clear();
+
+        try
+        {
+            IReadOnlyList<WorkspaceSession> sessions = await _sessions.ListActiveAsync(
+                _shutdown.Token
+            );
+
+            if (sessions.Count == 0)
+            {
+                menu.DropDownItems.Add(new ToolStripMenuItem("No active PR sessions")
+                {
+                    Enabled = false,
+                });
+                return;
+            }
+
+            foreach (WorkspaceSession session in sessions)
+            {
+                ToolStripMenuItem item = new(
+                    $"{session.RepositoryKey} PR #{session.PullRequestNumber}"
+                );
+                Guid operationId = session.OperationId;
+                item.Click += (_, _) => _ = SuspendFromMenuAsync(operationId);
+                menu.DropDownItems.Add(item);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Application is exiting.
+        }
+        catch (Exception exception)
+        {
+            Notify("Could not list sessions", exception.Message);
+        }
+    }
+
+    private async Task SuspendFromMenuAsync(Guid operationId)
+    {
+        DialogResult result = MessageBox.Show(
+            "Suspend this PR session? Its existing worktree and all changes will stay "
+                + "exactly where they are. This will NOT free disk space or make "
+                + "the slot available for reuse. Opening the PR again resumes it.",
+            "Suspend PR session",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Question
+        );
+
+        if (result != DialogResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            string path = await _suspend.SuspendAsync(operationId, _shutdown.Token);
+            Notify("PR suspended; files preserved", path);
+        }
+        catch (OperationCanceledException)
+        {
+            // Application shutdown.
+        }
+        catch (Exception exception)
+        {
+            Notify("Could not suspend PR", exception.Message);
         }
     }
 

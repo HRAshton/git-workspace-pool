@@ -196,6 +196,74 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task Session_SuspendAndResumeRetainTrackedStagedUntrackedAndIgnoredFiles()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        WorkspaceSession owner = await fixture.OwnedSessionAsync();
+
+        string changed = Path.Combine(opened.WorkspacePath, "feature.txt");
+        File.WriteAllText(changed, "staged user content");
+        await fixture.GitInWorkspaceAsync("add", "feature.txt");
+        File.WriteAllText(changed, "unstaged user content");
+        File.WriteAllText(Path.Combine(opened.WorkspacePath, "notes.local"), "untracked");
+        File.WriteAllText(Path.Combine(opened.WorkspacePath, ".gitignore"), "generated/\n");
+        Directory.CreateDirectory(Path.Combine(opened.WorkspacePath, "generated"));
+        File.WriteAllBytes(Path.Combine(opened.WorkspacePath, "generated", "cache.bin"), [0, 19, 255]);
+
+        string path = await fixture.SuspendAsync(owner.OperationId);
+        Assert.Equal(opened.WorkspacePath, path);
+        Assert.Equal(
+            WorkspaceSessionState.Suspended,
+            (await fixture.SessionAsync(owner.OperationId)).State
+        );
+        Assert.Empty(await fixture.ActiveSessionsAsync());
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.SuspendAsync(owner.OperationId)
+        );
+
+        OpenPullRequestResult reopened = await fixture.OpenWithFreshHandlerAsync(PullRequestUrl);
+        Assert.True(reopened.Reused);
+        Assert.Equal(opened.WorkspacePath, reopened.WorkspacePath);
+        Assert.Equal(
+            WorkspaceSessionState.Active,
+            (await fixture.SessionAsync(owner.OperationId)).State
+        );
+        Assert.Equal("staged user content", await fixture.ReadStagedFeatureAsync());
+        Assert.Equal("unstaged user content", File.ReadAllText(changed));
+        Assert.Equal("untracked", File.ReadAllText(Path.Combine(path, "notes.local")));
+        Assert.Equal(
+            new byte[] { 0, 19, 255 },
+            File.ReadAllBytes(Path.Combine(path, "generated", "cache.bin"))
+        );
+        Assert.True(await fixture.IsRegisteredWorktreeAsync(path));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task Session_RecoveryRequiredNeverReactivatesAutomatically()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        WorkspaceSession owner = await fixture.OwnedSessionAsync();
+        SqliteWorkspaceSessionJournal journal = new(fixture.DatabasePath);
+        await journal.RequireRecoveryAsync(owner.OperationId, CancellationToken.None);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.OpenWithFreshHandlerAsync(PullRequestUrl)
+        );
+
+        Assert.Equal(
+            WorkspaceSessionState.RecoveryRequired,
+            (await fixture.SessionAsync(owner.OperationId)).State
+        );
+        Assert.True(await fixture.IsRegisteredWorktreeAsync(opened.WorkspacePath));
+        Assert.Single(fixture.Editor.OpenedPaths);
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task OpenPullRequest_RefusesForeignDirectoryWithoutDeletingFiles()
     {
         using Fixture fixture = await Fixture.CreateAsync();
@@ -1088,6 +1156,32 @@ public sealed class GitWorkspaceE2ETests
                 new GitCliWorkspaceGit()
             );
             return inspector.ScanAsync(CancellationToken.None);
+        }
+
+        public Task<WorkspaceSession?> SessionAsync(Guid operationId) =>
+            new SqliteWorkspaceSessionJournal(DatabasePath).FindAsync(
+                operationId,
+                CancellationToken.None
+            );
+
+        public Task<IReadOnlyList<WorkspaceSession>> ActiveSessionsAsync() =>
+            new SqliteWorkspaceSessionJournal(DatabasePath).ListActiveAsync(
+                CancellationToken.None
+            );
+
+        public async Task<string> SuspendAsync(Guid operationId)
+        {
+            SqliteWorkspaceSessionJournal journal = new(DatabasePath);
+            SuspendWorkspaceSessionService service = new(
+                journal,
+                journal,
+                new FileWorkspaceOperationLock(
+                    Path.Combine(_root, "state", "locks")
+                ),
+                new GitCliWorkspaceGit(),
+                new WorkspaceDirectories()
+            );
+            return await service.SuspendAsync(operationId, CancellationToken.None);
         }
 
         public Task<IReadOnlyList<WorkspaceSnapshotRecord>> ListPublishedSnapshotsAsync()

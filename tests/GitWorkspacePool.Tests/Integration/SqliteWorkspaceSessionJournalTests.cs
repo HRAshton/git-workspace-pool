@@ -157,6 +157,53 @@ public sealed class SqliteWorkspaceSessionJournalTests
     }
 
     [Fact]
+    public async Task Journal_SuspendedOwnershipPersistsAcrossDatabaseRestart()
+    {
+        using Fixture fixture = new();
+        SqliteWorkspaceSessionJournal journal = fixture.CreateJournal();
+        WorkspaceSession session = await fixture.ReserveAsync(journal);
+        await journal.PinCommitAsync(session.OperationId, new string('a', 40), CancellationToken.None);
+        await journal.ActivateAsync(session.OperationId, CancellationToken.None);
+        await journal.SuspendAsync(session.OperationId, CancellationToken.None);
+
+        SqliteWorkspaceSessionJournal reopened = fixture.CreateJournal();
+        WorkspaceSession? suspended = await reopened.FindAsync(
+            session.OperationId,
+            CancellationToken.None
+        );
+        Assert.NotNull(suspended);
+        Assert.Equal(WorkspaceSessionState.Suspended, suspended.State);
+        Assert.Empty(await reopened.ListActiveAsync(CancellationToken.None));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => reopened.SuspendAsync(session.OperationId, CancellationToken.None)
+        );
+        await reopened.ResumeAsync(session.OperationId, CancellationToken.None);
+        Assert.Equal(
+            WorkspaceSessionState.Active,
+            Assert.Single(await reopened.ListActiveAsync(CancellationToken.None)).State
+        );
+    }
+
+    [Fact]
+    public async Task Journal_RecoveryRequiredCannotBeAutomaticallyActivated()
+    {
+        using Fixture fixture = new();
+        SqliteWorkspaceSessionJournal journal = fixture.CreateJournal();
+        WorkspaceSession session = await fixture.ReserveAsync(journal);
+        await journal.PinCommitAsync(session.OperationId, new string('a', 40), CancellationToken.None);
+        await journal.RequireRecoveryAsync(session.OperationId, CancellationToken.None);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => journal.ActivateAsync(session.OperationId, CancellationToken.None)
+        );
+        Assert.Equal(
+            WorkspaceSessionState.RecoveryRequired,
+            (await journal.FindAsync(session.OperationId, CancellationToken.None))!.State
+        );
+    }
+
+    [Fact]
     public async Task FileOperationLock_SerializesIndependentInstances()
     {
         using Fixture fixture = new();

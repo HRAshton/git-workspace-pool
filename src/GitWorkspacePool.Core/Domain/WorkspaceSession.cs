@@ -16,6 +16,12 @@ public enum WorkspaceSessionState
     Active,
 
     /// <summary>
+    /// The PR's files remain reserved, unchanged, and unavailable for recycling.
+    /// Opening the PR again explicitly resumes the session.
+    /// </summary>
+    Suspended,
+
+    /// <summary>
     /// Filesystem and journal state disagree and require explicit inspection.
     /// </summary>
     RecoveryRequired,

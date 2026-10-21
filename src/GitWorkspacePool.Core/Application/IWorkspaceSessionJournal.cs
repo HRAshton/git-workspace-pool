@@ -40,6 +40,20 @@ public interface IWorkspaceSessionJournal
     Task ActivateAsync(Guid operationId, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Suspends an active session without releasing or moving its worktree.
+    /// </summary>
+    /// <param name="operationId">Existing active session owner.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task SuspendAsync(Guid operationId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Reactivates a suspended session after its original worktree is verified.
+    /// </summary>
+    /// <param name="operationId">Existing suspended session owner.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task ResumeAsync(Guid operationId, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Quarantines an inconsistent record without deleting or moving user files.
     /// </summary>
     /// <param name="operationId">The owning operation.</param>

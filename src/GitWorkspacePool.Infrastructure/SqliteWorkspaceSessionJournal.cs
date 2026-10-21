@@ -13,7 +13,7 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
     private readonly string _connectionString;
 
     /// <summary>
-    /// Initializes or upgrades the local SQLite journal to schema version three.
+    /// Initializes or upgrades the local SQLite journal to schema version four.
     /// </summary>
     public SqliteWorkspaceSessionJournal(string databasePath)
     {
@@ -35,9 +35,14 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
         version.CommandText = "PRAGMA user_version";
         long currentVersion = (long)version.ExecuteScalar()!;
 
-        if (currentVersion > 3)
+        if (currentVersion > 4)
         {
             throw new InvalidOperationException("Session journal schema is newer than this application.");
+        }
+
+        if (currentVersion is > 0 and < 4)
+        {
+            UpgradeSessionStateConstraint(connection);
         }
 
         using SqliteCommand schema = connection.CreateCommand();
@@ -48,7 +53,7 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
                 pr_number INTEGER NOT NULL CHECK (pr_number > 0),
                 source_path TEXT NOT NULL COLLATE NOCASE,
                 workspace_path TEXT NOT NULL COLLATE NOCASE UNIQUE,
-                state TEXT NOT NULL CHECK (state IN ('Preparing', 'Active', 'RecoveryRequired')),
+                state TEXT NOT NULL CHECK (state IN ('Preparing', 'Active', 'Suspended', 'RecoveryRequired')),
                 pinned_commit TEXT,
                 updated_utc TEXT NOT NULL,
                 UNIQUE (repository_key, pr_number)
@@ -80,7 +85,7 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
                 updated_utc TEXT NOT NULL
             );
 
-            PRAGMA user_version = 3;
+            PRAGMA user_version = 4;
             """;
         schema.ExecuteNonQuery();
     }
@@ -478,8 +483,36 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
             operationId,
             "Activated",
             "UPDATE sessions SET state = 'Active', updated_utc = $utc "
-                + "WHERE operation_id = $id AND state IN ('Preparing', 'RecoveryRequired') "
+                + "WHERE operation_id = $id AND state = 'Preparing' "
                 + "AND pinned_commit IS NOT NULL",
+            null,
+            cancellationToken
+        );
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc/>
+    public Task SuspendAsync(Guid operationId, CancellationToken cancellationToken)
+    {
+        Transition(
+            operationId,
+            "Suspended",
+            "UPDATE sessions SET state = 'Suspended', updated_utc = $utc "
+                + "WHERE operation_id = $id AND state = 'Active'",
+            null,
+            cancellationToken
+        );
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc/>
+    public Task ResumeAsync(Guid operationId, CancellationToken cancellationToken)
+    {
+        Transition(
+            operationId,
+            "Resumed",
+            "UPDATE sessions SET state = 'Active', updated_utc = $utc "
+                + "WHERE operation_id = $id AND state = 'Suspended'",
             null,
             cancellationToken
         );
@@ -498,6 +531,70 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
             cancellationToken
         );
         return Task.CompletedTask;
+    }
+
+    private static void UpgradeSessionStateConstraint(SqliteConnection connection)
+    {
+        // SQLite does not support ALTER TABLE DROP CHECK. Rebuild the owning
+        // session table within one transaction, with foreign keys temporarily
+        // disabled. Existing snapshot/restore/event rows remain unchanged.
+        using (SqliteCommand disable = connection.CreateCommand())
+        {
+            disable.CommandText = "PRAGMA foreign_keys = OFF";
+            disable.ExecuteNonQuery();
+        }
+
+        try
+        {
+            using SqliteTransaction transaction = connection.BeginTransaction();
+            using SqliteCommand rebuild = connection.CreateCommand();
+            rebuild.Transaction = transaction;
+            rebuild.CommandText = """
+                CREATE TABLE sessions_v4 (
+                    operation_id TEXT PRIMARY KEY,
+                    repository_key TEXT NOT NULL COLLATE NOCASE,
+                    pr_number INTEGER NOT NULL CHECK (pr_number > 0),
+                    source_path TEXT NOT NULL COLLATE NOCASE,
+                    workspace_path TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                    state TEXT NOT NULL CHECK (state IN (
+                        'Preparing', 'Active', 'Suspended', 'RecoveryRequired'
+                    )),
+                    pinned_commit TEXT,
+                    updated_utc TEXT NOT NULL,
+                    UNIQUE (repository_key, pr_number)
+                );
+
+                INSERT INTO sessions_v4(
+                    operation_id, repository_key, pr_number, source_path,
+                    workspace_path, state, pinned_commit, updated_utc
+                )
+                SELECT operation_id, repository_key, pr_number, source_path,
+                       workspace_path, state, pinned_commit, updated_utc
+                  FROM sessions;
+
+                DROP TABLE sessions;
+                ALTER TABLE sessions_v4 RENAME TO sessions;
+                """;
+            rebuild.ExecuteNonQuery();
+            transaction.Commit();
+        }
+        finally
+        {
+            using SqliteCommand enable = connection.CreateCommand();
+            enable.CommandText = "PRAGMA foreign_keys = ON";
+            enable.ExecuteNonQuery();
+        }
+
+        using SqliteCommand validation = connection.CreateCommand();
+        validation.CommandText = "PRAGMA foreign_key_check";
+        using SqliteDataReader reader = validation.ExecuteReader();
+
+        if (reader.Read())
+        {
+            throw new InvalidOperationException(
+                "Session journal migration did not preserve all ownership references."
+            );
+        }
     }
 
     private static WorkspaceSession Map(SqliteDataReader reader)

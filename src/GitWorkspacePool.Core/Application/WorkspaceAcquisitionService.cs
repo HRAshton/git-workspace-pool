@@ -61,7 +61,15 @@ public sealed class WorkspaceAcquisitionService
         );
         bool reused;
 
-        if (session.State == WorkspaceSessionState.Active)
+        if (session.State == WorkspaceSessionState.RecoveryRequired)
+        {
+            throw new InvalidOperationException(
+                "This workspace is quarantined for manual recovery. "
+                    + "It cannot be reactivated automatically."
+            );
+        }
+
+        if (session.State is WorkspaceSessionState.Active or WorkspaceSessionState.Suspended)
         {
             if (!directoryExists || !registered)
             {
@@ -70,6 +78,11 @@ public sealed class WorkspaceAcquisitionService
                     "An allocated workspace is missing or no longer registered with Git. "
                         + "Ownership is preserved for manual recovery."
                 );
+            }
+
+            if (session.State == WorkspaceSessionState.Suspended)
+            {
+                await _journal.ResumeAsync(session.OperationId, cancellationToken);
             }
 
             reused = true;
