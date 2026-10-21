@@ -8,12 +8,12 @@ namespace GitWorkspacePool.Infrastructure;
 /// <summary>
 /// Durable, transactional workspace ownership and append-only operation events.
 /// </summary>
-public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal
+public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IWorkspaceSnapshotSessionStore
 {
     private readonly string _connectionString;
 
     /// <summary>
-    /// Initializes the local SQLite journal and creates schema version one if needed.
+    /// Initializes or upgrades the local SQLite journal to schema version two.
     /// </summary>
     public SqliteWorkspaceSessionJournal(string databasePath)
     {
@@ -35,7 +35,7 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal
         version.CommandText = "PRAGMA user_version";
         long currentVersion = (long)version.ExecuteScalar()!;
 
-        if (currentVersion > 1)
+        if (currentVersion > 2)
         {
             throw new InvalidOperationException("Session journal schema is newer than this application.");
         }
@@ -61,7 +61,17 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal
                 created_utc TEXT NOT NULL
             );
 
-            PRAGMA user_version = 1;
+
+            CREATE TABLE IF NOT EXISTS snapshots (
+                snapshot_id TEXT PRIMARY KEY,
+                operation_id TEXT NOT NULL REFERENCES sessions(operation_id),
+                folder TEXT NOT NULL UNIQUE,
+                file_count INTEGER NOT NULL,
+                copied_bytes INTEGER NOT NULL,
+                created_utc TEXT NOT NULL
+            );
+
+            PRAGMA user_version = 2;
             """;
         schema.ExecuteNonQuery();
     }
@@ -150,6 +160,93 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal
         AddEvent(connection, transaction, session.OperationId, "Reserved");
         transaction.Commit();
         return Task.FromResult(session);
+    }
+
+    /// <inheritdoc/>
+    public Task<WorkspaceSession?> FindAsync(
+        Guid operationId,
+        CancellationToken cancellationToken
+    )
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using SqliteConnection connection = Open();
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT operation_id, repository_key, pr_number, source_path,
+                   workspace_path, state, pinned_commit
+              FROM sessions
+             WHERE operation_id = $id
+            """;
+        command.Parameters.AddWithValue("$id", operationId.ToString("D"));
+
+        using SqliteDataReader reader = command.ExecuteReader();
+        return Task.FromResult(reader.Read() ? Map(reader) : null);
+    }
+
+    /// <inheritdoc/>
+    public Task<IReadOnlyList<WorkspaceSession>> ListActiveAsync(
+        CancellationToken cancellationToken
+    )
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using SqliteConnection connection = Open();
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT operation_id, repository_key, pr_number, source_path,
+                   workspace_path, state, pinned_commit
+              FROM sessions
+             WHERE state = 'Active'
+             ORDER BY updated_utc DESC
+            """;
+
+        List<WorkspaceSession> sessions = [];
+        using SqliteDataReader reader = command.ExecuteReader();
+
+        while (reader.Read())
+        {
+            sessions.Add(Map(reader));
+        }
+
+        return Task.FromResult<IReadOnlyList<WorkspaceSession>>(sessions);
+    }
+
+    /// <inheritdoc/>
+    public Task RecordSnapshotAsync(
+        WorkspaceSnapshotReceipt receipt,
+        CancellationToken cancellationToken
+    )
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        using SqliteConnection connection = Open();
+        using SqliteTransaction transaction = connection.BeginTransaction();
+        using SqliteCommand command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO snapshots(
+                snapshot_id, operation_id, folder, file_count, copied_bytes, created_utc
+            )
+            SELECT $snapshot, operation_id, $folder, $files, $bytes, $utc
+              FROM sessions
+             WHERE operation_id = $owner AND state = 'Active'
+            """;
+        command.Parameters.AddWithValue("$snapshot", receipt.SnapshotId.ToString("D"));
+        command.Parameters.AddWithValue("$owner", receipt.OperationId.ToString("D"));
+        command.Parameters.AddWithValue("$folder", Path.GetFullPath(receipt.Folder));
+        command.Parameters.AddWithValue("$files", receipt.FileCount);
+        command.Parameters.AddWithValue("$bytes", receipt.CopiedBytes);
+        command.Parameters.AddWithValue("$utc", UtcNow());
+
+        if (command.ExecuteNonQuery() != 1)
+        {
+            throw new InvalidOperationException(
+                "Cannot register a snapshot of an unknown or inactive session."
+            );
+        }
+
+        AddEvent(connection, transaction, receipt.OperationId, "SnapshotCaptured");
+        transaction.Commit();
+        return Task.CompletedTask;
     }
 
     /// <inheritdoc/>
