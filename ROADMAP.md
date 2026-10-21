@@ -20,8 +20,9 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [x] Explicit repository configuration and create/reopen without touching existing worktrees.
 - [x] Git CLI adapter and VS Code launcher behind application interfaces.
 - [x] Unit tests and Windows CI.
-- [ ] **Fast local Git E2E:** temporary bare remote + local clone + fake `refs/pull/N/head`; real `git fetch` and `git worktree add`; fake editor; no network, browser or UI automation.
-- [ ] **Transport E2E:** protocol URL validation + single-instance named-pipe forwarding, with application command dispatched to the real handler and fake editor.
+- [x] **Fast local Git E2E:** temporary bare remote + local clone + fake `refs/pull/N/head`; real `git fetch` and `git worktree add`; fake editor; no network, browser or UI automation.
+- [x] **Transport E2E:** versioned protocol URL validation, real user-scoped named-pipe transport, and URL → pipe → Git handler → fake editor in an offline fixture.
+- [ ] **Single-instance process E2E:** spawn second protocol launcher, verify mutex forwarding into the existing tray instance, and verify error handling.
 - [ ] Worktree recovery on partial Git failures; no auto-clean of unknown paths.
 - [ ] Validate registered Git remotes and reject mismatching/ambiguous repositories.
 - [ ] Prevent concurrent or cross-process duplicate allocations.
@@ -62,13 +63,13 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 | Suite | Scope | Run | Target |
 | --- | --- | --- | --- |
 | Unit | domain and use-case behavior | every change | < 10 s |
-| Fast E2E | real local Git + core + fake editor | every PR | < 20 s |
+| Fast E2E | real local Git, protocol, named pipe + fake editor | every PR | < 20 s |
 | IPC integration | real named pipes and protocol launcher | every PR, Windows | < 10 s |
 | Fault injection | interrupted snapshot/move/checkout | every PR after P1 | < 60 s |
 | UI smoke | actual browser/tray/editor | nightly or release | < 3 min |
 | Performance | large-file trees + optional ReFS | scheduled/manual | benchmark-driven |
 
-Time budgets are aspirations until CI records empirical baselines. Fast E2E must not require network, GitHub tokens, VS Code, package install, or admin rights.
+On the 2026-10-21 Windows CI run, 23 unit tests passed in 60 ms and 9 offline E2E tests passed in 11 s (test execution only, excluding build/restore). Time budgets remain goals, not hard guarantees. Fast E2E must not require network, GitHub tokens, VS Code, package install, or admin rights.
 
 ## Product metrics
 
