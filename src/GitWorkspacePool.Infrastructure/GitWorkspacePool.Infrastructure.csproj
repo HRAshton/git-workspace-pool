@@ -4,5 +4,6 @@
     </PropertyGroup>
     <ItemGroup>
         <ProjectReference Include="../GitWorkspacePool.Core/GitWorkspacePool.Core.csproj" />
+        <PackageReference Include="Microsoft.Data.Sqlite" />
     </ItemGroup>
 </Project>
