@@ -25,5 +25,7 @@ jobs:
         run: dotnet restore GitWorkspacePool.slnx
       - name: Build
         run: dotnet build GitWorkspacePool.slnx --configuration Release --no-restore -p:ContinuousIntegrationBuild=true
-      - name: Test
-        run: dotnet test tests/GitWorkspacePool.Tests/GitWorkspacePool.Tests.csproj --configuration Release --no-build --no-restore
+      - name: Unit tests
+        run: dotnet test tests/GitWorkspacePool.Tests/GitWorkspacePool.Tests.csproj --configuration Release --no-build --no-restore --filter "Category!=FastE2E"
+      - name: Fast offline Git E2E
+        run: dotnet test tests/GitWorkspacePool.Tests/GitWorkspacePool.Tests.csproj --configuration Release --no-build --no-restore --filter "Category=FastE2E"
