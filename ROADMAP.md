@@ -39,6 +39,7 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [ ] Extend the journal to session release, moves, parking, and eviction.
 - [x] Minimal state machine for acquisition: preparing / active / recovery-required.
 - [x] Add an explicit non-destructive suspended state; reopen resumes the exact owned worktree without deleting or moving files.
+- [x] Test SQLite v3 → v4 schema upgrade preserving existing session, snapshot and restore foreign-key references.
 - [x] Forbid automatic reactivation of quarantined `RecoveryRequired` sessions.
 - [ ] Extend state machine to released / warm / parked with safe ownership transfers.
 - [ ] Explicit release only. No release inferred from editor lifecycle.

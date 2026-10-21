@@ -68,6 +68,14 @@ The journal is an ownership protocol, not a transactional filesystem. No automat
 - Junctions/symlinks are flagged but not traversed. A recovered worktree is verified against its original clone's Git registration where possible.
 - `Recovery diagnostics...` in the tray shows findings for manual inspection only. Do not automatically delete orphaned data, including after a reboot.
 
+## Non-destructive session suspension
+
+- `SuspendWorkspaceSessionService` validates the active owner under the same cross-process worktree lock used by acquisition. It marks the session `Suspended` in SQLite without running Git checkout, touching files or releasing exclusive PR ownership.
+- Opening the same PR revalidates the registered worktree and resumes the journalled session. Staged, unstaged, ignored and untracked files remain intact.
+- `RecoveryRequired` is now an absolute quarantine barrier. No opening/retry may reactivate it automatically even when the observed HEAD matches the old pinned commit.
+- SQLite v4 expands the session state constraint through a transactional table rebuild while retaining session, snapshot, restore and audit foreign keys. Explicit version migration is tested from a v3 database.
+- Suspension is not parking or release: disk usage remains unchanged and no worktree is eligible for reuse.
+
 ## Subsequent slices
 
 - Durable session journal and safe parking/snapshot protocol.

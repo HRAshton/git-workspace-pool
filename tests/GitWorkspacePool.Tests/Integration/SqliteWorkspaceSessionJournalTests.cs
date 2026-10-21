@@ -204,6 +204,124 @@ public sealed class SqliteWorkspaceSessionJournalTests
     }
 
     [Fact]
+    public async Task SchemaV3Upgrade_PreservesSessionsSnapshotsAndRestoreReferences()
+    {
+        using Fixture fixture = new();
+        Directory.CreateDirectory(Path.GetDirectoryName(fixture.DatabasePath)!);
+        Guid sessionId = Guid.NewGuid();
+        Guid snapshotId = Guid.NewGuid();
+        Guid restoreId = Guid.NewGuid();
+
+        // Simulates a real pre-v4 state database with the old CHECK constraint
+        // and two levels of foreign keys referencing the session record.
+        using (SqliteConnection database = new(
+            $"Data Source={fixture.DatabasePath};Pooling=False"
+        ))
+        {
+            database.Open();
+            using SqliteCommand seed = database.CreateCommand();
+            seed.CommandText = """
+                PRAGMA foreign_keys = ON;
+                CREATE TABLE sessions (
+                    operation_id TEXT PRIMARY KEY,
+                    repository_key TEXT NOT NULL COLLATE NOCASE,
+                    pr_number INTEGER NOT NULL CHECK (pr_number > 0),
+                    source_path TEXT NOT NULL COLLATE NOCASE,
+                    workspace_path TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                    state TEXT NOT NULL CHECK (
+                        state IN ('Preparing', 'Active', 'RecoveryRequired')
+                    ),
+                    pinned_commit TEXT,
+                    updated_utc TEXT NOT NULL,
+                    UNIQUE (repository_key, pr_number)
+                );
+                CREATE TABLE session_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    operation_id TEXT NOT NULL REFERENCES sessions(operation_id),
+                    kind TEXT NOT NULL,
+                    created_utc TEXT NOT NULL
+                );
+                CREATE TABLE snapshots (
+                    snapshot_id TEXT PRIMARY KEY,
+                    operation_id TEXT NOT NULL REFERENCES sessions(operation_id),
+                    folder TEXT NOT NULL UNIQUE,
+                    file_count INTEGER NOT NULL,
+                    copied_bytes INTEGER NOT NULL,
+                    created_utc TEXT NOT NULL
+                );
+                CREATE TABLE restore_operations (
+                    restore_id TEXT PRIMARY KEY,
+                    snapshot_id TEXT NOT NULL REFERENCES snapshots(snapshot_id),
+                    target_path TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                    state TEXT NOT NULL CHECK (state IN ('Preparing', 'Verified')),
+                    created_utc TEXT NOT NULL,
+                    updated_utc TEXT NOT NULL
+                );
+                INSERT INTO sessions (
+                    operation_id, repository_key, pr_number, source_path,
+                    workspace_path, state, pinned_commit, updated_utc
+                ) VALUES (
+                    $session, 'github:owner/repo', 17, $source, $workspace,
+                    'Active', $sha, $utc
+                );
+                INSERT INTO snapshots (
+                    snapshot_id, operation_id, folder, file_count, copied_bytes, created_utc
+                ) VALUES ($snapshot, $session, $folder, 1, 42, $utc);
+                INSERT INTO restore_operations (
+                    restore_id, snapshot_id, target_path, state, created_utc, updated_utc
+                ) VALUES ($restore, $snapshot, $target, 'Preparing', $utc, $utc);
+                INSERT INTO session_events (operation_id, kind, created_utc)
+                VALUES ($session, 'Activated', $utc);
+                PRAGMA user_version = 3;
+                """;
+            seed.Parameters.AddWithValue("$session", sessionId.ToString("D"));
+            seed.Parameters.AddWithValue("$snapshot", snapshotId.ToString("D"));
+            seed.Parameters.AddWithValue("$restore", restoreId.ToString("D"));
+            seed.Parameters.AddWithValue("$source", fixture.SourcePath);
+            seed.Parameters.AddWithValue("$workspace", fixture.WorkspacePath);
+            seed.Parameters.AddWithValue("$sha", new string('a', 40));
+            seed.Parameters.AddWithValue("$utc", DateTimeOffset.UtcNow.ToString("O"));
+            seed.Parameters.AddWithValue(
+                "$folder",
+                Path.Combine(fixture.LockRoot, "snapshot")
+            );
+            seed.Parameters.AddWithValue(
+                "$target",
+                Path.Combine(fixture.LockRoot, "recovered")
+            );
+            seed.ExecuteNonQuery();
+        }
+
+        SqliteWorkspaceSessionJournal upgraded = fixture.CreateJournal();
+        WorkspaceSession? session = await upgraded.FindAsync(sessionId, CancellationToken.None);
+        Assert.NotNull(session);
+        Assert.Equal(WorkspaceSessionState.Active, session.State);
+        Assert.Equal(snapshotId, Assert.Single(
+            await upgraded.ListSnapshotsAsync(CancellationToken.None)
+        ).Receipt.SnapshotId);
+        Assert.Equal(restoreId, Assert.Single(
+            await upgraded.ListRecoveryRestoresAsync(CancellationToken.None)
+        ).RestoreId);
+
+        await upgraded.SuspendAsync(sessionId, CancellationToken.None);
+        Assert.Equal(
+            WorkspaceSessionState.Suspended,
+            (await upgraded.FindAsync(sessionId, CancellationToken.None))!.State
+        );
+        await upgraded.ResumeAsync(sessionId, CancellationToken.None);
+
+        using SqliteConnection verified = new(
+            $"Data Source={fixture.DatabasePath};Pooling=False"
+        );
+        verified.Open();
+        using SqliteCommand check = verified.CreateCommand();
+        check.CommandText = "PRAGMA foreign_key_check";
+        Assert.Null(check.ExecuteScalar());
+        check.CommandText = "PRAGMA user_version";
+        Assert.Equal(4L, check.ExecuteScalar());
+    }
+
+    [Fact]
     public async Task FileOperationLock_SerializesIndependentInstances()
     {
         using Fixture fixture = new();
