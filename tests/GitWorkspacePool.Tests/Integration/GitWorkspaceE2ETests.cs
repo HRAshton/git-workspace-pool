@@ -316,7 +316,8 @@ public sealed class GitWorkspaceE2ETests
                 new WorkspaceDirectories(),
                 Editor,
                 new SqliteWorkspaceSessionJournal(Path.Combine(stateDirectory, "sessions.db")),
-                new FileWorkspaceOperationLock(Path.Combine(stateDirectory, "locks"))
+                new FileWorkspaceOperationLock(Path.Combine(stateDirectory, "locks")),
+                new LocalFixtureOriginVerifier()
             );
         }
 
@@ -398,6 +399,15 @@ public sealed class GitWorkspaceE2ETests
                 );
             }
         }
+    }
+
+    private sealed class LocalFixtureOriginVerifier : IRepositoryOriginVerifier
+    {
+        public Task VerifyAsync(
+            PullRequestReference request,
+            RepositoryRegistration registration,
+            CancellationToken cancellationToken
+        ) => Task.CompletedTask;
     }
 
     private sealed class Catalog(RepositoryRegistration registration) : IRepositoryCatalog

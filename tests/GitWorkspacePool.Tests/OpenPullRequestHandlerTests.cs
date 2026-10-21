@@ -158,7 +158,8 @@ public sealed class OpenPullRequestHandlerTests
                 new FakeDirectories(this),
                 Editor,
                 _journal,
-                new FakeLock()
+                new FakeLock(),
+                new FakeOriginVerifier()
             );
         }
 
@@ -253,6 +254,15 @@ public sealed class OpenPullRequestHandlerTests
         }
     }
 
+    private sealed class FakeOriginVerifier : IRepositoryOriginVerifier
+    {
+        public Task VerifyAsync(
+            PullRequestReference request,
+            RepositoryRegistration registration,
+            CancellationToken cancellationToken
+        ) => Task.CompletedTask;
+    }
+
     private sealed class FakeLock : IWorkspaceOperationLock
     {
         private readonly SemaphoreSlim _gate = new(1, 1);
@@ -299,6 +309,11 @@ public sealed class OpenPullRequestHandlerTests
             string workspacePath,
             CancellationToken cancellationToken
         ) => Task.FromResult(Registered || Created);
+
+        public Task<string> GetOriginUrlAsync(
+            string repositoryPath,
+            CancellationToken cancellationToken
+        ) => Task.FromResult("https://github.com/owner/repo.git");
 
         public Task FetchPullRequestAsync(
             string repositoryPath,
