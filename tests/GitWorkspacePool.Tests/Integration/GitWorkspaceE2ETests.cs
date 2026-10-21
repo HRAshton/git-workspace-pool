@@ -475,6 +475,83 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task Snapshot_RealProcessKillPreservesSourceAndCanRetry()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string changed = Path.Combine(opened.WorkspacePath, "feature.txt");
+        File.WriteAllText(changed, "unsaved contents");
+        WorkspaceSession owner = await fixture.OwnedSessionAsync();
+
+        SnapshotCheckpoint[] boundaries =
+        [
+            SnapshotCheckpoint.ExportReadyToPublish,
+            SnapshotCheckpoint.ExportPublished,
+        ];
+
+        foreach (SnapshotCheckpoint checkpoint in boundaries)
+        {
+            string pendingOrPublished = await SubprocessCrashTests.KillAtCheckpointAsync(
+                "export",
+                fixture.DatabasePath,
+                owner.OperationId,
+                fixture.SnapshotRoot,
+                checkpoint,
+                fixture.SignalRoot
+            );
+
+            Assert.True(Directory.Exists(pendingOrPublished));
+            Assert.Equal("unsaved contents", File.ReadAllText(changed));
+            Assert.Equal(WorkspaceSessionState.Active, (await fixture.OwnedSessionAsync()).State);
+            Assert.Empty(await fixture.ListPublishedSnapshotsAsync());
+        }
+
+        // The killed process must release its OS file lock; a new process can retry.
+        WorkspaceSnapshotReceipt retry = await fixture.SnapshotAsync();
+        Assert.True(File.Exists(Path.Combine(retry.Folder, "manifest.json")));
+        Assert.Single(await fixture.ListPublishedSnapshotsAsync());
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task Snapshot_RealProcessKillLeavesRecoverableIsolatedWorktree()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string changed = Path.Combine(opened.WorkspacePath, "feature.txt");
+        File.WriteAllText(changed, "original user work");
+        WorkspaceSnapshotReceipt receipt = await fixture.SnapshotAsync();
+
+        SnapshotCheckpoint[] boundaries =
+        [
+            SnapshotCheckpoint.RestoreWorktreeCreated,
+            SnapshotCheckpoint.RestoreIndexApplied,
+        ];
+
+        foreach (SnapshotCheckpoint checkpoint in boundaries)
+        {
+            string orphan = await SubprocessCrashTests.KillAtCheckpointAsync(
+                "restore",
+                fixture.DatabasePath,
+                receipt.SnapshotId,
+                fixture.RecoveryRoot,
+                checkpoint,
+                fixture.SignalRoot
+            );
+
+            Assert.True(Directory.Exists(orphan));
+            Assert.True(await fixture.IsRegisteredWorktreeAsync(orphan));
+            Assert.Equal("original user work", File.ReadAllText(changed));
+            Assert.Equal(WorkspaceSessionState.Active, (await fixture.OwnedSessionAsync()).State);
+        }
+
+        string restored = await fixture.RestoreSnapshotAsync(receipt.SnapshotId);
+        Assert.Equal("original user work", File.ReadAllText(Path.Combine(restored, "feature.txt")));
+        Assert.Equal("original user work", File.ReadAllText(changed));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task Snapshot_RefusesLockedUserFileWithoutPublishing()
     {
         using Fixture fixture = await Fixture.CreateAsync();
@@ -547,6 +624,10 @@ public sealed class GitWorkspaceE2ETests
             _handler = CreateHandler();
 
         }
+
+        public string DatabasePath => Path.Combine(_root, "state", "sessions.db");
+
+        public string SignalRoot => _root;
 
         public string SnapshotRoot => Path.Combine(_root, "snapshots");
 

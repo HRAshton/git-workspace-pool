@@ -58,7 +58,8 @@ The journal is an ownership protocol, not a transactional filesystem. No automat
 - `ISnapshotCheckpointSink` is an infrastructure-only, optional test seam. Production does not instantiate a sink and no external or PR-controlled input can select a checkpoint.
 - Export checkpoints follow copied index, verified pre-publication manifest, and published directory **before** the SQLite receipt. A failure never deletes the source. Pending and published-but-unjournalled snapshot directories remain available for inspection.
 - Restore checkpoints follow registered recovery worktree creation, working-file application, and Git index verification. Injected exceptions leave a separate Git worktree that must not be auto-cleaned.
-- Offline E2E covers retries, persistent ownership, and preservation of failed-operation output. **Process termination, disk-full and concurrent mutation are distinct remaining RC gates.** Exceptions only simulate interrupted control flow, not power loss or atomic filesystem durability.
+- Offline E2E covers retries, persistent ownership, and preservation of failed-operation output. A dedicated `GitWorkspacePool.CrashProbe` executable can block at a checkpoint while the test runner **kills the actual child process**. Tests verify Windows releases its interprocess locks and preserves orphaned worktrees and user data.
+- Coverage so far includes kill-before-publication, kill-after-publication-before-receipt, and recovery-worktree creation/index checkpoints. **Power loss, low disk and concurrent mutation remain separate RC gates.**
 
 ## Subsequent slices
 

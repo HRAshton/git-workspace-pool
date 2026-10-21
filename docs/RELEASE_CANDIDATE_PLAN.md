@@ -33,7 +33,8 @@
 - [x] Side-by-side restore into a new linked worktree without touching the active session.
 - [x] Restore checks checksums and validates exact Git status; corruption/path traversal tests.
 - [x] Injectable exception/fault checkpoints at snapshot export, publish and restore milestones; tests assert preserved source, retained partial data, retry and ownership.
-- [ ] Add **real subprocess termination** tests at these boundaries; exception injection alone does not establish process-kill durability.
+- [x] Run real parent-initiated OS process kills at snapshot pre-publish/post-publish and restore worktree-created/index-applied boundaries; assert no original-data loss, persistent orphan state, and successful retry.
+- [ ] Expand process-kill coverage to every remaining operation checkpoint and add low-space/concurrent-mutation tests before enabling cleanup.
 - [ ] Restore operation journal (in-progress / verified / orphaned) and discoverable orphan recovery.
 - [ ] Detect changes mid-export including directory structure, reparse points, source file identity and index mutation; reject unsupported index extensions/conflicts.
 - [ ] Prove low disk, ACL/read-only, anti-virus lock, long/unicode/case-collision path handling and cancellation.
