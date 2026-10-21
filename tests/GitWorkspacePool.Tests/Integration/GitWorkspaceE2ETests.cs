@@ -336,14 +336,17 @@ public sealed class GitWorkspaceE2ETests
         {
             RepositoryRegistration registration = new("owner/repo", _source, _workspaces);
             string stateDirectory = Path.Combine(_root, "state");
-            return new OpenPullRequestHandler(
-                new Catalog(registration),
+            WorkspaceAcquisitionService acquisition = new(
                 new GitCliWorkspaceGit(),
                 new WorkspaceDirectories(),
-                Editor,
                 new SqliteWorkspaceSessionJournal(Path.Combine(stateDirectory, "sessions.db")),
-                new FileWorkspaceOperationLock(Path.Combine(stateDirectory, "locks")),
-                new LocalFixtureOriginVerifier()
+                new FileWorkspaceOperationLock(Path.Combine(stateDirectory, "locks"))
+            );
+            return new OpenPullRequestHandler(
+                new Catalog(registration),
+                new LocalFixtureOriginVerifier(),
+                acquisition,
+                Editor
             );
         }
 

@@ -152,14 +152,17 @@ public sealed class OpenPullRequestHandlerTests
                 Path.Combine(root, "workspaces")
             );
 
-            Handler = new OpenPullRequestHandler(
-                new FakeCatalog(_registration),
+            WorkspaceAcquisitionService acquisition = new(
                 Git,
                 new FakeDirectories(this),
-                Editor,
                 _journal,
-                new FakeLock(),
-                new FakeOriginVerifier()
+                new FakeLock()
+            );
+            Handler = new OpenPullRequestHandler(
+                new FakeCatalog(_registration),
+                new FakeOriginVerifier(),
+                acquisition,
+                Editor
             );
         }
 
