@@ -35,13 +35,15 @@ internal sealed class TrayContext : ApplicationContext
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "GitWorkspacePool"
         );
+        GitCliWorkspaceGit git = new();
         _open = new OpenPullRequestHandler(
             new SettingsStore(),
-            new GitCliWorkspaceGit(),
+            git,
             new WorkspaceDirectories(),
             new VsCodeLauncher(),
             new SqliteWorkspaceSessionJournal(Path.Combine(stateRoot, "sessions.db")),
-            new FileWorkspaceOperationLock(Path.Combine(stateRoot, "locks"))
+            new FileWorkspaceOperationLock(Path.Combine(stateRoot, "locks")),
+            new GitHubOriginVerifier(git)
         );
 
         _ = ListenAsync(_shutdown.Token);

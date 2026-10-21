@@ -13,6 +13,7 @@ public sealed class OpenPullRequestHandler
     private readonly IEditorLauncher _editor;
     private readonly IWorkspaceSessionJournal _journal;
     private readonly IWorkspaceOperationLock _locks;
+    private readonly IRepositoryOriginVerifier _originVerifier;
 
     /// <summary>
     /// Initializes the open-pull-request use case and its safety boundaries.
@@ -23,7 +24,8 @@ public sealed class OpenPullRequestHandler
         IWorkspaceDirectories directories,
         IEditorLauncher editor,
         IWorkspaceSessionJournal journal,
-        IWorkspaceOperationLock locks
+        IWorkspaceOperationLock locks,
+        IRepositoryOriginVerifier originVerifier
     )
     {
         _repositories = repositories;
@@ -32,6 +34,7 @@ public sealed class OpenPullRequestHandler
         _editor = editor;
         _journal = journal;
         _locks = locks;
+        _originVerifier = originVerifier;
     }
 
     /// <summary>
@@ -54,6 +57,8 @@ public sealed class OpenPullRequestHandler
             ?? throw new InvalidOperationException(
                 $"Register a local clone for {request.RepositoryKey} before opening this PR."
             );
+
+        await _originVerifier.VerifyAsync(request, registration, cancellationToken);
 
         string folder = $"{request.Provider}-{request.Owner}-{request.Repository}-pr-{request.Number}";
         string workspacePath = Path.GetFullPath(Path.Combine(registration.WorkspaceRoot, folder));

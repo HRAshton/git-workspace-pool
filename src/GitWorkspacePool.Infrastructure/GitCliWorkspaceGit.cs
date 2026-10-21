@@ -37,6 +37,20 @@ public sealed class GitCliWorkspaceGit : IWorkspaceGit
     }
 
     /// <inheritdoc/>
+    public async Task<string> GetOriginUrlAsync(
+        string repositoryPath,
+        CancellationToken cancellationToken
+    )
+    {
+        string output = await RunAsync(
+            repositoryPath,
+            ["remote", "get-url", "origin"],
+            cancellationToken
+        );
+        return output.Trim();
+    }
+
+    /// <inheritdoc/>
     public async Task FetchPullRequestAsync(
         string repositoryPath,
         int pullRequestNumber,
