@@ -15,7 +15,7 @@ This is a modular monolith, not a network daemon.
 2. A local repository must be explicitly configured before any fetch or worktree creation.
 3. The request URL is untrusted; no arbitrary file path, executable, ref, or command can be supplied by the browser.
 4. New worktrees are created at deterministic paths beneath a configured workspace root.
-5. Concurrent requests for the same workspace are serialized.
+5. Concurrent requests for the same workspace are serialized. PR commits use a dedicated Git ref rather than shared FETCH_HEAD.
 6. There is no background compilation, dependency installation or PR prediction.
 7. No attempt is made to infer workspace release from VS Code process state.
 

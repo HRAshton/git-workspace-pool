@@ -83,6 +83,7 @@ public sealed class OpenPullRequestHandler
                 await _git.CreateWorktreeAsync(
                     registration.LocalPath,
                     workspacePath,
+                    request.Number,
                     cancellationToken
                 );
                 reused = false;

@@ -42,6 +42,7 @@ public interface IWorkspaceGit
     Task CreateWorktreeAsync(
         string repositoryPath,
         string workspacePath,
+        int pullRequestNumber,
         CancellationToken cancellationToken
     );
 }

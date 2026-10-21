@@ -40,7 +40,7 @@ internal sealed class GitCliWorkspaceGit : IWorkspaceGit
     {
         await RunAsync(
             repositoryPath,
-            ["fetch", "--no-tags", "origin", $"refs/pull/{pullRequestNumber}/head"],
+            ["fetch", "--no-tags", "origin", $"refs/pull/{pullRequestNumber}/head:refs/git-workspace-pool/pr/{pullRequestNumber}"],
             cancellationToken
         );
     }
@@ -48,12 +48,13 @@ internal sealed class GitCliWorkspaceGit : IWorkspaceGit
     public async Task CreateWorktreeAsync(
         string repositoryPath,
         string workspacePath,
+        int pullRequestNumber,
         CancellationToken cancellationToken
     )
     {
         await RunAsync(
             repositoryPath,
-            ["worktree", "add", "--detach", workspacePath, "FETCH_HEAD"],
+            ["worktree", "add", "--detach", workspacePath, $"refs/git-workspace-pool/pr/{pullRequestNumber}"],
             cancellationToken
         );
     }

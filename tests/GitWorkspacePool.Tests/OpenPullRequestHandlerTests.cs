@@ -149,6 +149,7 @@ public sealed class OpenPullRequestHandlerTests
         public Task CreateWorktreeAsync(
             string repositoryPath,
             string workspacePath,
+            int pullRequestNumber,
             CancellationToken cancellationToken
         )
         {
