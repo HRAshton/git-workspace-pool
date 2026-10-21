@@ -10,5 +10,6 @@
         <PackageReference Include="xunit.runner.visualstudio" />
         <PackageReference Include="Microsoft.NET.Test.Sdk" />
         <ProjectReference Include="../../src/GitWorkspacePool.Core/GitWorkspacePool.Core.csproj" />
+        <ProjectReference Include="../../src/GitWorkspacePool.Infrastructure/GitWorkspacePool.Infrastructure.csproj" />
     </ItemGroup>
 </Project>

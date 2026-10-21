@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using GitWorkspacePool.Core.Application;
 
-namespace GitWorkspacePool.Tray.Infrastructure;
+namespace GitWorkspacePool.Infrastructure;
 
 internal sealed class GitCliWorkspaceGit : IWorkspaceGit
 {

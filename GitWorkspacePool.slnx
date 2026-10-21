@@ -1,5 +1,6 @@
 <Solution>
   <Project Path="src/GitWorkspacePool.Core/GitWorkspacePool.Core.csproj" />
+  <Project Path="src/GitWorkspacePool.Infrastructure/GitWorkspacePool.Infrastructure.csproj" />
   <Project Path="src/GitWorkspacePool.Tray/GitWorkspacePool.Tray.csproj" />
   <Project Path="tests/GitWorkspacePool.Tests/GitWorkspacePool.Tests.csproj" />
 </Solution>

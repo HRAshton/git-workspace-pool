@@ -1,6 +1,6 @@
 using GitWorkspacePool.Core.Application;
 
-namespace GitWorkspacePool.Tray.Infrastructure;
+namespace GitWorkspacePool.Infrastructure;
 
 internal sealed class WorkspaceDirectories : IWorkspaceDirectories
 {

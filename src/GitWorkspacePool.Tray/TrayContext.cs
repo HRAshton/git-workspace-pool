@@ -2,6 +2,7 @@ using System.Drawing;
 using System.IO.Pipes;
 using System.Text;
 using GitWorkspacePool.Core.Application;
+using GitWorkspacePool.Infrastructure;
 using GitWorkspacePool.Tray.Infrastructure;
 
 namespace GitWorkspacePool.Tray;
