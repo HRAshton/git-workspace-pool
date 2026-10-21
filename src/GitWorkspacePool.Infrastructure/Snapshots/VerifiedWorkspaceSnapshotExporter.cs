@@ -40,8 +40,9 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
     )
     {
         string root = Path.GetFullPath(workspacePath);
-        RejectNestedRoots(root, _snapshotRoot);
-        EnsureNotReparse(root);
+        WorkspaceSnapshotPathPolicy.EnsureSeparated(root, _snapshotRoot);
+        WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(root);
+        WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(_snapshotRoot);
 
         WorktreeSnapshotScan before = await _scanner.InspectAsync(root, cancellationToken);
         SnapshotTree initial = ExpandChanges(root, before.ChangedPaths, cancellationToken);
@@ -391,72 +392,11 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
         return new SnapshotTree(sortedFiles, sortedDirectories, sortedMissing);
     }
 
-    private static string Resolve(string root, string relative)
-    {
-        if (string.IsNullOrWhiteSpace(relative) || Path.IsPathRooted(relative))
-        {
-            throw new InvalidOperationException("Snapshot path must be relative.");
-        }
+    private static string Resolve(string root, string relative) =>
+        WorkspaceSnapshotPathPolicy.Resolve(root, relative);
 
-        string[] segments = relative.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries);
-
-        if (
-            segments.Length == 0
-            || segments.Any(segment =>
-                segment is "." or ".."
-                || segment.Equals(".git", StringComparison.OrdinalIgnoreCase)
-                || segment.Contains(':')
-            )
-        )
-        {
-            throw new InvalidOperationException("Snapshot contains an unsafe Git path.");
-        }
-
-        string fullPath = Path.GetFullPath(Path.Combine([root, .. segments]));
-        string prefix = root.TrimEnd(Path.DirectorySeparatorChar)
-            + Path.DirectorySeparatorChar;
-
-        if (!fullPath.StartsWith(prefix, PathComparer == StringComparer.OrdinalIgnoreCase
-            ? StringComparison.OrdinalIgnoreCase
-            : StringComparison.Ordinal))
-        {
-            throw new InvalidOperationException("Snapshot path escapes its workspace root.");
-        }
-
-        return fullPath;
-    }
-
-    private static void RejectNestedRoots(string workspaceRoot, string snapshotRoot)
-    {
-        string workspacePrefix = workspaceRoot.TrimEnd(Path.DirectorySeparatorChar)
-            + Path.DirectorySeparatorChar;
-        string snapshotPrefix = snapshotRoot.TrimEnd(Path.DirectorySeparatorChar)
-            + Path.DirectorySeparatorChar;
-        StringComparison comparison = OperatingSystem.IsWindows()
-            ? StringComparison.OrdinalIgnoreCase
-            : StringComparison.Ordinal;
-
-        if (
-            workspaceRoot.Equals(snapshotRoot, comparison)
-            || snapshotRoot.StartsWith(workspacePrefix, comparison)
-            || workspaceRoot.StartsWith(snapshotPrefix, comparison)
-        )
-        {
-            throw new InvalidOperationException(
-                "Snapshot storage must be separate from the managed worktree."
-            );
-        }
-    }
-
-    private static void EnsureNotReparse(string path)
-    {
-        if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
-        {
-            throw new InvalidOperationException(
-                "Snapshot refused a symlink or junction to avoid escaping its root."
-            );
-        }
-    }
+    private static void EnsureNotReparse(string path) =>
+        WorkspaceSnapshotPathPolicy.EnsureNotReparse(path);
 
     private sealed record SnapshotTree(
         List<string> Files,
