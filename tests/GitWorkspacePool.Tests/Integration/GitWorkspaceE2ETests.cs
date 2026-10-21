@@ -4,6 +4,7 @@ using GitWorkspacePool.Core.Application;
 using GitWorkspacePool.Core.Domain;
 using GitWorkspacePool.Core.Protocol;
 using GitWorkspacePool.Infrastructure;
+using GitWorkspacePool.Infrastructure.Transport;
 using Xunit;
 
 namespace GitWorkspacePool.Tests.Integration;
@@ -29,6 +30,64 @@ public sealed class GitWorkspaceE2ETests
 
         Assert.True(await fixture.IsRegisteredWorktreeAsync(result.WorkspacePath));
         Assert.Equal(result.WorkspacePath, Assert.Single(fixture.Editor.OpenedPaths));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task OpenPullRequest_NamedPipeToRealGitAndFakeEditor()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        using CancellationTokenSource shutdown = new(TimeSpan.FromSeconds(15));
+        TaskCompletionSource<OpenPullRequestResult> completed = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+
+        string pipeName = "GitWorkspacePool.GitE2E." + Guid.NewGuid().ToString("N");
+        string protocolUrl = "prworkspace://open?url="
+            + Uri.EscapeDataString(PullRequestUrl)
+            + "&v=1";
+
+        NamedPipeRequestServer server = new(pipeName);
+        Task listener = server.ListenAsync(
+            message => _ = DispatchAsync(message),
+            shutdown.Token
+        );
+
+        async Task DispatchAsync(string message)
+        {
+            try
+            {
+                if (!OpenRequestProtocol.TryExtract(message, out string requestUrl))
+                {
+                    throw new InvalidOperationException("Rejected protocol URL.");
+                }
+
+                completed.TrySetResult(await fixture.OpenAsync(requestUrl));
+            }
+            catch (Exception exception)
+            {
+                completed.TrySetException(exception);
+            }
+        }
+
+        try
+        {
+            await new NamedPipeRequestClient().SendAsync(
+                pipeName,
+                protocolUrl,
+                shutdown.Token
+            );
+            OpenPullRequestResult result = await completed.Task.WaitAsync(shutdown.Token);
+
+            Assert.False(result.Reused);
+            Assert.True(await fixture.IsRegisteredWorktreeAsync(result.WorkspacePath));
+            Assert.Equal(result.WorkspacePath, Assert.Single(fixture.Editor.OpenedPaths));
+        }
+        finally
+        {
+            await shutdown.CancelAsync();
+            await listener;
+        }
     }
 
     [Fact]
