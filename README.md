@@ -16,6 +16,8 @@ Early MVP. The initial vertical slice uses explicitly configured local repositor
 
 Session ownership data is stored in `%LOCALAPPDATA%\\GitWorkspacePool\\sessions.db`. The app can reconcile a previously interrupted checkout; it will **refuse to overwrite unknown or previously untracked existing worktrees**, including worktrees created by older preview builds. Manual adoption is not implemented yet. Back up existing preview workspaces before upgrading.
 
+The configured clone's actual `origin` must identify the GitHub repository in the PR URL (HTTPS or SSH). A mismatched clone is rejected before the session journal or filesystem is changed.
+
 No admin rights or background Windows service are required. The browser protocol is untrusted input: only recognized GitHub PR URLs matching configured repositories are accepted.
 
 ## Testing

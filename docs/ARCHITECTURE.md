@@ -20,6 +20,14 @@ This is a modular monolith, not a network daemon.
 6. There is no background compilation, dependency installation or PR prediction.
 7. No attempt is made to infer workspace release from VS Code process state.
 
+## Application boundaries
+
+- `OpenPullRequestHandler` only parses the incoming PR identity, resolves a configured clone, invokes provider origin verification, requests workspace acquisition, and opens the editor.
+- `WorkspaceAcquisitionService` is the only application service permitted to allocate or reconcile worktrees. It depends on narrow ports for Git, directories, session journal and workspace operation locks.
+- `IGitRemoteReader` is separate from `IWorkspaceGit` (interface segregation); provider-specific remote verification never needs worktree operations.
+- Infrastructure adapters know nothing about PR UI or tray menu behavior. The tray is the composition root.
+- Future parking, snapshots and eviction must be independent application use cases, not methods added to `OpenPullRequestHandler`.
+
 ## Durable ownership for PR acquisition
 
 - `SqliteWorkspaceSessionJournal` (infrastructure) records a unique PR/worktree owner and append-only transition events under `%LOCALAPPDATA%\\GitWorkspacePool\\sessions.db`. The database uses a direct ADO.NET adapter rather than a generic repository.
