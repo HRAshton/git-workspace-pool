@@ -1,9 +1,11 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Text.Json;
 using GitWorkspacePool.Core.Application;
 using GitWorkspacePool.Core.Domain;
 using GitWorkspacePool.Core.Protocol;
 using GitWorkspacePool.Infrastructure;
+using GitWorkspacePool.Infrastructure.Snapshots;
 using GitWorkspacePool.Infrastructure.Transport;
 using Xunit;
 
@@ -239,6 +241,80 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task Snapshot_PreservesIndexStagedUnstagedBinaryIgnoredAndDeletions()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string worktree = opened.WorkspacePath;
+
+        File.WriteAllText(Path.Combine(worktree, "feature.txt"), "staged contents");
+        await fixture.GitInWorkspaceAsync("add", "feature.txt");
+        File.WriteAllText(Path.Combine(worktree, "feature.txt"), "unstaged contents");
+        File.Delete(Path.Combine(worktree, "README.md"));
+        File.WriteAllBytes(Path.Combine(worktree, "untracked.bin"), [0, 255, 19, 128]);
+        File.WriteAllText(Path.Combine(worktree, ".gitignore"), "generated/\n");
+        Directory.CreateDirectory(Path.Combine(worktree, "generated"));
+        File.WriteAllBytes(Path.Combine(worktree, "generated", "ignored.bin"), [255, 0, 44]);
+
+        WorkspaceSnapshotReceipt snapshot = await fixture.SnapshotAsync();
+        string manifestPath = Path.Combine(snapshot.Folder, "manifest.json");
+        Assert.True(File.Exists(manifestPath));
+
+        WorkspaceSnapshotManifest manifest = JsonSerializer.Deserialize<WorkspaceSnapshotManifest>(
+            File.ReadAllText(manifestPath)
+        )!;
+
+        Assert.Equal(1, manifest.Version);
+        Assert.Contains("README.md", manifest.MissingPaths);
+        Assert.Equal("unstaged contents", File.ReadAllText(Path.Combine(snapshot.Folder, "files", "feature.txt")));
+        Assert.Equal(
+            new byte[] { 0, 255, 19, 128 },
+            File.ReadAllBytes(Path.Combine(snapshot.Folder, "files", "untracked.bin"))
+        );
+        Assert.Equal(
+            new byte[] { 255, 0, 44 },
+            File.ReadAllBytes(Path.Combine(snapshot.Folder, "files", "generated", "ignored.bin"))
+        );
+        Assert.True(File.Exists(Path.Combine(snapshot.Folder, "index.bin")));
+        Assert.Equal("unstaged contents", File.ReadAllText(Path.Combine(worktree, "feature.txt")));
+        Assert.True(await fixture.IsRegisteredWorktreeAsync(worktree));
+        Assert.Equal(WorkspaceSessionState.Active, (await fixture.OwnedSessionAsync()).State);
+
+        // Capturing the index must preserve the exact independently staged payload.
+        string stagedBlob = await fixture.ReadStagedFeatureAsync();
+        Assert.Equal("staged contents", stagedBlob);
+
+        OpenPullRequestResult reopened = await fixture.OpenWithFreshHandlerAsync(PullRequestUrl);
+        Assert.True(reopened.Reused);
+        Assert.Equal("unstaged contents", File.ReadAllText(Path.Combine(worktree, "feature.txt")));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task Snapshot_RefusesLockedUserFileWithoutPublishing()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string changedFile = Path.Combine(opened.WorkspacePath, "feature.txt");
+        File.WriteAllText(changedFile, "important work");
+
+        using (FileStream held = new(
+            changedFile,
+            FileMode.Open,
+            FileAccess.ReadWrite,
+            FileShare.None
+        ))
+        {
+            await Assert.ThrowsAnyAsync<IOException>(() => fixture.SnapshotAsync());
+        }
+
+        Assert.Equal("important work", File.ReadAllText(changedFile));
+        Assert.Equal(WorkspaceSessionState.Active, (await fixture.OwnedSessionAsync()).State);
+        Assert.Empty(Directory.GetDirectories(fixture.SnapshotRoot, "snapshot-*", SearchOption.AllDirectories));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task OpenPullRequest_UnknownPullRequestDoesNotAllocateWorktree()
     {
         using Fixture fixture = await Fixture.CreateAsync();
@@ -268,6 +344,8 @@ public sealed class GitWorkspaceE2ETests
             _handler = CreateHandler();
 
         }
+
+        public string SnapshotRoot => Path.Combine(_root, "snapshots");
 
         public string SourcePath => _source;
 
@@ -327,6 +405,54 @@ public sealed class GitWorkspaceE2ETests
                 WorkspacePath(17),
                 "FETCH_HEAD"
             );
+        }
+
+        public Task GitInWorkspaceAsync(params string[] arguments) =>
+            GitAsync(WorkspacePath(17), arguments);
+
+        public async Task<string> ReadStagedFeatureAsync()
+        {
+            ProcessStartInfo startInfo = new("git")
+            {
+                WorkingDirectory = WorkspacePath(17),
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                CreateNoWindow = true,
+            };
+            startInfo.ArgumentList.Add("show");
+            startInfo.ArgumentList.Add(":feature.txt");
+            using Process process = Process.Start(startInfo)!;
+            string result = await process.StandardOutput.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            Assert.Equal(0, process.ExitCode);
+            return result.TrimEnd('\r', '\n');
+        }
+
+        public async Task<WorkspaceSession> OwnedSessionAsync()
+        {
+            SqliteWorkspaceSessionJournal journal = new(
+                Path.Combine(_root, "state", "sessions.db")
+            );
+            WorkspaceSession? session = Assert.Single(
+                await journal.ListActiveAsync(CancellationToken.None)
+            );
+            return session;
+        }
+
+        public async Task<WorkspaceSnapshotReceipt> SnapshotAsync()
+        {
+            WorkspaceSession session = await OwnedSessionAsync();
+            string state = Path.Combine(_root, "state");
+            CaptureWorkspaceSnapshotService handler = new(
+                new SqliteWorkspaceSessionJournal(Path.Combine(state, "sessions.db")),
+                new FileWorkspaceOperationLock(Path.Combine(state, "locks")),
+                new GitCliWorkspaceGit(),
+                new VerifiedWorkspaceSnapshotExporter(
+                    SnapshotRoot,
+                    new GitWorktreeSnapshotScanner()
+                )
+            );
+            return await handler.CaptureAsync(session.OperationId, CancellationToken.None);
         }
 
         public Task<OpenPullRequestResult> OpenAsync(string url) =>
