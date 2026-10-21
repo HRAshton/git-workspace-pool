@@ -1,0 +1,421 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using GitWorkspacePool.Core.Application;
+using GitWorkspacePool.Core.Domain;
+
+namespace GitWorkspacePool.Infrastructure.Snapshots;
+
+/// <summary>
+/// Copies only changed paths and the Git index, verifies sources, then atomically publishes a manifest.
+/// </summary>
+public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExporter
+{
+    private const int MaxSnapshotFiles = 50000;
+    private const long MaxSnapshotBytes = 2L * 1024 * 1024 * 1024;
+
+    private readonly string _snapshotRoot;
+    private readonly GitWorktreeSnapshotScanner _scanner;
+    private static readonly StringComparer PathComparer = OperatingSystem.IsWindows()
+        ? StringComparer.OrdinalIgnoreCase
+        : StringComparer.Ordinal;
+
+    /// <summary>
+    /// Initializes the exporter with a dedicated, app-owned snapshot directory.
+    /// </summary>
+    public VerifiedWorkspaceSnapshotExporter(
+        string snapshotRoot,
+        GitWorktreeSnapshotScanner scanner
+    )
+    {
+        _snapshotRoot = Path.GetFullPath(snapshotRoot);
+        _scanner = scanner;
+    }
+
+    /// <inheritdoc/>
+    public async Task<WorkspaceSnapshotReceipt> ExportAsync(
+        string workspacePath,
+        Guid operationId,
+        CancellationToken cancellationToken
+    )
+    {
+        string root = Path.GetFullPath(workspacePath);
+        RejectNestedRoots(root, _snapshotRoot);
+        EnsureNotReparse(root);
+
+        WorktreeSnapshotScan before = await _scanner.InspectAsync(root, cancellationToken);
+        SnapshotTree initial = ExpandChanges(root, before.ChangedPaths, cancellationToken);
+
+        string ownerDirectory = Path.Combine(_snapshotRoot, operationId.ToString("N"));
+        Directory.CreateDirectory(ownerDirectory);
+        Guid snapshotId = Guid.NewGuid();
+        string staging = Path.Combine(ownerDirectory, ".pending-" + snapshotId.ToString("N"));
+        string published = Path.Combine(ownerDirectory, "snapshot-" + snapshotId.ToString("N"));
+
+        // A failed or interrupted snapshot remains visibly pending for later diagnostics.
+        Directory.CreateDirectory(staging);
+        string payloadDirectory = Path.Combine(staging, "files");
+        Directory.CreateDirectory(payloadDirectory);
+
+        int fileCount = 0;
+        long copiedBytes = 0;
+
+        string indexTarget = Path.Combine(staging, "index.bin");
+        (string indexHash, long indexLength) = await CopyVerifiedAsync(
+            before.IndexPath,
+            indexTarget,
+            cancellationToken
+        );
+        fileCount++;
+        copiedBytes += indexLength;
+
+        List<WorkspaceSnapshotFile> files = [];
+
+        foreach (string relative in initial.Directories)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string path = Resolve(root, relative);
+            FileAttributes attributes = File.GetAttributes(path);
+            EnsureNotReparse(path);
+            Directory.CreateDirectory(Resolve(payloadDirectory, relative));
+            files.Add(
+                new WorkspaceSnapshotFile(
+                    relative,
+                    true,
+                    null,
+                    0,
+                    attributes,
+                    Directory.GetLastWriteTimeUtc(path)
+                )
+            );
+        }
+
+        foreach (string relative in initial.Files)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string source = Resolve(root, relative);
+            string destination = Resolve(payloadDirectory, relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            EnsureNotReparse(source);
+
+            long length = new FileInfo(source).Length;
+
+            if (fileCount >= MaxSnapshotFiles || copiedBytes + length > MaxSnapshotBytes)
+            {
+                throw new InvalidOperationException(
+                    "Snapshot exceeds the conservative file/byte budget. "
+                        + "The active worktree was not modified."
+                );
+            }
+
+            FileAttributes attributes = File.GetAttributes(source);
+            DateTime lastWrite = File.GetLastWriteTimeUtc(source);
+            (string digest, long actualLength) = await CopyVerifiedAsync(
+                source,
+                destination,
+                cancellationToken
+            );
+            fileCount++;
+            copiedBytes += actualLength;
+
+            files.Add(
+                new WorkspaceSnapshotFile(
+                    relative,
+                    false,
+                    digest,
+                    actualLength,
+                    attributes,
+                    lastWrite
+                )
+            );
+        }
+
+        WorktreeSnapshotScan after = await _scanner.InspectAsync(root, cancellationToken);
+        SnapshotTree finalTree = ExpandChanges(root, after.ChangedPaths, cancellationToken);
+
+        if (
+            before.Head != after.Head
+            || before.Status != after.Status
+            || !before.IndexPath.Equals(after.IndexPath, StringComparison.OrdinalIgnoreCase)
+            || !initial.Files.SequenceEqual(finalTree.Files, PathComparer)
+            || !initial.Directories.SequenceEqual(finalTree.Directories, PathComparer)
+            || !initial.Missing.SequenceEqual(finalTree.Missing, PathComparer)
+            || !string.Equals(
+                indexHash,
+                await HashFileAsync(before.IndexPath, cancellationToken),
+                StringComparison.Ordinal
+            )
+        )
+        {
+            throw new InvalidOperationException(
+                "The workspace changed while capturing a snapshot; publication was cancelled."
+            );
+        }
+
+        // Check again after all data was copied, not only during each file's initial copy.
+        foreach (WorkspaceSnapshotFile file in files.Where(file => !file.IsDirectory))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (
+                !string.Equals(
+                    file.Sha256,
+                    await HashFileAsync(Resolve(root, file.RelativePath), cancellationToken),
+                    StringComparison.Ordinal
+                )
+            )
+            {
+                throw new InvalidOperationException(
+                    "A source file changed while the snapshot was being verified."
+                );
+            }
+        }
+
+        WorkspaceSnapshotManifest manifest = new()
+        {
+            SnapshotId = snapshotId,
+            OperationId = operationId,
+            WorkspacePath = root,
+            HeadCommitSha = before.Head,
+            StatusBase64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(before.Status)),
+            GitIndexSha256 = indexHash,
+            Files = files,
+            MissingPaths = initial.Missing,
+        };
+
+        string manifestPath = Path.Combine(staging, "manifest.json");
+        await using (FileStream stream = new(
+            manifestPath,
+            FileMode.CreateNew,
+            FileAccess.Write,
+            FileShare.None,
+            bufferSize: 4096,
+            FileOptions.WriteThrough
+        ))
+        {
+            await JsonSerializer.SerializeAsync(
+                stream,
+                manifest,
+                new JsonSerializerOptions { WriteIndented = true },
+                cancellationToken
+            );
+            await stream.FlushAsync(cancellationToken);
+            stream.Flush(flushToDisk: true);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        Directory.Move(staging, published);
+
+        return new WorkspaceSnapshotReceipt(
+            snapshotId,
+            operationId,
+            published,
+            fileCount,
+            copiedBytes
+        );
+    }
+
+    private static async Task<(string Hash, long Length)> CopyVerifiedAsync(
+        string source,
+        string destination,
+        CancellationToken cancellationToken
+    )
+    {
+        EnsureNotReparse(source);
+        await using (FileStream input = new(
+            source,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            bufferSize: 65536,
+            FileOptions.SequentialScan
+        ))
+        await using (FileStream output = new(
+            destination,
+            FileMode.CreateNew,
+            FileAccess.Write,
+            FileShare.None,
+            bufferSize: 65536,
+            FileOptions.WriteThrough
+        ))
+        {
+            await input.CopyToAsync(output, cancellationToken);
+            await output.FlushAsync(cancellationToken);
+            output.Flush(flushToDisk: true);
+        }
+
+        string hash = await HashFileAsync(destination, cancellationToken);
+        string sourceHash = await HashFileAsync(source, cancellationToken);
+
+        if (hash != sourceHash)
+        {
+            throw new InvalidOperationException(
+                "Source contents changed during snapshot copy; nothing was published."
+            );
+        }
+
+        return (hash, new FileInfo(destination).Length);
+    }
+
+    private static async Task<string> HashFileAsync(
+        string path,
+        CancellationToken cancellationToken
+    )
+    {
+        EnsureNotReparse(path);
+        await using FileStream stream = new(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            bufferSize: 65536,
+            FileOptions.SequentialScan
+        );
+        return Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken));
+    }
+
+    private static SnapshotTree ExpandChanges(
+        string root,
+        IReadOnlyList<string> changePaths,
+        CancellationToken cancellationToken
+    )
+    {
+        HashSet<string> files = new(PathComparer);
+        HashSet<string> directories = new(PathComparer);
+        HashSet<string> missing = new(PathComparer);
+        Stack<string> pending = new(changePaths);
+
+        while (pending.Count > 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string relative = pending.Pop().TrimEnd('/');
+            string path = Resolve(root, relative);
+
+            FileAttributes attributes;
+
+            try
+            {
+                attributes = File.GetAttributes(path);
+            }
+            catch (FileNotFoundException)
+            {
+                missing.Add(relative);
+                continue;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                missing.Add(relative);
+                continue;
+            }
+
+            if ((attributes & FileAttributes.ReparsePoint) != 0)
+            {
+                throw new InvalidOperationException(
+                    "A changed path is a symlink or junction; snapshot refused."
+                );
+            }
+
+            if ((attributes & FileAttributes.Directory) != 0)
+            {
+                directories.Add(relative);
+
+                foreach (string child in Directory.EnumerateFileSystemEntries(path))
+                {
+                    pending.Push(
+                        Path.GetRelativePath(root, child).Replace(
+                            Path.DirectorySeparatorChar,
+                            '/'
+                        )
+                    );
+                }
+            }
+            else
+            {
+                files.Add(relative);
+            }
+
+            if (files.Count + directories.Count > MaxSnapshotFiles)
+            {
+                throw new InvalidOperationException("Snapshot contains too many changed paths.");
+            }
+        }
+
+        List<string> sortedFiles = files.OrderBy(path => path, PathComparer).ToList();
+        List<string> sortedDirectories = directories.OrderBy(path => path, PathComparer).ToList();
+        List<string> sortedMissing = missing.OrderBy(path => path, PathComparer).ToList();
+
+        return new SnapshotTree(sortedFiles, sortedDirectories, sortedMissing);
+    }
+
+    private static string Resolve(string root, string relative)
+    {
+        if (string.IsNullOrWhiteSpace(relative) || Path.IsPathRooted(relative))
+        {
+            throw new InvalidOperationException("Snapshot path must be relative.");
+        }
+
+        string[] segments = relative.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries);
+
+        if (
+            segments.Length == 0
+            || segments.Any(segment =>
+                segment is "." or ".."
+                || segment.Equals(".git", StringComparison.OrdinalIgnoreCase)
+                || segment.Contains(':')
+            )
+        )
+        {
+            throw new InvalidOperationException("Snapshot contains an unsafe Git path.");
+        }
+
+        string fullPath = Path.GetFullPath(Path.Combine([root, .. segments]));
+        string prefix = root.TrimEnd(Path.DirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+
+        if (!fullPath.StartsWith(prefix, PathComparer == StringComparer.OrdinalIgnoreCase
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("Snapshot path escapes its workspace root.");
+        }
+
+        return fullPath;
+    }
+
+    private static void RejectNestedRoots(string workspaceRoot, string snapshotRoot)
+    {
+        string workspacePrefix = workspaceRoot.TrimEnd(Path.DirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        string snapshotPrefix = snapshotRoot.TrimEnd(Path.DirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        StringComparison comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+
+        if (
+            workspaceRoot.Equals(snapshotRoot, comparison)
+            || snapshotRoot.StartsWith(workspacePrefix, comparison)
+            || workspaceRoot.StartsWith(snapshotPrefix, comparison)
+        )
+        {
+            throw new InvalidOperationException(
+                "Snapshot storage must be separate from the managed worktree."
+            );
+        }
+    }
+
+    private static void EnsureNotReparse(string path)
+    {
+        if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+        {
+            throw new InvalidOperationException(
+                "Snapshot refused a symlink or junction to avoid escaping its root."
+            );
+        }
+    }
+
+    private sealed record SnapshotTree(
+        List<string> Files,
+        List<string> Directories,
+        List<string> Missing
+    );
+}
