@@ -376,6 +376,34 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task Restore_PreservesIgnoredEmptyDirectoryMetadata()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string source = opened.WorkspacePath;
+        File.WriteAllText(Path.Combine(source, ".gitignore"), "generated/\n");
+        string ignoredFolder = Path.Combine(source, "generated");
+        string emptyFolder = Path.Combine(ignoredFolder, "empty");
+        Directory.CreateDirectory(emptyFolder);
+        DateTime original = new(2020, 2, 3, 4, 5, 6, DateTimeKind.Utc);
+        Directory.SetLastWriteTimeUtc(emptyFolder, original);
+
+        WorkspaceSnapshotReceipt receipt = await fixture.SnapshotAsync();
+        string restored = await fixture.RestoreSnapshotAsync(receipt.SnapshotId);
+        string restoredEmpty = Path.Combine(restored, "generated", "empty");
+
+        Assert.True(Directory.Exists(restoredEmpty));
+        Assert.InRange(
+            Math.Abs((Directory.GetLastWriteTimeUtc(restoredEmpty) - original).TotalSeconds),
+            0,
+            2
+        );
+        Assert.True(Directory.Exists(emptyFolder));
+        Assert.Equal(WorkspaceSessionState.Active, (await fixture.OwnedSessionAsync()).State);
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task Snapshot_TamperedPayloadIsRejectedBeforeNewWorktree()
     {
         using Fixture fixture = await Fixture.CreateAsync();

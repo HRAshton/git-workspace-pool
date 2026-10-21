@@ -298,6 +298,26 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
             }
         }
 
+        // Apply directory metadata after all descendants are created and copied:
+        // creating a child updates its parent's last-write timestamp on Windows.
+        foreach (
+            WorkspaceSnapshotFile directory in manifest.Files
+                .Where(item => item.IsDirectory)
+                .OrderByDescending(item => item.RelativePath.Length)
+        )
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string destination = WorkspaceSnapshotPathPolicy.Resolve(
+                target,
+                NormalizeFilePath(directory.RelativePath)
+            );
+            WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(destination);
+            Directory.SetLastWriteTimeUtc(destination, directory.LastWriteUtc);
+
+            FileAttributes allowed = directory.Attributes & ~FileAttributes.ReparsePoint;
+            File.SetAttributes(destination, allowed);
+        }
+
         await CheckpointAsync(
             SnapshotCheckpoint.RestoreFilesApplied,
             target,

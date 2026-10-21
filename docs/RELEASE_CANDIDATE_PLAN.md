@@ -39,6 +39,7 @@
 - [x] SQLite restore operation journal v3 commits intent before Git worktree allocation and verification after content/status checks; diagnostics distinguish interrupted, verified and missing restore destinations.
 - [ ] Reconcile/repair orphan restore attempts safely; diagnostics never authorizes deletion or adoption.
 - [x] Recheck status, index hash, file digests and enumerated paths immediately before snapshot publication; E2E verifies a last-moment working-file edit and concurrent Git index mutation both reject publication.
+- [x] Restore recorded ignored directory creation times and attributes after descendant file writes; E2E covers ignored empty directories.
 - [ ] Strengthen file identity, reparse-point race protection, and unsupported index extension/conflict handling before release or eviction.
 - [x] Add conservative free-disk preflight for snapshot and restore with injected low-space E2E; neither operation allocates a new directory when the probe reports insufficient storage.
 - [ ] Prove mid-copy disk-full handling, ACL/read-only, anti-virus lock, long/unicode/case-collision path handling and cancellation.

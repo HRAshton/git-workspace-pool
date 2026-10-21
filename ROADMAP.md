@@ -46,6 +46,7 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [x] Discover interrupted exports, published-but-unjournalled snapshots, missing receipts and unmanaged recovery worktrees without deleting data; expose findings in tray diagnostics.
 - [x] Persist restore intent before worktree allocation, verify after reconstruction, and distinguish interrupted/verified/missing recovery outcomes.
 - [x] Reject snapshot/restore before allocation when the target disk fails a conservative free-space preflight.
+- [x] Restore snapshot directory attributes and timestamps after materializing child files.
 - [ ] Complete reparse-point race, actual disk-full and safe restore-reconciliation tests before enabling release.
 - [ ] Configurable artifact retention and cleanup policies.
 - [x] Tests for interrupted worktree creation (before journal commit) and cross-handler allocation.
