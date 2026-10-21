@@ -264,7 +264,12 @@ public sealed class GitWorkspaceE2ETests
             File.ReadAllText(manifestPath)
         )!;
 
-        Assert.Equal(1, manifest.Version);
+        Assert.Equal(2, manifest.Version);
+        Assert.Contains(manifest.StagedFiles, file => file.RelativePath == "feature.txt");
+        Assert.Equal(
+            "staged contents",
+            File.ReadAllText(Path.Combine(snapshot.Folder, "staged", "feature.txt"))
+        );
         Assert.Contains("README.md", manifest.MissingPaths);
         Assert.Equal("unstaged contents", File.ReadAllText(Path.Combine(snapshot.Folder, "files", "feature.txt")));
         Assert.Equal(
