@@ -151,6 +151,25 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task OpenPullRequest_QuarantinesUnjournalledGitWorktreeWithoutDataLoss()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        await fixture.CreateUnjournalledWorktreeAsync();
+        string workspacePath = fixture.WorkspacePath(17);
+        string notePath = Path.Combine(workspacePath, "notes.local");
+        File.WriteAllText(notePath, "old preview session");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.OpenAsync(PullRequestUrl)
+        );
+
+        Assert.Equal("old preview session", File.ReadAllText(notePath));
+        Assert.True(await fixture.IsRegisteredWorktreeAsync(workspacePath));
+        Assert.Empty(fixture.Editor.OpenedPaths);
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task OpenPullRequest_ConcurrentRequestsAllocateOneWorktree()
     {
         using Fixture fixture = await Fixture.CreateAsync();
@@ -294,6 +313,20 @@ public sealed class GitWorkspaceE2ETests
                 DeleteFixtureTree(root);
                 throw;
             }
+        }
+
+        public async Task CreateUnjournalledWorktreeAsync()
+        {
+            await GitAsync(_source, "fetch", "--no-tags", "origin", "refs/pull/17/head");
+            Directory.CreateDirectory(_workspaces);
+            await GitAsync(
+                _source,
+                "worktree",
+                "add",
+                "--detach",
+                WorkspacePath(17),
+                "FETCH_HEAD"
+            );
         }
 
         public Task<OpenPullRequestResult> OpenAsync(string url) =>
