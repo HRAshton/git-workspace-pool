@@ -211,6 +211,65 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
     }
 
     /// <inheritdoc/>
+    public Task<WorkspaceSnapshotRecord?> GetSnapshotAsync(
+        Guid snapshotId,
+        CancellationToken cancellationToken
+    )
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using SqliteConnection connection = Open();
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = SnapshotSelect + " WHERE snapshots.snapshot_id = $snapshot";
+        command.Parameters.AddWithValue("$snapshot", snapshotId.ToString("D"));
+        using SqliteDataReader reader = command.ExecuteReader();
+
+        return Task.FromResult(reader.Read() ? MapSnapshot(reader) : null);
+    }
+
+    /// <inheritdoc/>
+    public Task<IReadOnlyList<WorkspaceSnapshotRecord>> ListSnapshotsAsync(
+        CancellationToken cancellationToken
+    )
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using SqliteConnection connection = Open();
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = SnapshotSelect
+            + " ORDER BY snapshots.created_utc DESC, snapshots.rowid DESC LIMIT 50";
+        List<WorkspaceSnapshotRecord> records = [];
+        using SqliteDataReader reader = command.ExecuteReader();
+
+        while (reader.Read())
+        {
+            records.Add(MapSnapshot(reader));
+        }
+
+        return Task.FromResult<IReadOnlyList<WorkspaceSnapshotRecord>>(records);
+    }
+
+    private const string SnapshotSelect = """
+        SELECT sessions.operation_id, sessions.repository_key, sessions.pr_number,
+               sessions.source_path, sessions.workspace_path, sessions.state,
+               sessions.pinned_commit, snapshots.snapshot_id, snapshots.folder,
+               snapshots.file_count, snapshots.copied_bytes
+          FROM snapshots
+          JOIN sessions ON sessions.operation_id = snapshots.operation_id
+        """;
+
+    private static WorkspaceSnapshotRecord MapSnapshot(SqliteDataReader reader)
+    {
+        WorkspaceSession session = Map(reader);
+        WorkspaceSnapshotReceipt receipt = new(
+            Guid.Parse(reader.GetString(7)),
+            session.OperationId,
+            reader.GetString(8),
+            reader.GetInt32(9),
+            reader.GetInt64(10)
+        );
+        return new WorkspaceSnapshotRecord(session, receipt);
+    }
+
+    /// <inheritdoc/>
     public Task RecordSnapshotAsync(
         WorkspaceSnapshotReceipt receipt,
         CancellationToken cancellationToken

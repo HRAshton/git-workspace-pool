@@ -17,6 +17,7 @@ internal sealed class TrayContext : ApplicationContext
     private readonly OpenPullRequestHandler _open;
     private readonly IWorkspaceSnapshotSessionStore _sessions;
     private readonly CaptureWorkspaceSnapshotService _snapshot;
+    private readonly RestoreWorkspaceSnapshotService _restore;
 
     public TrayContext(string? initialRequest)
     {
@@ -52,6 +53,14 @@ internal sealed class TrayContext : ApplicationContext
                 new GitWorktreeSnapshotScanner()
             )
         );
+        _restore = new RestoreWorkspaceSnapshotService(
+            journal,
+            new VerifiedWorkspaceSnapshotRestorer(
+                Path.Combine(stateRoot, "recovered"),
+                git,
+                new GitWorktreeSnapshotScanner()
+            )
+        );
         WorkspaceAcquisitionService acquisition = new(
             git,
             new WorkspaceDirectories(),
@@ -68,6 +77,10 @@ internal sealed class TrayContext : ApplicationContext
         ToolStripMenuItem snapshotsMenu = new("Snapshot active PR...");
         snapshotsMenu.DropDownOpening += async (_, _) => await PopulateSnapshotsAsync(snapshotsMenu);
         menu.Items.Insert(1, snapshotsMenu);
+
+        ToolStripMenuItem restoreMenu = new("Restore snapshot to new worktree...");
+        restoreMenu.DropDownOpening += async (_, _) => await PopulateRestoresAsync(restoreMenu);
+        menu.Items.Insert(2, restoreMenu);
 
         _ = ListenAsync(_shutdown.Token);
 
@@ -143,6 +156,76 @@ internal sealed class TrayContext : ApplicationContext
         catch (Exception exception)
         {
             Notify("Snapshot not published", exception.Message);
+        }
+    }
+
+    private async Task PopulateRestoresAsync(ToolStripMenuItem menu)
+    {
+        menu.DropDownItems.Clear();
+
+        try
+        {
+            IReadOnlyList<WorkspaceSnapshotRecord> snapshots = await _sessions.ListSnapshotsAsync(
+                _shutdown.Token
+            );
+
+            if (snapshots.Count == 0)
+            {
+                menu.DropDownItems.Add(new ToolStripMenuItem("No published snapshots")
+                {
+                    Enabled = false,
+                });
+                return;
+            }
+
+            foreach (WorkspaceSnapshotRecord record in snapshots)
+            {
+                ToolStripMenuItem item = new(
+                    $"{record.Session.RepositoryKey} PR #{record.Session.PullRequestNumber} "
+                        + $"({record.Receipt.SnapshotId.ToString("N")[..8]})"
+                );
+                Guid snapshotId = record.Receipt.SnapshotId;
+                item.Click += (_, _) => _ = RestoreFromMenuAsync(snapshotId);
+                menu.DropDownItems.Add(item);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Application is exiting.
+        }
+        catch (Exception exception)
+        {
+            Notify("Could not list snapshots", exception.Message);
+        }
+    }
+
+    private async Task RestoreFromMenuAsync(Guid snapshotId)
+    {
+        DialogResult decision = MessageBox.Show(
+            "Restore this snapshot into a separate, new Git worktree? "
+                + "Existing PR sessions will not be changed.",
+            "Restore workspace snapshot",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Question
+        );
+
+        if (decision != DialogResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            string path = await _restore.RestoreAsync(snapshotId, _shutdown.Token);
+            Notify("Recovery worktree created", path);
+        }
+        catch (OperationCanceledException)
+        {
+            // User cancelled or application is exiting.
+        }
+        catch (Exception exception)
+        {
+            Notify("Recovery could not be verified", exception.Message);
         }
     }
 

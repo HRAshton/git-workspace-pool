@@ -94,6 +94,10 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
 
         string expectedStatus = new UTF8Encoding(false, true).GetString(serializedStatus);
         string indexFile = Path.Combine(snapshot, "index.bin");
+        WorkspaceSnapshotPathPolicy.EnsureSeparated(
+            Path.GetFullPath(session.SourcePath),
+            _recoveryRoot
+        );
         await VerifyFileAsync(indexFile, manifest.GitIndexSha256, null, cancellationToken);
 
         HashSet<string> workingNames = PathNames();
@@ -226,6 +230,11 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
                 Path.Combine(snapshot, "files"),
                 relative
             );
+            if (File.Exists(destination) || Directory.Exists(destination))
+            {
+                WorkspaceSnapshotPathPolicy.EnsureNotReparse(destination);
+            }
+
             File.Copy(source, destination, overwrite: true);
             File.SetAttributes(destination, file.Attributes);
             File.SetLastWriteTimeUtc(destination, file.LastWriteUtc);
