@@ -296,6 +296,71 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task Snapshot_RestoreIntoNewWorktreePreservesIndexAndWorkingFiles()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string source = opened.WorkspacePath;
+        File.WriteAllText(Path.Combine(source, "feature.txt"), "staged version");
+        await fixture.GitInWorkspaceAsync("add", "feature.txt");
+        File.WriteAllText(Path.Combine(source, "feature.txt"), "working version");
+        File.Delete(Path.Combine(source, "README.md"));
+        File.WriteAllText(Path.Combine(source, ".gitignore"), "build/\n");
+        Directory.CreateDirectory(Path.Combine(source, "build"));
+        byte[] binary = [0, 255, 13, 128, 1];
+        File.WriteAllBytes(Path.Combine(source, "build", "artifact.bin"), binary);
+        File.WriteAllBytes(Path.Combine(source, "personal.bin"), binary);
+
+        WorkspaceSnapshotReceipt saved = await fixture.SnapshotAsync();
+
+        // The source can continue evolving; restoration must use immutable saved data.
+        File.WriteAllText(Path.Combine(source, "feature.txt"), "later unsaved work");
+
+        string recovered = await fixture.RestoreSnapshotAsync(saved.SnapshotId);
+
+        Assert.NotEqual(source, recovered);
+        Assert.Equal("working version", File.ReadAllText(Path.Combine(recovered, "feature.txt")));
+        Assert.Equal("staged version", await fixture.ReadStagedFeatureAsync(recovered));
+        Assert.Equal(binary, File.ReadAllBytes(Path.Combine(recovered, "build", "artifact.bin")));
+        Assert.Equal(binary, File.ReadAllBytes(Path.Combine(recovered, "personal.bin")));
+        Assert.False(File.Exists(Path.Combine(recovered, "README.md")));
+        Assert.True(await fixture.IsRegisteredWorktreeAsync(recovered));
+        Assert.Equal("later unsaved work", File.ReadAllText(Path.Combine(source, "feature.txt")));
+        Assert.Equal(WorkspaceSessionState.Active, (await fixture.OwnedSessionAsync()).State);
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task Snapshot_TamperedPayloadIsRejectedBeforeNewWorktree()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        File.WriteAllText(Path.Combine(opened.WorkspacePath, "feature.txt"), "original");
+
+        WorkspaceSnapshotReceipt saved = await fixture.SnapshotAsync();
+        File.WriteAllText(Path.Combine(saved.Folder, "files", "feature.txt"), "tampered!");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.RestoreSnapshotAsync(saved.SnapshotId)
+        );
+
+        Assert.Equal("original", File.ReadAllText(Path.Combine(opened.WorkspacePath, "feature.txt")));
+        Assert.False(Directory.Exists(fixture.RecoveryRoot));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task Snapshot_UnknownSnapshotCannotAllocateRecoveryWorktree()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.RestoreSnapshotAsync(Guid.NewGuid())
+        );
+        Assert.False(Directory.Exists(fixture.RecoveryRoot));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task Snapshot_RefusesLockedUserFileWithoutPublishing()
     {
         using Fixture fixture = await Fixture.CreateAsync();
@@ -351,6 +416,8 @@ public sealed class GitWorkspaceE2ETests
         }
 
         public string SnapshotRoot => Path.Combine(_root, "snapshots");
+
+        public string RecoveryRoot => Path.Combine(_root, "recovered");
 
         public string SourcePath => _source;
 
@@ -415,11 +482,11 @@ public sealed class GitWorkspaceE2ETests
         public Task GitInWorkspaceAsync(params string[] arguments) =>
             GitAsync(WorkspacePath(17), arguments);
 
-        public async Task<string> ReadStagedFeatureAsync()
+        public async Task<string> ReadStagedFeatureAsync(string? worktreePath = null)
         {
             ProcessStartInfo startInfo = new("git")
             {
-                WorkingDirectory = WorkspacePath(17),
+                WorkingDirectory = worktreePath ?? WorkspacePath(17),
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 CreateNoWindow = true,
@@ -458,6 +525,22 @@ public sealed class GitWorkspaceE2ETests
                 )
             );
             return await handler.CaptureAsync(session.OperationId, CancellationToken.None);
+        }
+
+        public async Task<string> RestoreSnapshotAsync(Guid snapshotId)
+        {
+            SqliteWorkspaceSessionJournal sessions = new(
+                Path.Combine(_root, "state", "sessions.db")
+            );
+            RestoreWorkspaceSnapshotService service = new(
+                sessions,
+                new VerifiedWorkspaceSnapshotRestorer(
+                    RecoveryRoot,
+                    new GitCliWorkspaceGit(),
+                    new GitWorktreeSnapshotScanner()
+                )
+            );
+            return await service.RestoreAsync(snapshotId, CancellationToken.None);
         }
 
         public Task<OpenPullRequestResult> OpenAsync(string url) =>
