@@ -14,6 +14,7 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
     private readonly string _recoveryRoot;
     private readonly IWorkspaceGit _git;
     private readonly GitWorktreeSnapshotScanner _scanner;
+    private readonly ISnapshotCheckpointSink? _checkpoints;
 
     /// <summary>
     /// Initializes recovery with a private directory outside every managed worktree.
@@ -21,12 +22,14 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
     public VerifiedWorkspaceSnapshotRestorer(
         string recoveryRoot,
         IWorkspaceGit git,
-        GitWorktreeSnapshotScanner scanner
+        GitWorktreeSnapshotScanner scanner,
+        ISnapshotCheckpointSink? checkpoints = null
     )
     {
         _recoveryRoot = Path.GetFullPath(recoveryRoot);
         _git = git;
         _scanner = scanner;
+        _checkpoints = checkpoints;
     }
 
     /// <inheritdoc/>
@@ -208,6 +211,12 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
             throw new InvalidOperationException("New recovery worktree failed Git validation.");
         }
 
+        await CheckpointAsync(
+            SnapshotCheckpoint.RestoreWorktreeCreated,
+            target,
+            cancellationToken
+        );
+
         foreach (WorkspaceSnapshotFile file in manifest.Files.Where(item => item.IsDirectory))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -267,6 +276,12 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
             }
         }
 
+        await CheckpointAsync(
+            SnapshotCheckpoint.RestoreFilesApplied,
+            target,
+            cancellationToken
+        );
+
         // Restore original index bytes only into Git's newly allocated admin worktree.
         string newIndexPath = (await _scanner.InspectAsync(target, cancellationToken)).IndexPath;
         WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(
@@ -279,6 +294,12 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
             newIndexPath,
             manifest.GitIndexSha256,
             null,
+            cancellationToken
+        );
+
+        await CheckpointAsync(
+            SnapshotCheckpoint.RestoreIndexApplied,
+            target,
             cancellationToken
         );
 
@@ -311,6 +332,16 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
 
         return target;
     }
+
+    private ValueTask CheckpointAsync(
+        SnapshotCheckpoint checkpoint,
+        string operationPath,
+        CancellationToken cancellationToken
+    ) => _checkpoints?.OnCheckpointAsync(
+        checkpoint,
+        operationPath,
+        cancellationToken
+    ) ?? ValueTask.CompletedTask;
 
     private static async Task<WorkspaceSnapshotManifest> ReadManifestAsync(
         string snapshot,

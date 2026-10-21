@@ -47,7 +47,8 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [ ] Configurable artifact retention and cleanup policies.
 - [x] Tests for interrupted worktree creation (before journal commit) and cross-handler allocation.
 - [x] Refuse snapshots of locked files without modifying the source or publishing a partial copy.
-- [ ] Add systematic snapshot fault injection and tests for restoration, moves, park and eviction. See M1/M2 in the [RC plan](docs/RELEASE_CANDIDATE_PLAN.md).
+- [x] Deterministic failpoints for snapshot export and side-by-side restore; confirm no source changes, orphan retention and successful retry.
+- [ ] Add fault injection across release, move, park and eviction when those use cases exist. See M1/M2 in the [RC plan](docs/RELEASE_CANDIDATE_PLAN.md).
 
 **Gate:** every destructive transition can recover after simulated kill; unknown/user data is never silently removed.
 

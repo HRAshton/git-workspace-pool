@@ -16,6 +16,7 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
 
     private readonly string _snapshotRoot;
     private readonly GitWorktreeSnapshotScanner _scanner;
+    private readonly ISnapshotCheckpointSink? _checkpoints;
     private static readonly StringComparer PathComparer = OperatingSystem.IsWindows()
         ? StringComparer.OrdinalIgnoreCase
         : StringComparer.Ordinal;
@@ -25,11 +26,13 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
     /// </summary>
     public VerifiedWorkspaceSnapshotExporter(
         string snapshotRoot,
-        GitWorktreeSnapshotScanner scanner
+        GitWorktreeSnapshotScanner scanner,
+        ISnapshotCheckpointSink? checkpoints = null
     )
     {
         _snapshotRoot = Path.GetFullPath(snapshotRoot);
         _scanner = scanner;
+        _checkpoints = checkpoints;
     }
 
     /// <inheritdoc/>
@@ -69,6 +72,11 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
         );
         fileCount++;
         copiedBytes += indexLength;
+        await CheckpointAsync(
+            SnapshotCheckpoint.ExportIndexCopied,
+            staging,
+            cancellationToken
+        );
 
         List<WorkspaceSnapshotFile> files = [];
 
@@ -249,7 +257,17 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
         }
 
         cancellationToken.ThrowIfCancellationRequested();
+        await CheckpointAsync(
+            SnapshotCheckpoint.ExportReadyToPublish,
+            staging,
+            cancellationToken
+        );
         Directory.Move(staging, published);
+        await CheckpointAsync(
+            SnapshotCheckpoint.ExportPublished,
+            published,
+            cancellationToken
+        );
 
         return new WorkspaceSnapshotReceipt(
             snapshotId,
@@ -259,6 +277,16 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
             copiedBytes
         );
     }
+
+    private ValueTask CheckpointAsync(
+        SnapshotCheckpoint checkpoint,
+        string operationPath,
+        CancellationToken cancellationToken
+    ) => _checkpoints?.OnCheckpointAsync(
+        checkpoint,
+        operationPath,
+        cancellationToken
+    ) ?? ValueTask.CompletedTask;
 
     private static async Task<(string Hash, long Length)> CopyVerifiedAsync(
         string source,

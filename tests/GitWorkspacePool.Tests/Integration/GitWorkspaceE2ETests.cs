@@ -390,6 +390,91 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task Snapshot_FaultsLeaveSourceAndOwnershipUnchanged()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string path = Path.Combine(opened.WorkspacePath, "feature.txt");
+        File.WriteAllText(path, "retain user changes");
+
+        SnapshotCheckpoint[] checkpoints =
+        [
+            SnapshotCheckpoint.ExportIndexCopied,
+            SnapshotCheckpoint.ExportReadyToPublish,
+            SnapshotCheckpoint.ExportPublished,
+        ];
+
+        foreach (SnapshotCheckpoint checkpoint in checkpoints)
+        {
+            InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => fixture.SnapshotAsync(new ThrowAtCheckpoint(checkpoint))
+            );
+            Assert.Contains(checkpoint.ToString(), error.Message);
+            Assert.Equal("retain user changes", File.ReadAllText(path));
+            Assert.Equal(WorkspaceSessionState.Active, (await fixture.OwnedSessionAsync()).State);
+            Assert.Empty(await fixture.ListPublishedSnapshotsAsync());
+        }
+
+        Assert.Single(
+            Directory.GetDirectories(
+                fixture.SnapshotRoot,
+                "snapshot-*",
+                SearchOption.AllDirectories
+            )
+        );
+
+        WorkspaceSnapshotReceipt retry = await fixture.SnapshotAsync();
+        Assert.True(File.Exists(Path.Combine(retry.Folder, "manifest.json")));
+        Assert.Single(await fixture.ListPublishedSnapshotsAsync());
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task Snapshot_RestoreFaultsRetainIsolatedOrphansAndOriginalFiles()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string original = Path.Combine(opened.WorkspacePath, "feature.txt");
+        File.WriteAllText(original, "recoverable contents");
+
+        WorkspaceSnapshotReceipt receipt = await fixture.SnapshotAsync();
+
+        SnapshotCheckpoint[] checkpoints =
+        [
+            SnapshotCheckpoint.RestoreWorktreeCreated,
+            SnapshotCheckpoint.RestoreFilesApplied,
+            SnapshotCheckpoint.RestoreIndexApplied,
+        ];
+
+        for (int i = 0; i < checkpoints.Length; i++)
+        {
+            SnapshotCheckpoint checkpoint = checkpoints[i];
+            InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => fixture.RestoreSnapshotAsync(
+                    receipt.SnapshotId,
+                    new ThrowAtCheckpoint(checkpoint)
+                )
+            );
+
+            Assert.Contains(checkpoint.ToString(), error.Message);
+            Assert.Equal("recoverable contents", File.ReadAllText(original));
+            Assert.Equal(WorkspaceSessionState.Active, (await fixture.OwnedSessionAsync()).State);
+            string[] recovered = Directory.GetDirectories(fixture.RecoveryRoot);
+            Assert.Equal(i + 1, recovered.Length);
+
+            foreach (string orphan in recovered)
+            {
+                Assert.True(await fixture.IsRegisteredWorktreeAsync(orphan));
+            }
+        }
+
+        string successful = await fixture.RestoreSnapshotAsync(receipt.SnapshotId);
+        Assert.Equal("recoverable contents", File.ReadAllText(Path.Combine(successful, "feature.txt")));
+        Assert.Equal("recoverable contents", File.ReadAllText(original));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task Snapshot_RefusesLockedUserFileWithoutPublishing()
     {
         using Fixture fixture = await Fixture.CreateAsync();
@@ -424,6 +509,25 @@ public sealed class GitWorkspaceE2ETests
 
         Assert.False(Directory.Exists(fixture.WorkspacePath(999)));
         Assert.Empty(fixture.Editor.OpenedPaths);
+    }
+
+    private sealed class ThrowAtCheckpoint(SnapshotCheckpoint expected) : ISnapshotCheckpointSink
+    {
+        public ValueTask OnCheckpointAsync(
+            SnapshotCheckpoint checkpoint,
+            string operationPath,
+            CancellationToken cancellationToken
+        )
+        {
+            if (checkpoint == expected)
+            {
+                throw new InvalidOperationException(
+                    "Injected fault at " + checkpoint
+                );
+            }
+
+            return ValueTask.CompletedTask;
+        }
     }
 
     private sealed class Fixture : IDisposable
@@ -540,7 +644,17 @@ public sealed class GitWorkspaceE2ETests
             return session;
         }
 
-        public async Task<WorkspaceSnapshotReceipt> SnapshotAsync()
+        public Task<IReadOnlyList<WorkspaceSnapshotRecord>> ListPublishedSnapshotsAsync()
+        {
+            SqliteWorkspaceSessionJournal sessions = new(
+                Path.Combine(_root, "state", "sessions.db")
+            );
+            return sessions.ListSnapshotsAsync(CancellationToken.None);
+        }
+
+        public async Task<WorkspaceSnapshotReceipt> SnapshotAsync(
+            ISnapshotCheckpointSink? checkpoints = null
+        )
         {
             WorkspaceSession session = await OwnedSessionAsync();
             string state = Path.Combine(_root, "state");
@@ -550,13 +664,17 @@ public sealed class GitWorkspaceE2ETests
                 new GitCliWorkspaceGit(),
                 new VerifiedWorkspaceSnapshotExporter(
                     SnapshotRoot,
-                    new GitWorktreeSnapshotScanner()
+                    new GitWorktreeSnapshotScanner(),
+                    checkpoints
                 )
             );
             return await handler.CaptureAsync(session.OperationId, CancellationToken.None);
         }
 
-        public async Task<string> RestoreSnapshotAsync(Guid snapshotId)
+        public async Task<string> RestoreSnapshotAsync(
+            Guid snapshotId,
+            ISnapshotCheckpointSink? checkpoints = null
+        )
         {
             SqliteWorkspaceSessionJournal sessions = new(
                 Path.Combine(_root, "state", "sessions.db")
@@ -566,7 +684,8 @@ public sealed class GitWorkspaceE2ETests
                 new VerifiedWorkspaceSnapshotRestorer(
                     RecoveryRoot,
                     new GitCliWorkspaceGit(),
-                    new GitWorktreeSnapshotScanner()
+                    new GitWorktreeSnapshotScanner(),
+                    checkpoints
                 )
             );
             return await service.RestoreAsync(snapshotId, CancellationToken.None);
