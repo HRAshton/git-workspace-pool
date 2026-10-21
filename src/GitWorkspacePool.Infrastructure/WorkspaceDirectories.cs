@@ -2,7 +2,7 @@ using GitWorkspacePool.Core.Application;
 
 namespace GitWorkspacePool.Infrastructure;
 
-internal sealed class WorkspaceDirectories : IWorkspaceDirectories
+public sealed class WorkspaceDirectories : IWorkspaceDirectories
 {
     public bool Exists(string path) => Directory.Exists(path) || File.Exists(path);
 
