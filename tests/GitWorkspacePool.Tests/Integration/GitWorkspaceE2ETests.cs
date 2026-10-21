@@ -115,8 +115,11 @@ public sealed class GitWorkspaceE2ETests
         OpenPullRequestResult first = await fixture.OpenAsync(PullRequestUrl);
         string changedPath = Path.Combine(first.WorkspacePath, "feature.txt");
         string untrackedPath = Path.Combine(first.WorkspacePath, "notes.local");
+        string binaryPath = Path.Combine(first.WorkspacePath, "image.local");
+        byte[] binary = [0, 255, 19, 0, 42, 128];
         File.WriteAllText(changedPath, "user has unsaved work");
         File.WriteAllText(untrackedPath, "never delete me");
+        File.WriteAllBytes(binaryPath, binary);
 
         OpenPullRequestResult second = await fixture.OpenAsync(PullRequestUrl);
 
@@ -124,6 +127,7 @@ public sealed class GitWorkspaceE2ETests
         Assert.Equal(first.WorkspacePath, second.WorkspacePath);
         Assert.Equal("user has unsaved work", File.ReadAllText(changedPath));
         Assert.Equal("never delete me", File.ReadAllText(untrackedPath));
+        Assert.Equal(binary, File.ReadAllBytes(binaryPath));
         Assert.Equal(2, fixture.Editor.OpenedPaths.Count);
     }
 
