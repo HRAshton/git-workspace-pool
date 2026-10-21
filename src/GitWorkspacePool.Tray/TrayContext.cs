@@ -1,7 +1,9 @@
 using System.Drawing;
 using GitWorkspacePool.Core.Application;
+using GitWorkspacePool.Core.Domain;
 using GitWorkspacePool.Core.Protocol;
 using GitWorkspacePool.Infrastructure;
+using GitWorkspacePool.Infrastructure.Snapshots;
 using GitWorkspacePool.Infrastructure.Transport;
 using GitWorkspacePool.Tray.Infrastructure;
 
@@ -13,6 +15,8 @@ internal sealed class TrayContext : ApplicationContext
     private readonly Control _dispatcher;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly OpenPullRequestHandler _open;
+    private readonly IWorkspaceSnapshotSessionStore _sessions;
+    private readonly CaptureWorkspaceSnapshotService _snapshot;
 
     public TrayContext(string? initialRequest)
     {
@@ -36,11 +40,23 @@ internal sealed class TrayContext : ApplicationContext
             "GitWorkspacePool"
         );
         GitCliWorkspaceGit git = new();
+        SqliteWorkspaceSessionJournal journal = new(Path.Combine(stateRoot, "sessions.db"));
+        FileWorkspaceOperationLock locks = new(Path.Combine(stateRoot, "locks"));
+        _sessions = journal;
+        _snapshot = new CaptureWorkspaceSnapshotService(
+            journal,
+            locks,
+            git,
+            new VerifiedWorkspaceSnapshotExporter(
+                Path.Combine(stateRoot, "snapshots"),
+                new GitWorktreeSnapshotScanner()
+            )
+        );
         WorkspaceAcquisitionService acquisition = new(
             git,
             new WorkspaceDirectories(),
-            new SqliteWorkspaceSessionJournal(Path.Combine(stateRoot, "sessions.db")),
-            new FileWorkspaceOperationLock(Path.Combine(stateRoot, "locks"))
+            journal,
+            locks
         );
         _open = new OpenPullRequestHandler(
             new SettingsStore(),
@@ -48,6 +64,10 @@ internal sealed class TrayContext : ApplicationContext
             acquisition,
             new VsCodeLauncher()
         );
+
+        ToolStripMenuItem snapshotsMenu = new("Snapshot active PR...");
+        snapshotsMenu.DropDownOpening += async (_, _) => await PopulateSnapshotsAsync(snapshotsMenu);
+        menu.Items.Insert(1, snapshotsMenu);
 
         _ = ListenAsync(_shutdown.Token);
 
@@ -65,6 +85,65 @@ internal sealed class TrayContext : ApplicationContext
         _dispatcher.Dispose();
         _shutdown.Dispose();
         base.ExitThreadCore();
+    }
+
+    private async Task PopulateSnapshotsAsync(ToolStripMenuItem menu)
+    {
+        menu.DropDownItems.Clear();
+
+        try
+        {
+            IReadOnlyList<WorkspaceSession> active = await _sessions.ListActiveAsync(
+                _shutdown.Token
+            );
+
+            if (active.Count == 0)
+            {
+                menu.DropDownItems.Add(new ToolStripMenuItem("No active PR sessions")
+                {
+                    Enabled = false,
+                });
+                return;
+            }
+
+            foreach (WorkspaceSession session in active)
+            {
+                ToolStripMenuItem item = new(
+                    $"{session.RepositoryKey} PR #{session.PullRequestNumber}"
+                );
+                Guid operationId = session.OperationId;
+                item.Click += (_, _) => _ = CaptureFromMenuAsync(operationId);
+                menu.DropDownItems.Add(item);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Application is exiting.
+        }
+        catch (Exception exception)
+        {
+            Notify("Could not list active sessions", exception.Message);
+        }
+    }
+
+    private async Task CaptureFromMenuAsync(Guid operationId)
+    {
+        try
+        {
+            WorkspaceSnapshotReceipt receipt = await _snapshot.CaptureAsync(
+                operationId,
+                _shutdown.Token
+            );
+            Notify("Workspace snapshot saved", receipt.Folder);
+        }
+        catch (OperationCanceledException)
+        {
+            // Explicit cancellation or application shutdown.
+        }
+        catch (Exception exception)
+        {
+            Notify("Snapshot not published", exception.Message);
+        }
     }
 
     private static void OpenSettings()
