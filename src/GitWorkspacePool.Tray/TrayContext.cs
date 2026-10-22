@@ -86,7 +86,8 @@ internal sealed class TrayContext : ApplicationContext
             git,
             new VerifiedWorkspaceSnapshotExporter(
                 Path.Combine(stateRoot, "snapshots"),
-                new GitWorktreeSnapshotScanner()
+                new GitWorktreeSnapshotScanner(),
+                limits: SettingsStore.Read().SnapshotLimits
             )
         );
         _restore = new RestoreWorkspaceSnapshotService(

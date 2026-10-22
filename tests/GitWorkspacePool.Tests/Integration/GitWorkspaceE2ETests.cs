@@ -3262,6 +3262,122 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task Snapshot_ConfiguredByteLimitRefusesBeforeStorageAndAllowsRetry()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string source = Path.Combine(opened.WorkspacePath, "local-budget.bin");
+        byte[] bytes = new byte[4096];
+        File.WriteAllBytes(source, bytes);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.SnapshotAsync(limits: new SnapshotExportLimits { MaxBytes = 1024 })
+        );
+
+        Assert.False(Directory.Exists(fixture.SnapshotRoot));
+        Assert.Empty(await fixture.ListPublishedSnapshotsAsync());
+        Assert.Equal(bytes, File.ReadAllBytes(source));
+        WorkspaceSnapshotReceipt retry = await fixture.SnapshotAsync();
+        string restored = await fixture.RestoreSnapshotAsync(retry.SnapshotId);
+        Assert.Equal(bytes, File.ReadAllBytes(Path.Combine(restored, "local-budget.bin")));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task Snapshot_ConfiguredBudgetIncludesStagedOnlyPayloadAndRetainsEvidence()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string source = Path.Combine(opened.WorkspacePath, "staged-budget.bin");
+        byte[] bytes = new byte[256 * 1024];
+        File.WriteAllBytes(source, bytes);
+        await fixture.GitInWorkspaceAsync("add", "staged-budget.bin");
+        File.Delete(source);
+        WorktreeSnapshotScan before = await new GitWorktreeSnapshotScanner().InspectAsync(
+            opened.WorkspacePath, CancellationToken.None
+        );
+        byte[] index = File.ReadAllBytes(before.IndexPath);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.SnapshotAsync(limits: new SnapshotExportLimits { MaxBytes = 16384 })
+        );
+
+        Assert.Empty(await fixture.ListPublishedSnapshotsAsync());
+        Assert.False(File.Exists(source));
+        Assert.Equal(index, File.ReadAllBytes(before.IndexPath));
+        Assert.NotEmpty(Directory.EnumerateDirectories(
+            fixture.SnapshotRoot, ".pending-*", SearchOption.AllDirectories
+        ));
+        WorkspaceSnapshotReceipt retry = await fixture.SnapshotAsync();
+        string restored = await fixture.RestoreSnapshotAsync(retry.SnapshotId);
+        Assert.False(File.Exists(Path.Combine(restored, "staged-budget.bin")));
+        WorktreeSnapshotScan after = await new GitWorktreeSnapshotScanner().InspectAsync(
+            restored, CancellationToken.None
+        );
+        Assert.Equal(before.Status, after.Status);
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task Snapshot_ConfiguredEntryLimitRefusesBeforeStorage()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        File.WriteAllText(Path.Combine(opened.WorkspacePath, "local-one.txt"), "one");
+        File.WriteAllText(Path.Combine(opened.WorkspacePath, "local-two.txt"), "two");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.SnapshotAsync(limits: new SnapshotExportLimits { MaxEntries = 1 })
+        );
+
+        Assert.False(Directory.Exists(fixture.SnapshotRoot));
+        Assert.Empty(await fixture.ListPublishedSnapshotsAsync());
+        Assert.Equal("one", File.ReadAllText(Path.Combine(opened.WorkspacePath, "local-one.txt")));
+        Assert.Equal("two", File.ReadAllText(Path.Combine(opened.WorkspacePath, "local-two.txt")));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task Snapshot_EntryLimitIncludesMissingPaths()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        File.Delete(Path.Combine(opened.WorkspacePath, "feature.txt"));
+        File.WriteAllText(Path.Combine(opened.WorkspacePath, "local-budget.txt"), "keep");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.SnapshotAsync(limits: new SnapshotExportLimits { MaxEntries = 1 })
+        );
+
+        Assert.False(Directory.Exists(fixture.SnapshotRoot));
+        Assert.False(File.Exists(Path.Combine(opened.WorkspacePath, "feature.txt")));
+        Assert.Equal("keep", File.ReadAllText(Path.Combine(opened.WorkspacePath, "local-budget.txt")));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task Snapshot_EntryLimitBoundsIgnoredDirectoryDescendants()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string directory = Path.Combine(opened.WorkspacePath, "node_modules");
+        Directory.CreateDirectory(directory);
+        for (int i = 0; i < 8; i++)
+        {
+            File.WriteAllText(Path.Combine(directory, $"budget-{i}.txt"), "keep");
+        }
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.SnapshotAsync(limits: new SnapshotExportLimits { MaxEntries = 4 })
+        );
+
+        Assert.False(Directory.Exists(fixture.SnapshotRoot));
+        Assert.Equal(8, Directory.EnumerateFiles(directory).Count());
+        Assert.All(Directory.EnumerateFiles(directory), path => Assert.Equal("keep", File.ReadAllText(path)));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task StagedBlobExporter_StopsAtByteBudgetWithoutChangingIndexOrUserData()
     {
         using Fixture fixture = await Fixture.CreateAsync();
@@ -4273,7 +4389,8 @@ public sealed class GitWorkspaceE2ETests
             ISnapshotCheckpointSink? checkpoints = null,
             ISnapshotDiskSpaceProbe? diskSpace = null,
             ISnapshotCopyProgressSink? copyProgress = null,
-            CancellationToken cancellationToken = default
+            CancellationToken cancellationToken = default,
+            SnapshotExportLimits? limits = null
         )
         {
             WorkspaceSession session = await OwnedSessionAsync();
@@ -4287,7 +4404,8 @@ public sealed class GitWorkspaceE2ETests
                     new GitWorktreeSnapshotScanner(),
                     checkpoints,
                     diskSpace,
-                    copyProgress
+                    copyProgress,
+                    limits
                 )
             );
             return await handler.CaptureAsync(session.OperationId, cancellationToken);

@@ -99,7 +99,13 @@ internal sealed class SettingsStore : IRepositoryCatalog
             JsonOptions
         );
 
-        return settings ?? throw new InvalidOperationException("Invalid settings.json.");
+        if (settings is null || settings.SnapshotLimits is null)
+        {
+            throw new InvalidOperationException("Invalid settings.json or SnapshotLimits.");
+        }
+
+        settings.SnapshotLimits.Validate();
+        return settings;
     }
 }
 

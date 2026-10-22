@@ -11,8 +11,7 @@ namespace GitWorkspacePool.Infrastructure.Snapshots;
 /// </summary>
 public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExporter
 {
-    private const int MaxSnapshotFiles = 50000;
-    private const long MaxSnapshotBytes = 2L * 1024 * 1024 * 1024;
+    private readonly SnapshotExportLimits _limits;
 
     private readonly string _snapshotRoot;
     private readonly GitWorktreeSnapshotScanner _scanner;
@@ -31,9 +30,12 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
         GitWorktreeSnapshotScanner scanner,
         ISnapshotCheckpointSink? checkpoints = null,
         ISnapshotDiskSpaceProbe? diskSpace = null,
-        ISnapshotCopyProgressSink? copyProgress = null
+        ISnapshotCopyProgressSink? copyProgress = null,
+        SnapshotExportLimits? limits = null
     )
     {
+        _limits = limits ?? new SnapshotExportLimits();
+        _limits.Validate();
         _snapshotRoot = Path.GetFullPath(snapshotRoot);
         _scanner = scanner;
         _checkpoints = checkpoints;
@@ -67,7 +69,7 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
             );
         }
 
-        if (estimatedBytes > MaxSnapshotBytes)
+        if (estimatedBytes > _limits.MaxBytes)
         {
             throw new InvalidOperationException("Snapshot exceeds its configured byte budget.");
         }
@@ -98,7 +100,7 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
             before.IndexPath,
             indexTarget,
             SnapshotCopyPhase.ExportIndex,
-            MaxSnapshotBytes,
+            _limits.MaxBytes,
             cancellationToken
         );
         fileCount++;
@@ -140,7 +142,7 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
 
             long length = new FileInfo(source).Length;
 
-            if (fileCount >= MaxSnapshotFiles || copiedBytes + length > MaxSnapshotBytes)
+            if (fileCount >= _limits.MaxEntries || copiedBytes + length > _limits.MaxBytes)
             {
                 throw new InvalidOperationException(
                     "Snapshot exceeds the conservative file/byte budget. "
@@ -155,7 +157,7 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
                 source,
                 destination,
                 SnapshotCopyPhase.ExportWorkingFile,
-                MaxSnapshotBytes - copiedBytes,
+                _limits.MaxBytes - copiedBytes,
                 cancellationToken
             );
             fileCount++;
@@ -184,7 +186,7 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
             cancellationToken.ThrowIfCancellationRequested();
             SnapshotStorageBudget.RequireSpace(_diskSpace, _snapshotRoot, 0);
 
-            if (fileCount >= MaxSnapshotFiles)
+            if (fileCount >= _limits.MaxEntries)
             {
                 throw new InvalidOperationException("Snapshot exceeds its staged-file budget.");
             }
@@ -195,14 +197,14 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
                 root,
                 relative,
                 destination,
-                MaxSnapshotBytes - copiedBytes,
+                _limits.MaxBytes - copiedBytes,
                 cancellationToken
             );
 
             copiedBytes += length;
             fileCount++;
 
-            if (copiedBytes > MaxSnapshotBytes)
+            if (copiedBytes > _limits.MaxBytes)
             {
                 throw new InvalidOperationException("Snapshot exceeds its staged-byte budget.");
             }
@@ -435,7 +437,7 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
         return Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken));
     }
 
-    private static SnapshotTree ExpandChanges(
+    private SnapshotTree ExpandChanges(
         string root,
         IReadOnlyList<string> changePaths,
         CancellationToken cancellationToken
@@ -444,7 +446,25 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
         HashSet<string> files = new(PathComparer);
         HashSet<string> directories = new(PathComparer);
         HashSet<string> missing = new(PathComparer);
-        Stack<string> pending = new(changePaths);
+        HashSet<string> scheduled = new(PathComparer);
+        Stack<string> pending = new();
+        foreach (string changePath in changePaths)
+        {
+            Schedule(changePath.TrimEnd('/'));
+        }
+
+        void Schedule(string relative)
+        {
+            if (scheduled.Add(relative))
+            {
+                if (scheduled.Count > _limits.MaxEntries)
+                {
+                    throw new InvalidOperationException("Snapshot contains too many changed paths.");
+                }
+
+                pending.Push(relative);
+            }
+        }
 
         while (pending.Count > 0)
         {
@@ -483,7 +503,7 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
 
                 foreach (string child in Directory.EnumerateFileSystemEntries(path))
                 {
-                    pending.Push(
+                    Schedule(
                         Path.GetRelativePath(root, child).Replace(
                             Path.DirectorySeparatorChar,
                             '/'
@@ -494,11 +514,6 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
             else
             {
                 files.Add(relative);
-            }
-
-            if (files.Count + directories.Count > MaxSnapshotFiles)
-            {
-                throw new InvalidOperationException("Snapshot contains too many changed paths.");
             }
         }
 

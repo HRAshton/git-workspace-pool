@@ -48,3 +48,9 @@ The RC2 Windows workflow produces `GitWorkspacePool-win-x64-0.1.0-rc.2.zip` with
 ## Release approval
 
 Complete every required item in [RC2 acceptance](RC2_ACCEPTANCE.md), including manual Windows, security, older-install migration, rollback, benchmark and signing gates, before calling this a release-approved RC2. The full [roadmap](../ROADMAP.md) includes broader features explicitly deferred from this candidate.
+
+## Snapshot limits and milestone validation
+
+- Optional `SnapshotLimits.MaxBytes` and `MaxEntries` in settings can lower the existing 2 GiB / 50,000 ceilings. Restart the tray to apply. Byte accounting includes the Git index and staged blobs; traversal is bounded before snapshot storage allocation. Existing snapshots and original files are retained.
+- `scripts/Test-Changes.ps1` shares standard CI gates with local Windows pre-push validation. Add `-IncludeSlow -IncludePackage -OutputDirectory <new-path>` for extended crash and RC2 package/backup tests.
+- All workflows install SDK 10.0.402 from `global.json`; SDK roll-forward is disabled. Transitive dependency lockfiles, installed GUI acceptance and signing remain outstanding.

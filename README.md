@@ -55,7 +55,27 @@ The configured clone's actual `origin` must identify the GitHub repository in th
 
 No admin rights or background Windows service are required. The browser protocol is untrusted input: only recognized GitHub PR URLs matching configured repositories are accepted.
 
+## Snapshot resource limits
+
+`settings.json` accepts an optional `SnapshotLimits` object. Restart the tray after changing it:
+
+```json
+"SnapshotLimits": { "MaxBytes": 536870912, "MaxEntries": 10000 }
+```
+
+Omitted values retain the existing 2 GiB / 50,000 limits. `MaxBytes` covers the combined Git index, working files and independent staged blobs; it must be 1 through 2,147,483,648. `MaxEntries` must be 1 through 50,000 and bounds both changed-path traversal (including directories and missing paths) and copied payload entries. Invalid settings fail closed. Lower limits reject oversized new exports while preserving source files and any interrupted export evidence; they do not invalidate older snapshots or authorize cleanup.
+
 ## Testing
+
+Use the exact .NET SDK in `global.json` (10.0.402; roll-forward disabled), Git >=2.40 and PowerShell 7 on Windows. Run the same pre-push build, syntax, unit, offline E2E and focused subprocess-kill checks used by standard CI:
+
+```powershell
+./scripts/Test-Changes.ps1
+# Before a release milestone, also run all crash tests and RC2 package/backup smoke:
+./scripts/Test-Changes.ps1 -IncludeSlow -IncludePackage -OutputDirectory C:\temp\gwp-validation-new
+```
+
+The output directory must not exist. These checks do not install the userscript, change user protocol registration, open VS Code or replace installed GUI acceptance. Batch related changes locally and push the reviewed milestone once; Windows CI still gates its merge.
 
 The fast E2E suite uses a temporary local Git remote with GitHub-style PR refs, real Git worktrees, the versioned URL protocol, and real Windows Named Pipes. It uses a fake editor and **does not launch VS Code, the tray UI, or a browser**.
 

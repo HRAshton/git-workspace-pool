@@ -87,6 +87,7 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [x] Verify the recovery checkout Git index's clean SHA-256 on an exclusive handle before restoring the saved index; reject intervening `git add` changes without discarding staged user work. Real-Git E2E exercises the race after files are applied.
 - [x] Reject unexpected filesystem occupants in isolated recovery worktrees even when Git status summarizes an already-ignored directory. Bound a non-following inventory before restoration and verify its permitted descendants before marking a restore Verified; offline real-Git E2E preserves foreign ignored files and the interrupted journal intent.
 - [ ] Complete file identity/reparse-point races, deletion-path replacement, actual disk-full and safe restore-reconciliation tests before enabling automatic release or recycling.
+- [x] Configurable per-export snapshot byte and entry limits with existing hard ceilings, bounded changed-path scheduling and source-preserving refusals. Older snapshots remain restorable.
 - [ ] Configurable artifact retention and cleanup policies.
 - [x] Tests for interrupted worktree creation (before journal commit) and cross-handler allocation.
 - [x] Refuse snapshots of locked files without modifying the source or publishing a partial copy.
@@ -142,6 +143,7 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - The subprocess checkpoint signal reader retries Windows sharing violations, eliminating a race when the signal filename appears before its writer closes.
 - PR CI also publishes a self-contained unsigned win-x64 preview ZIP, checks SHA-256 and performs isolated twice-installed startup smoke; release assets remain gated by CI and do not run on squash pushes to main.
 - Prefer complete, meaningful code batches over many tiny `main` pushes.
+- `scripts/Test-Changes.ps1` runs the same build, syntax, unit, fast offline and focused crash gates locally and in standard Windows CI; full crash/package/backup validation is opt-in. All workflows use the exact SDK from `global.json`, with roll-forward disabled.
 
 ## Test pyramid and time budgets (targets, not measured results)
 
