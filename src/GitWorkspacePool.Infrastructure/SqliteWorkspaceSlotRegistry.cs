@@ -9,7 +9,7 @@ namespace GitWorkspacePool.Infrastructure;
 /// Transactional slot compare-and-swap. Slot readiness must be established by a
 /// separate, not-yet-enabled verified release workflow.
 /// </summary>
-public sealed class SqliteWorkspaceSlotRegistry : IWorkspaceSlotRegistry, IWorkspaceSlotOwnershipAuditor, IWorkspaceSlotReleasePreparationJournal, IWorkspaceSlotReleaseCommitJournal, IWorkspaceReadySlotAllocator, IWorkspaceSlotReservationInventory
+public sealed class SqliteWorkspaceSlotRegistry : IWorkspaceSlotRegistry, IWorkspaceSlotOwnershipAuditor, IWorkspaceSlotReleasePreparationJournal, IWorkspaceSlotReleaseCommitJournal, IWorkspaceReadySlotAllocator, IWorkspaceSlotReservationInventory, IWorkspaceReadySlotCatalog
 {
     private readonly string _connectionString;
 
@@ -50,6 +50,40 @@ public sealed class SqliteWorkspaceSlotRegistry : IWorkspaceSlotRegistry, IWorks
 
         using SqliteDataReader reader = command.ExecuteReader();
         return Task.FromResult(reader.Read() ? ReadSlot(reader) : null);
+    }
+
+    /// <inheritdoc/>
+    public Task<IReadOnlyList<WorkspaceSlot>> ListReadyAsync(
+        CancellationToken cancellationToken
+    )
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using SqliteConnection connection = Open();
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT slot_id, repository_key, source_path, workspace_path,
+                   generation, state, head_commit
+              FROM workspace_slots
+             WHERE state = 'Ready'
+             ORDER BY updated_utc, slot_id
+             LIMIT 10001
+            """;
+        List<WorkspaceSlot> candidates = [];
+        using SqliteDataReader reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (candidates.Count >= 10000)
+            {
+                throw new InvalidOperationException(
+                    "Ready slot inventory exceeds the safety limit; no slot can be selected."
+                );
+            }
+
+            candidates.Add(ReadSlot(reader));
+        }
+
+        return Task.FromResult<IReadOnlyList<WorkspaceSlot>>(candidates);
     }
 
     /// <inheritdoc/>
