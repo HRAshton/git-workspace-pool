@@ -158,6 +158,12 @@ use case requiring its own physical preflight, generation reservation and Git ve
 A warm slot may still be *empty* after release; warm preparation, artifact reuse and checkout
 are separate policy-gated use cases. Cost ranking cannot authorize a write.
 
+## Verified subprocess-kill handoff coverage
+
+The test-only `IWorkspaceSlotHandoffCheckpointSink` stops a disposable process after six durable boundaries: ReleasePrepared, ReleaseCommitted, SlotReserved, CommitPinned, WorktreeCreated and SlotActivated. The focused Windows PR check kills the process at each boundary and verifies that the earlier PR's parked working files and staged data remain intact, that preparing/reserved slots are never silently reclaimed, and that only a pinned, Git-registered, clean checkout can be explicitly reconciled. The full slow snapshot/parking crash matrix remains available under manual workflow dispatch.
+
+This validates **process crash boundaries**, not arbitrary power loss, concurrent filesystem mutations, or the safety of retaining and reusing build artifacts. It does not enable automatic cleanup, warm ranking or eviction.
+
 ## Acceptance/fault matrix before enabling reuse
 
 - Two processes concurrently release/acquire the same slot; stale-generation CAS fails.

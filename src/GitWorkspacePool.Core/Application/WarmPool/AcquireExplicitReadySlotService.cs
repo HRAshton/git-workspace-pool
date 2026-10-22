@@ -17,6 +17,7 @@ public sealed class AcquireExplicitReadySlotService
     private readonly IWorkspaceDirectories _files;
     private readonly IWorkspaceSessionJournal _sessions;
     private readonly IWorkspaceOperationLock _locks;
+    private readonly IWorkspaceSlotHandoffCheckpointSink? _checkpoints;
 
     /// <summary>Composes generation CAS with trusted Git and filesystem operations.</summary>
     public AcquireExplicitReadySlotService(
@@ -26,7 +27,8 @@ public sealed class AcquireExplicitReadySlotService
         IWorkspaceGit git,
         IWorkspaceDirectories files,
         IWorkspaceSessionJournal sessions,
-        IWorkspaceOperationLock locks
+        IWorkspaceOperationLock locks,
+        IWorkspaceSlotHandoffCheckpointSink? checkpoints = null
     )
     {
         _allocator = allocator;
@@ -36,6 +38,7 @@ public sealed class AcquireExplicitReadySlotService
         _files = files;
         _sessions = sessions;
         _locks = locks;
+        _checkpoints = checkpoints;
     }
 
     /// <summary>
@@ -119,6 +122,15 @@ public sealed class AcquireExplicitReadySlotService
             "The Ready slot was leased or session ownership changed; no checkout occurred."
         );
 
+        if (_checkpoints is not null)
+        {
+            await _checkpoints.AfterAsync(
+                WorkspaceSlotHandoffCheckpoint.SlotReserved,
+                slot.WorkspacePath,
+                cancellationToken
+            );
+        }
+
         // No rollback or deletion after this durable reservation.
         // Any Git failure leaves Preparing/Reserved state and evidence.
         await _git.FetchPullRequestAsync(
@@ -136,6 +148,14 @@ public sealed class AcquireExplicitReadySlotService
             commit,
             cancellationToken
         );
+        if (_checkpoints is not null)
+        {
+            await _checkpoints.AfterAsync(
+                WorkspaceSlotHandoffCheckpoint.CommitPinned,
+                slot.WorkspacePath,
+                cancellationToken
+            );
+        }
 
         _safety.EnsureSafe(
             trustedRepository.LocalPath,
@@ -162,6 +182,14 @@ public sealed class AcquireExplicitReadySlotService
             commit,
             cancellationToken
         );
+        if (_checkpoints is not null)
+        {
+            await _checkpoints.AfterAsync(
+                WorkspaceSlotHandoffCheckpoint.WorktreeCreated,
+                slot.WorkspacePath,
+                cancellationToken
+            );
+        }
 
         if (
             !_files.Exists(slot.WorkspacePath)
@@ -189,6 +217,15 @@ public sealed class AcquireExplicitReadySlotService
         {
             throw new InvalidOperationException(
                 "The verified checkout did not match its durable slot generation."
+            );
+        }
+
+        if (_checkpoints is not null)
+        {
+            await _checkpoints.AfterAsync(
+                WorkspaceSlotHandoffCheckpoint.SlotActivated,
+                slot.WorkspacePath,
+                cancellationToken
             );
         }
 

@@ -910,6 +910,177 @@ public sealed class GitWorkspaceE2ETests
     }
 
     [Fact]
+    [Trait("Category", "SlowE2E")]
+    public async Task Release_RealProcessKillAtBothDurableBoundariesNeverLosesParkedUserWork()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        WorkspaceSession owner = await fixture.OwnedSessionAsync();
+        File.WriteAllText(Path.Combine(opened.WorkspacePath, "notes.local"), "must survive release crash");
+        File.WriteAllText(Path.Combine(opened.WorkspacePath, "feature.txt"), "staged original");
+        await fixture.GitInWorkspaceAsync("add", "feature.txt");
+        File.WriteAllText(Path.Combine(opened.WorkspacePath, "feature.txt"), "unstaged original");
+        WorkspaceSnapshotReceipt snapshot = await fixture.SnapshotAsync();
+        string parked = await fixture.ParkAsync(owner.OperationId);
+
+        string signalled = await SubprocessCrashTests.KillAtSlotHandoffCheckpointAsync(
+            "prepare-release", fixture.DatabasePath, owner.OperationId,
+            fixture.SignalRoot, WorkspaceSlotHandoffCheckpoint.ReleasePrepared,
+            fixture.SignalRoot
+        );
+        Assert.Equal(opened.WorkspacePath, signalled);
+        SqliteWorkspaceSlotRegistry registry = new(fixture.DatabasePath);
+        WorkspaceSlotReleasePreparation pending = Assert.Single(
+            await registry.ListPreparedAsync(CancellationToken.None)
+        );
+        Assert.Equal(WorkspaceSlotReleasePreparationState.Prepared, pending.State);
+        Assert.Equal(WorkspaceSlotState.Protected,
+            (await registry.FindSlotAsync(pending.SlotId, CancellationToken.None))!.State);
+        Assert.Equal(WorkspaceSessionState.Parked,
+            (await fixture.SessionAsync(owner.OperationId))!.State);
+        Assert.Equal("must survive release crash", File.ReadAllText(
+            Path.Combine(parked, "notes.local")
+        ));
+        Assert.True(await registry.CancelAsync(pending.PreparationId, CancellationToken.None));
+
+        WorkspaceSlotReleasePreparation prepared = await fixture.PrepareReleaseAsync(
+            owner.OperationId
+        );
+        signalled = await SubprocessCrashTests.KillAtSlotHandoffCheckpointAsync(
+            "release", fixture.DatabasePath, prepared.PreparationId,
+            fixture.SignalRoot, WorkspaceSlotHandoffCheckpoint.ReleaseCommitted,
+            fixture.SignalRoot
+        );
+        Assert.Equal(opened.WorkspacePath, signalled);
+        Assert.Equal(WorkspaceSlotReleasePreparationState.Committed,
+            (await registry.FindPreparationAsync(prepared.PreparationId, CancellationToken.None))!.State);
+        Assert.Equal(WorkspaceSlotState.Ready,
+            (await registry.FindSlotAsync(prepared.SlotId, CancellationToken.None))!.State);
+        Assert.Equal(WorkspaceSessionState.Released,
+            (await fixture.SessionAsync(owner.OperationId))!.State);
+        Assert.Null(await registry.FindHeldSlotAsync(owner.OperationId, CancellationToken.None));
+        Assert.False(Directory.Exists(opened.WorkspacePath));
+        Assert.True(await fixture.IsRegisteredWorktreeAsync(parked));
+        Assert.Equal("must survive release crash", File.ReadAllText(
+            Path.Combine(parked, "notes.local")
+        ));
+        Assert.Equal("unstaged original", File.ReadAllText(Path.Combine(parked, "feature.txt")));
+        Assert.Equal("staged original", await fixture.ReadStagedFeatureAsync(parked));
+        Assert.NotNull(await new SqliteWorkspaceSessionJournal(fixture.DatabasePath)
+            .GetSnapshotAsync(snapshot.SnapshotId, CancellationToken.None));
+
+        // A crash after atomic commit is idempotent and cannot reclaim old ownership.
+        Assert.Equal(WorkspaceSlotReleasePreparationState.Committed,
+            (await fixture.FinalizeReleaseAsync(prepared.PreparationId)).State);
+        Assert.Empty(await registry.AuditAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    [Trait("Category", "SlowE2E")]
+    public async Task ReadySlot_RealProcessKillAtEachBoundaryPreservesBothOwners()
+    {
+        WorkspaceSlotHandoffCheckpoint[] points =
+        [
+            WorkspaceSlotHandoffCheckpoint.SlotReserved,
+            WorkspaceSlotHandoffCheckpoint.CommitPinned,
+            WorkspaceSlotHandoffCheckpoint.WorktreeCreated,
+            WorkspaceSlotHandoffCheckpoint.SlotActivated,
+        ];
+
+        foreach (WorkspaceSlotHandoffCheckpoint point in points)
+        {
+            using Fixture fixture = await Fixture.CreateAsync();
+            OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+            WorkspaceSession original = await fixture.OwnedSessionAsync();
+            File.WriteAllText(
+                Path.Combine(opened.WorkspacePath, "notes.local"), "precious old PR data"
+            );
+            string parked = await fixture.ParkAsync(original.OperationId);
+            WorkspaceSlotReleasePreparation prepared = await fixture.PrepareReleaseAsync(
+                original.OperationId
+            );
+            _ = await fixture.FinalizeReleaseAsync(prepared.PreparationId);
+            await fixture.CreatePullRequestAsync(18);
+
+            string signalled = await SubprocessCrashTests.KillAtSlotHandoffCheckpointAsync(
+                "acquire", fixture.DatabasePath, prepared.SlotId,
+                "https://github.com/owner/repo/pull/18", point, fixture.SignalRoot
+            );
+            Assert.Equal(opened.WorkspacePath, signalled);
+
+            SqliteWorkspaceSlotRegistry registry = new(fixture.DatabasePath);
+            WorkspaceSlot slot = Assert.IsType<WorkspaceSlot>(
+                await registry.FindSlotAsync(prepared.SlotId, CancellationToken.None)
+            );
+            Assert.Equal(prepared.Generation + 1, slot.Generation);
+            Assert.Equal(WorkspaceSessionState.Released,
+                (await fixture.SessionAsync(original.OperationId))!.State);
+            Assert.Equal("precious old PR data", File.ReadAllText(
+                Path.Combine(parked, "notes.local")
+            ));
+            Assert.True(await fixture.IsRegisteredWorktreeAsync(parked));
+            Assert.Null(await registry.FindHeldSlotAsync(original.OperationId, CancellationToken.None));
+
+            if (point == WorkspaceSlotHandoffCheckpoint.SlotActivated)
+            {
+                Assert.Equal(WorkspaceSlotState.Protected, slot.State);
+                Assert.Empty(await registry.ListReservedAsync(CancellationToken.None));
+                OpenPullRequestResult reopened = await fixture.OpenWithFreshHandlerAsync(
+                    "https://github.com/owner/repo/pull/18"
+                );
+                Assert.True(reopened.Reused);
+                Assert.Equal(slot.WorkspacePath, reopened.WorkspacePath);
+                Assert.Empty(await registry.AuditAsync(CancellationToken.None));
+                continue;
+            }
+
+            Assert.Equal(WorkspaceSlotState.Reserved, slot.State);
+            WorkspaceReadySlotReservation reservation = Assert.IsType<WorkspaceReadySlotReservation>(
+                await registry.FindReservedAsync(slot.SlotId, CancellationToken.None)
+            );
+            Assert.Equal(WorkspaceSessionState.Preparing,
+                (await fixture.SessionAsync(reservation.Session.OperationId))!.State);
+            Assert.Contains(
+                await fixture.ScanRecoveryAsync(),
+                f => f.Kind == WorkspaceRecoveryKind.PendingSlotCheckout
+                    && f.Path == slot.WorkspacePath
+            );
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => fixture.OpenWithFreshHandlerAsync(
+                    "https://github.com/owner/repo/pull/18"
+                )
+            );
+
+            if (point == WorkspaceSlotHandoffCheckpoint.WorktreeCreated)
+            {
+                Assert.True(await fixture.IsRegisteredWorktreeAsync(slot.WorkspacePath));
+                WorkspaceSession recovered = await fixture.ReconcileReadySlotAsync(slot.SlotId);
+                Assert.Equal(WorkspaceSessionState.Active, recovered.State);
+                Assert.Equal(WorkspaceSlotState.Protected,
+                    (await registry.FindSlotAsync(slot.SlotId, CancellationToken.None))!.State);
+                Assert.Empty(await registry.ListReservedAsync(CancellationToken.None));
+            }
+            else
+            {
+                Assert.False(Directory.Exists(slot.WorkspacePath));
+                await Assert.ThrowsAsync<InvalidOperationException>(
+                    () => fixture.ReconcileReadySlotAsync(slot.SlotId)
+                );
+                Assert.Equal(WorkspaceSlotState.Reserved,
+                    (await registry.FindSlotAsync(slot.SlotId, CancellationToken.None))!.State);
+                Assert.Null(await registry.TryReserveAsync(
+                    slot.SlotId, prepared.Generation, "github:owner/repo",
+                    19, fixture.SourcePath, CancellationToken.None
+                ));
+            }
+
+            Assert.Equal("precious old PR data", File.ReadAllText(
+                Path.Combine(parked, "notes.local")
+            ));
+        }
+    }
+
+    [Fact]
     [Trait("Category", "FastE2E")]
     public async Task ReadySlot_InterruptedVerifiedCheckoutCanActivateAfterRestart()
     {

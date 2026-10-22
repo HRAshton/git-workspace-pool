@@ -1,4 +1,6 @@
 using GitWorkspacePool.Core.Application;
+using GitWorkspacePool.Core.Application.WarmPool;
+using GitWorkspacePool.Core.Domain.WarmPool;
 using GitWorkspacePool.Core.Domain;
 using GitWorkspacePool.Infrastructure;
 using GitWorkspacePool.Infrastructure.Snapshots;
@@ -15,8 +17,9 @@ internal static class Program
         if (args.Length != 6)
         {
             Console.Error.WriteLine(
-                "Usage: export|restore|park|unpark <db> <owner-or-snapshot> "
-                    + "<storage-root> <signal-file> <checkpoint>"
+                "Usage: export|restore|park|unpark|prepare-release|release|acquire "
+                    + "<db> <session-snapshot-preparation-or-slot-id> "
+                    + "<storage-root-or-pr-url> <signal-file> <checkpoint>"
             );
             return 2;
         }
@@ -26,7 +29,74 @@ internal static class Program
             SqliteWorkspaceSessionJournal journal = new(args[1]);
             GitCliWorkspaceGit git = new();
 
-            if (args[0] is "park" or "unpark")
+            if (args[0] is "prepare-release" or "release" or "acquire")
+            {
+                if (!Enum.TryParse(args[5], out WorkspaceSlotHandoffCheckpoint point))
+                {
+                    Console.Error.WriteLine("Unknown slot handoff checkpoint.");
+                    return 2;
+                }
+
+                FileWorkspaceOperationLock locks = new(
+                    Path.Combine(Path.GetDirectoryName(Path.GetFullPath(args[1]))!, "locks")
+                );
+                SqliteWorkspaceSlotRegistry slots = new(args[1]);
+                BlockingSlotCheckpointSink sink = new(point, args[4]);
+                AssessWorkspaceReleaseService assessment = new(
+                    journal, slots, locks, new GitWorkspaceParkingOperations(git)
+                );
+
+                switch (args[0])
+                {
+                    case "prepare-release":
+                    {
+                        PrepareWorkspaceSlotReleaseService service = new(
+                            journal, locks, assessment, slots, sink
+                        );
+                        _ = await service.PrepareAsync(Guid.Parse(args[2]), CancellationToken.None);
+                        break;
+                    }
+
+                    case "release":
+                    {
+                        FinalizeWorkspaceSlotReleaseService service = new(
+                            journal, locks, assessment, slots, sink
+                        );
+                        _ = await service.FinalizeAsync(Guid.Parse(args[2]), CancellationToken.None);
+                        break;
+                    }
+
+                    case "acquire":
+                    {
+                        Guid slotId = Guid.Parse(args[2]);
+                        WorkspaceSlot slot = await slots.FindSlotAsync(
+                            slotId, CancellationToken.None
+                        ) ?? throw new InvalidOperationException("Missing Ready slot.");
+                        if (!PullRequestReference.TryParse(
+                            args[3], out PullRequestReference? request
+                        ) || request is null)
+                        {
+                            throw new ArgumentException("An exact GitHub PR URL is required.");
+                        }
+
+                        string root = Path.GetDirectoryName(slot.WorkspacePath)
+                            ?? throw new InvalidOperationException("Missing slot root.");
+                        AcquireExplicitReadySlotService service = new(
+                            slots, slots, new WorkspaceReadySlotSafety(),
+                            git, new WorkspaceDirectories(), journal, locks, sink
+                        );
+                        _ = await service.AcquireAsync(
+                            request,
+                            new RepositoryRegistration(
+                                request.RepositoryKey, slot.SourcePath, root
+                            ),
+                            slotId, slot.Generation, CancellationToken.None
+                        );
+                        break;
+                    }
+                }
+            }
+            else if (args[0] is "park" or "unpark")
             {
                 if (!Enum.TryParse(args[5], out WorkspaceParkingCheckpoint parkingPoint))
                 {
@@ -118,6 +188,29 @@ internal static class Program
         {
             Console.Error.WriteLine(exception);
             return 4;
+        }
+    }
+
+    private sealed class BlockingSlotCheckpointSink(
+        WorkspaceSlotHandoffCheckpoint target,
+        string signalPath
+    ) : IWorkspaceSlotHandoffCheckpointSink
+    {
+        public async ValueTask AfterAsync(
+            WorkspaceSlotHandoffCheckpoint checkpoint,
+            string workspacePath,
+            CancellationToken cancellationToken
+        )
+        {
+            if (checkpoint != target)
+            {
+                return;
+            }
+
+            await File.WriteAllTextAsync(
+                signalPath, checkpoint + "\n" + workspacePath, cancellationToken
+            );
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
         }
     }
 

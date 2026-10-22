@@ -14,19 +14,22 @@ public sealed class PrepareWorkspaceSlotReleaseService
     private readonly IWorkspaceOperationLock _locks;
     private readonly AssessWorkspaceReleaseService _assessment;
     private readonly IWorkspaceSlotReleasePreparationJournal _journal;
+    private readonly IWorkspaceSlotHandoffCheckpointSink? _checkpoints;
 
     /// <summary>Composes release validation and durable preparation behind narrow ports.</summary>
     public PrepareWorkspaceSlotReleaseService(
         IWorkspaceSnapshotSessionStore sessions,
         IWorkspaceOperationLock locks,
         AssessWorkspaceReleaseService assessment,
-        IWorkspaceSlotReleasePreparationJournal journal
+        IWorkspaceSlotReleasePreparationJournal journal,
+        IWorkspaceSlotHandoffCheckpointSink? checkpoints = null
     )
     {
         _sessions = sessions;
         _locks = locks;
         _assessment = assessment;
         _journal = journal;
+        _checkpoints = checkpoints;
     }
 
     /// <summary>
@@ -60,7 +63,7 @@ public sealed class PrepareWorkspaceSlotReleaseService
             );
         }
 
-        return await _journal.TryPrepareAsync(
+        WorkspaceSlotReleasePreparation prepared = await _journal.TryPrepareAsync(
             sessionId,
             assessment.SlotId.Value,
             assessment.Generation.Value,
@@ -68,6 +71,17 @@ public sealed class PrepareWorkspaceSlotReleaseService
         ) ?? throw new InvalidOperationException(
             "The slot ownership or generation changed before the release preparation committed."
         );
+
+        if (_checkpoints is not null)
+        {
+            await _checkpoints.AfterAsync(
+                WorkspaceSlotHandoffCheckpoint.ReleasePrepared,
+                session.WorkspacePath,
+                cancellationToken
+            );
+        }
+
+        return prepared;
     }
 
     /// <summary>

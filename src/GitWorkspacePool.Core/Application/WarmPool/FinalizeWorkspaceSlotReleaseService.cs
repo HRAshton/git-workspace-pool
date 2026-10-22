@@ -14,19 +14,22 @@ public sealed class FinalizeWorkspaceSlotReleaseService
     private readonly IWorkspaceOperationLock _locks;
     private readonly AssessWorkspaceReleaseService _assessment;
     private readonly IWorkspaceSlotReleaseCommitJournal _journal;
+    private readonly IWorkspaceSlotHandoffCheckpointSink? _checkpoints;
 
     /// <summary>Composes locked Git preflight with an atomic journal commit.</summary>
     public FinalizeWorkspaceSlotReleaseService(
         IWorkspaceSnapshotSessionStore sessions,
         IWorkspaceOperationLock locks,
         AssessWorkspaceReleaseService assessment,
-        IWorkspaceSlotReleaseCommitJournal journal
+        IWorkspaceSlotReleaseCommitJournal journal,
+        IWorkspaceSlotHandoffCheckpointSink? checkpoints = null
     )
     {
         _sessions = sessions;
         _locks = locks;
         _assessment = assessment;
         _journal = journal;
+        _checkpoints = checkpoints;
     }
 
     /// <summary>
@@ -87,6 +90,15 @@ public sealed class FinalizeWorkspaceSlotReleaseService
         {
             throw new InvalidOperationException(
                 "The prepared release no longer matches the durable slot lease."
+            );
+        }
+
+        if (_checkpoints is not null)
+        {
+            await _checkpoints.AfterAsync(
+                WorkspaceSlotHandoffCheckpoint.ReleaseCommitted,
+                session.WorkspacePath,
+                cancellationToken
             );
         }
 
