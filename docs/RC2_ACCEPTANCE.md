@@ -20,6 +20,12 @@
 - [ ] Inject interruption, conflicting file occupant, link/junction, read-only file, locked file, low disk and unsafe Git config. Check recovery diagnostics while requiring no original user-file overwrites, resets, cleanup or arbitrary execution.
 - [ ] Confirm quit/restart never triggers eviction/recycling, automatic worktree cleanup, background install, user project build or PR speculation. Advanced manual released-slot handoff and `node_modules` copying are not certified beyond their isolated tests.
 
+## Support documentation shipped with RC2
+
+- [ ] Inspect extracted `RECOVERY.md`, `RC2_RELEASE_NOTES.md` and `RC2_ACCEPTANCE.md`; run the backup helper on a stopped disposable profile and retain the verified manifest.
+- [ ] Ensure operators can identify and preserve incomplete/unverifiable restore/parking/slot records without resetting, cleaning, force-moving or deleting worktrees.
+- [ ] Validate a sanitized issue template contains finding kind and error only, not SQLite databases, settings, Git remote credentials, or private source code.
+
 ## Verified backup-first upgrade: required for RC2
 
 1. Close the tray and confirm no Git Workspace Pool process remains running.
