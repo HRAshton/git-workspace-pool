@@ -130,6 +130,7 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [ ] Provide signed MSI/MSIX or equivalent distribution, real Windows tray/browser/VS Code installed smoke, and supported upgrade/rollback from existing preview builds.
 - [ ] Multi-repository settings UI and user-friendly setup beyond JSON configuration.
 - [ ] Diagnostics, opt-in performance traces, reproducible benchmark suite.
+- [x] Add RC2 read-only prerequisite diagnostics to check Windows, effective Git CLI version >=2.40.0 and configured VS Code executable path; fixture tests refuse missing tools, and Windows release smoke verifies the helper ships in the ZIP. This does not replace installed GUI smoke or certify Git support on every version.
 - [ ] Full Windows smoke test: installed userscript + browser + protocol handler + actual VS Code (separate slow CI/manual lane). The first preview ZIP validates only self-contained process launch and upgrade-safe staging; it is not a GUI smoke.
 
 ## CI resource usage

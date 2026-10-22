@@ -89,6 +89,17 @@
 - [ ] Ensure moving worktrees updates Git metadata, with hard stop on unsupported submodules and Windows sharing violations.
 - [ ] Reconcile all unfinished operations on restart; never auto-`git clean -fdx` or delete unknown paths.
 
+### Remaining roadmap consolidation (RC2 planning; not release approval)
+
+The unchecked roadmap spans four reviewable workstreams, **not four guaranteed mergeable PRs**:
+
+1. **Safety and ownership:** close recovery file-identity/deletion/reparse races, actual disk/permission errors, orphan reconciliation, and crash-safe release/restore transitions.
+2. **Warm reuse and disk:** opt-in policy-limited artifact/candidate reuse, clean accounting and eviction journalling, observed benchmarks, and eventual guarded automation only after loss-prevention gates.
+3. **Provider adapters and UX:** configured trust/remote identity for additional providers and fork refs, accessible settings and session controls, clear protocol consent and local diagnostics.
+4. **Release engineering:** pinned toolchain/dependencies, real installed Windows browser-to-editor tests, actual profile migration and rollback, compatibility/security review, signed artifacts and release-owner acceptance.
+
+One PR may batch compatible changes in a workstream, but a failed check is repaired on the same PR and no unverified destructive feature is enabled to meet a PR-count target. **Physical Windows/manual test hardware, signing keys and release approval cannot be replaced by a green headless CI job.** Current roadmap completion percentages count checked documentation items, not estimated engineering effort.
+
 ### M3/M4 — reuse and disk
 
 - [x] Implement a bounded and deterministic, side-effect-free candidate-ranking policy that never mutates worktrees or decides ownership; prefer exact commit, then estimated artifact invalidation, tracked paths and optional observed duration.
@@ -113,6 +124,7 @@
 
 ### M6 — release engineering
 
+- [x] RC2 release ZIP includes a read-only Git minimum-version and configured VS Code executable preflight with isolated Windows fixture (2.40.0 accepted as the current conservative policy), without running user Git commands or opening the editor. Full toolchain reproducibility, pinned dependencies and installed GUI acceptance still remain.
 - [ ] .NET SDK, dependencies and Git minimum version pinned and reproducible.
 - [x] Build an unsigned self-contained preview ZIP in PR CI with bundled userscript, SHA-256 checksum, per-user versioned install, explicit HKCU protocol registration/unregistration, and isolated no-UI smoke including a second idempotent install that preserves unknown existing files. Existing preview binaries and all SQLite/settings/worktrees are left alone.
 - [ ] Signed per-user installer/update/uninstall, trusted release publishing, real tray/browser/editor installed smoke and safe downgrade/SQLite rollback proof.

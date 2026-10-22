@@ -21,9 +21,17 @@
 ### Backup command (PowerShell; only after exiting tray)
 
 Run the included Backup-PerUserState.ps1 with -BackupDirectory pointed at a new directory on trusted storage. See RC2_ACCEPTANCE.md for the operator procedure.
+## Read-only installed prerequisite diagnostics
+
+Run the bundled `Test-RC2Prerequisites.ps1` before relying on browser-to-editor integration. It checks Windows, Git version **2.40.0 or later** and the exact VS Code `Code.exe` path used by the tray (from `editorExecutable` in settings or the current-user default location). It neither starts VS Code nor Git against a repository, and never writes settings or worktrees. Supported Git version here is a **conservative preflight policy**, not proof every Git patch release has passed the full integration suite. The RC2 CI runs passing and failing diagnostic fixtures and validates its presence inside the ZIP.
+
 ## Bundled support and recovery runbook
 
 RC2 includes `RECOVERY.md` directly in the extracted ZIP. It explains the supported recovery finding types, backup-first triage, read-only Git worktree inspection and what evidence may be shared safely without leaking credentials or user code. RC2 ZIP smoke refuses packages missing this runbook or the matching RC2 acceptance/release notes.
+
+## Windows installer sharing-lock hardening
+
+RC2 installer publication allows a bounded retry window after its startup smoke test for transient Windows Defender/AV/indexing sharing violations, while refusing occupied/tampered version directories without overwrite; interrupted or inaccessible staging data is retained for investigation. Windows package smoke verifies collision refusal. This does not certify all real-world AV or ACL behavior.
 
 ## Build and verification
 

@@ -71,6 +71,27 @@ if ($exes.Count -ne 1) {
     throw "Expected exactly one installed application executable; found $($exes.Count)."
 }
 
+# A tampered existing version must fail closed: never replace a user-owned
+# directory, even if its leaf name equals the expected executable hash.
+$collisionRoot = Join-Path $root 'occupied-version-test'
+$releaseId = ((Get-FileHash -LiteralPath $exes[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()).Substring(0, 20)
+$blocked = Join-Path $collisionRoot ('versions/' + $releaseId)
+New-Item -ItemType Directory -Path $blocked -Force | Out-Null
+$blockedExe = Join-Path $blocked 'GitWorkspacePool.Tray.exe'
+[System.IO.File]::WriteAllBytes($blockedExe, [byte[]]@(0, 1, 2, 3, 4))
+$blockedHash = (Get-FileHash -LiteralPath $blockedExe -Algorithm SHA256).Hash
+
+$refusedCollision = $false
+try {
+    & $installer -PackageDirectory $extracted -InstallRoot $collisionRoot -SkipProtocolRegistration
+} catch {
+    $refusedCollision = $true
+}
+if (-not $refusedCollision -or
+    (Get-FileHash -LiteralPath $blockedExe -Algorithm SHA256).Hash -ne $blockedHash) {
+    throw 'Installer overwrote or accepted an occupied release directory.'
+}
+
 $report = Join-Path $root 'verify-smoke.txt'
 $probeArgs = '--smoke-test "' + $report + '"'
 $probe = Start-Process -FilePath $exes[0].FullName -ArgumentList $probeArgs -PassThru
