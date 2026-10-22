@@ -432,20 +432,13 @@ public sealed class WorkspaceRecoveryInspector : IWorkspaceRecoveryInspector
     )
     {
         string manifestPath = Path.Combine(record.Receipt.Folder, "manifest.json");
-        WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(manifestPath);
-        if (new FileInfo(manifestPath).Length > 16L * 1024 * 1024)
-        {
-            throw new InvalidOperationException(
-                "Snapshot manifest exceeds the recovery inventory size limit."
-            );
-        }
-
         WorkspaceSnapshotManifest manifest;
         try
         {
-            string json = await File.ReadAllTextAsync(manifestPath, cancellationToken);
-            manifest = JsonSerializer.Deserialize<WorkspaceSnapshotManifest>(json)
-                ?? throw new InvalidOperationException("Snapshot manifest is empty.");
+            manifest = await SnapshotManifestIO.ReadAsync(
+                manifestPath,
+                cancellationToken
+            );
         }
         catch (JsonException exception)
         {

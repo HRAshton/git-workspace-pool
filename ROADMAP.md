@@ -75,6 +75,7 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [x] Implement explicit non-destructive snapshot export for staged/unstaged, untracked, ignored and binary files, with independent staged blobs and a Git index.
 - [x] Restore a journalled snapshot into a separate Git worktree on the saved commit; verify index, working tree files and exact Git status.
 - [x] Reject corrupted payloads and manifest path traversal before allocating a recovery worktree.
+- [x] Enforce one 16 MiB manifest size limit before export publication, bounded restore deserialization and read-only recovery diagnostics. Fast offline Git E2E proves oversized manifests cannot publish or allocate recovery state.
 - [x] Discover interrupted exports, published-but-unjournalled snapshots, missing receipts and unmanaged recovery worktrees without deleting data; expose findings in tray diagnostics.
 - [x] Persist restore intent before worktree allocation, verify after reconstruction, and distinguish interrupted/verified/missing recovery outcomes.
 - [x] Report interrupted parking/unparking and missing parked worktrees in read-only diagnostics.

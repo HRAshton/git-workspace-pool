@@ -532,23 +532,12 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
         CancellationToken cancellationToken
     )
     {
-        string path = Path.Combine(snapshot, "manifest.json");
-        WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(path);
-        await using FileStream stream = new(
-            path,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.Read,
-            bufferSize: 4096,
-            FileOptions.SequentialScan
-        );
         try
         {
-            WorkspaceSnapshotManifest? manifest = await JsonSerializer.DeserializeAsync<WorkspaceSnapshotManifest>(
-                stream,
-                cancellationToken: cancellationToken
+            return await SnapshotManifestIO.ReadAsync(
+                Path.Combine(snapshot, "manifest.json"),
+                cancellationToken
             );
-            return manifest ?? throw new InvalidOperationException("Snapshot manifest is empty.");
         }
         catch (JsonException exception)
         {
