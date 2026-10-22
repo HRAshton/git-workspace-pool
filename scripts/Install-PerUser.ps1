@@ -57,18 +57,54 @@ if (Test-Path -LiteralPath $destination) {
     $marker = Join-Path $stage ('smoke-' + [guid]::NewGuid().ToString('N') + '.txt')
     $probeArgs = '--smoke-test "' + $marker + '"'
     $probe = Start-Process -FilePath $stageExe -ArgumentList $probeArgs -PassThru
-    if (-not $probe.WaitForExit(60000)) {
-        $probe.Kill()
-        throw "Application smoke probe timed out; staged files retained: $stage"
-    }
-    if ($probe.ExitCode -ne 0 -or
-        -not (Test-Path -LiteralPath $marker -PathType Leaf) -or
-        (Get-Content -LiteralPath $marker -Raw).Trim() -ne 'GWP_PORTABLE_SMOKE_V1') {
-        throw "Application smoke probe failed; staged files retained: $stage"
+    try {
+        if (-not $probe.WaitForExit(60000)) {
+            $probe.Kill()
+            $probe.WaitForExit()
+            throw "Application smoke probe timed out; staged files retained: $stage"
+        }
+        if ($probe.ExitCode -ne 0 -or
+            -not (Test-Path -LiteralPath $marker -PathType Leaf) -or
+            (Get-Content -LiteralPath $marker -Raw).Trim() -ne 'GWP_PORTABLE_SMOKE_V1') {
+            throw "Application smoke probe failed; staged files retained: $stage"
+        }
+    } finally {
+        # Release the probe's Windows process handle before renaming its
+        # executable's parent directory. It must not survive publication.
+        $probe.Dispose()
     }
 
     Remove-Item -LiteralPath $marker -Force
-    Rename-Item -LiteralPath $stage -NewName $releaseId
+
+    # Windows AV/indexing may briefly retain a handle to the executable
+    # after the probe exits. Retry only transient sharing/access errors,
+    # never replace an existing release, and retain the stage on failure.
+    $published = $false
+    for ($attempt = 0; $attempt -lt 6; $attempt++) {
+        if (Test-Path -LiteralPath $destination) {
+            throw "Release destination became occupied; staged files retained: $stage"
+        }
+        try {
+            [System.IO.Directory]::Move($stage, $destination)
+            $published = $true
+            break
+        } catch {
+            $reason = $_.Exception
+            if ($null -ne $reason.InnerException) {
+                $reason = $reason.InnerException
+            }
+            if (($reason -isnot [System.IO.IOException] -and
+                 $reason -isnot [System.UnauthorizedAccessException]) -or
+                $attempt -eq 5 -or
+                -not (Test-Path -LiteralPath $stage -PathType Container)) {
+                throw
+            }
+            Start-Sleep -Milliseconds (200 * ($attempt + 1))
+        }
+    }
+    if (-not $published) {
+        throw "Could not publish staged release; files retained: $stage"
+    }
     $created = $true
 }
 
