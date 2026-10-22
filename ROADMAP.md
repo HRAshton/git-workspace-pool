@@ -66,6 +66,9 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [x] Tests for interrupted worktree creation (before journal commit) and cross-handler allocation.
 - [x] Refuse snapshots of locked files without modifying the source or publishing a partial copy.
 - [x] Deterministic failpoints for snapshot export and side-by-side restore; confirm no source changes, orphan retention and successful retry.
+- [x] Test parent-initiated process kills at all six snapshot/restore checkpoints in the manual slow lane; recover by retry without touching original user files.
+- [x] Require an explicit supported snapshot manifest version on restore (missing, legacy and unknown future versions fail closed before checkout); migrations remain unimplemented.
+- [x] Refuse snapshots with unmerged index stages, Git submodules or sparse index-directory entries before allocating snapshot storage.
 - [ ] Add fault injection across release, move, park and eviction when those use cases exist. See M1/M2 in the [RC plan](docs/RELEASE_CANDIDATE_PLAN.md).
 
 **Gate:** every destructive transition can recover after simulated kill; unknown/user data is never silently removed.

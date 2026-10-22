@@ -62,7 +62,7 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
         WorkspaceSnapshotManifest manifest = await ReadManifestAsync(snapshot, cancellationToken);
 
         if (
-            manifest.Version != 2
+            manifest.Version != WorkspaceSnapshotManifest.CurrentVersion
             || manifest.SnapshotId != receipt.SnapshotId
             || manifest.OperationId != session.OperationId
             || !Path.GetFullPath(manifest.WorkspacePath).Equals(
@@ -401,11 +401,21 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
             bufferSize: 4096,
             FileOptions.SequentialScan
         );
-        WorkspaceSnapshotManifest? manifest = await JsonSerializer.DeserializeAsync<WorkspaceSnapshotManifest>(
-            stream,
-            cancellationToken: cancellationToken
-        );
-        return manifest ?? throw new InvalidOperationException("Snapshot manifest is empty.");
+        try
+        {
+            WorkspaceSnapshotManifest? manifest = await JsonSerializer.DeserializeAsync<WorkspaceSnapshotManifest>(
+                stream,
+                cancellationToken: cancellationToken
+            );
+            return manifest ?? throw new InvalidOperationException("Snapshot manifest is empty.");
+        }
+        catch (JsonException exception)
+        {
+            throw new InvalidOperationException(
+                "Snapshot manifest is malformed or has no explicit version.",
+                exception
+            );
+        }
     }
 
     private static async Task VerifyFileAsync(

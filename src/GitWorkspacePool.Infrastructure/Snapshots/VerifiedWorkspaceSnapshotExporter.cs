@@ -213,6 +213,7 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
 
         WorkspaceSnapshotManifest manifest = new()
         {
+            Version = WorkspaceSnapshotManifest.CurrentVersion,
             SnapshotId = snapshotId,
             OperationId = operationId,
             WorkspacePath = root,

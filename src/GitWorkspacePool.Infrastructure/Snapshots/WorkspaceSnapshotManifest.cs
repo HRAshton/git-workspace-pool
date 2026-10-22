@@ -6,7 +6,10 @@ namespace GitWorkspacePool.Infrastructure.Snapshots;
 public sealed class WorkspaceSnapshotManifest
 {
     /// <summary>Manifest version used for future restore compatibility.</summary>
-    public int Version { get; init; } = 2;
+    public const int CurrentVersion = 2;
+
+    /// <summary>Required on disk: a missing version must not default to a newer format.</summary>
+    public required int Version { get; init; }
 
     /// <summary>Snapshot identity.</summary>
     public required Guid SnapshotId { get; init; }

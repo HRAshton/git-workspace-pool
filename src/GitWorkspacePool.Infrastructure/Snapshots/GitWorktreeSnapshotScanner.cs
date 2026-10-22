@@ -33,6 +33,15 @@ public sealed class GitWorktreeSnapshotScanner
             ],
             cancellationToken
         );
+        // Inspect *all* index stages before creating snapshot storage. Porcelain
+        // alone does not expose unsupported gitlinks or sparse-directory entries.
+        string indexEntries = await RunAsync(
+            workspacePath,
+            ["ls-files", "--stage", "--sparse", "-z"],
+            cancellationToken
+        );
+        RejectUnsupportedIndexEntries(indexEntries);
+
         string indexPath = (await RunAsync(
             workspacePath,
             ["rev-parse", "--git-path", "index"],
@@ -76,6 +85,45 @@ public sealed class GitWorktreeSnapshotScanner
             Path.GetFullPath(indexPath),
             changedPaths
         );
+    }
+
+    private static void RejectUnsupportedIndexEntries(string entries)
+    {
+        foreach (string entry in entries.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+        {
+            int separator = entry.IndexOf('\t');
+            if (separator <= 0)
+            {
+                throw new InvalidOperationException("Unexpected Git index entry framing.");
+            }
+
+            string[] fields = entry[..separator].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (fields.Length != 3 || fields[1].Length is not (40 or 64))
+            {
+                throw new InvalidOperationException("Unexpected Git index entry metadata.");
+            }
+
+            if (fields[2] != "0")
+            {
+                throw new InvalidOperationException(
+                    "Unmerged Git index entries must be resolved before snapshot capture."
+                );
+            }
+
+            if (fields[0] == "160000")
+            {
+                throw new InvalidOperationException(
+                    "Git submodule entries are not supported by portable snapshots."
+                );
+            }
+
+            if (fields[0] is not ("100644" or "100755" or "120000"))
+            {
+                throw new InvalidOperationException(
+                    "Unsupported Git index mode (including sparse directories); snapshot refused."
+                );
+            }
+        }
     }
 
     private static async Task<string> RunAsync(

@@ -34,19 +34,19 @@
 - [x] Restore checks checksums and validates exact Git status; corruption/path traversal tests.
 - [x] Injectable exception/fault checkpoints at snapshot export, publish and restore milestones; tests assert preserved source, retained partial data, retry and ownership.
 - [x] Run real parent-initiated OS process kills at snapshot pre-publish/post-publish and restore worktree-created/index-applied boundaries; assert no original-data loss, persistent orphan state, and successful retry.
-- [ ] Expand process-kill coverage to every remaining operation checkpoint and add low-space/concurrent-mutation tests before enabling cleanup.
+- [x] Cover all six implemented snapshot/restore process-kill checkpoints in manual slow E2E and exercise low-space/concurrent-mutation refusal in fast E2E. **This does not cover every filesystem side effect or enable cleanup.**
 - [x] Read-only inventory of pending exports, unjournalled/missing snapshots and unmanaged recovery worktrees, exposed in tray diagnostics.
 - [x] SQLite restore operation journal v3 commits intent before Git worktree allocation and verification after content/status checks; diagnostics distinguish interrupted, verified and missing restore destinations.
 - [ ] Reconcile/repair orphan restore attempts safely; diagnostics never authorizes deletion or adoption.
 - [x] Recheck status, index hash, file digests and enumerated paths immediately before snapshot publication; E2E verifies a last-moment working-file edit and concurrent Git index mutation both reject publication.
 - [x] Restore recorded ignored directory creation times and attributes after descendant file writes; E2E covers ignored empty directories.
-- [ ] Strengthen file identity, reparse-point race protection, and unsupported index extension/conflict handling before release or eviction.
+- [ ] Strengthen file identity, reparse-point race protection, and unsupported index extension/conflict handling before release or eviction. Index preflight now rejects unmerged stages, Git submodules and sparse-directory entries before writing; other index extensions and filesystem races remain unverified.
 - [x] Add conservative free-disk preflight for snapshot and restore with injected low-space E2E; neither operation allocates a new directory when the probe reports insufficient storage.
 - [ ] Prove mid-copy disk-full handling, ACL/read-only, anti-virus lock, long/unicode/case-collision path handling and cancellation.
 - [x] Override Git hook path with a private empty directory and disable external FSMonitor for app-owned Git CLI calls; offline Git E2E covers malicious configured post-checkout hooks.
 - [x] Refuse checkout if effective Git config contains any non-LFS executable filter driver (smudge/clean/process). Force LFS smudge/process to identity by command-line overrides and skip actual LFS downloads. Offline E2E covers PR creation and snapshot restoration refusal without touching existing user files.
 - [ ] Extend hardening to Git external transport/authentication helpers and conditional configuration; explicit provider and user trust decisions may be required.
-- [ ] Migrate old manifest versions explicitly, never reinterpret unknown versions.
+- [ ] Migrate old manifest versions explicitly, never reinterpret unknown versions. Current v2 restore now requires an explicit version and refuses missing/v1/future versions before Git or journal allocation; legacy migration is not yet supported.
 - [ ] Establish snapshot budgets/settings and retention policy; preserve originals until verified recovery.
 
 ### M2 — ownership and parking

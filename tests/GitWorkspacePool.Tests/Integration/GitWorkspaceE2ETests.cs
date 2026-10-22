@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using GitWorkspacePool.Core.Application;
 using GitWorkspacePool.Core.Application.WarmPool;
 using GitWorkspacePool.Core.Domain;
@@ -1104,6 +1105,117 @@ public sealed class GitWorkspaceE2ETests
         Assert.False(Directory.Exists(fixture.RecoveryRoot));
     }
 
+    [Theory]
+    [Trait("Category", "FastE2E")]
+    [InlineData(null)]
+    [InlineData(1)]
+    [InlineData(3)]
+    public async Task Snapshot_MissingOrUnsupportedManifestVersionIsRejectedBeforeAllocation(int? version)
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string localFile = Path.Combine(opened.WorkspacePath, "feature.txt");
+        File.WriteAllText(localFile, "keep the original");
+
+        WorkspaceSnapshotReceipt saved = await fixture.SnapshotAsync();
+        string path = Path.Combine(saved.Folder, "manifest.json");
+        JsonObject manifest = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+
+        if (version.HasValue)
+        {
+            manifest["Version"] = version.Value;
+        }
+        else
+        {
+            manifest.Remove("Version");
+        }
+
+        File.WriteAllText(path, manifest.ToJsonString());
+
+        InvalidOperationException failure = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.RestoreSnapshotAsync(saved.SnapshotId)
+        );
+
+        Assert.Contains("version", failure.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("keep the original", File.ReadAllText(localFile));
+        Assert.False(Directory.Exists(fixture.RecoveryRoot));
+        Assert.Empty(
+            await new SqliteWorkspaceSessionJournal(fixture.DatabasePath)
+                .ListRecoveryRestoresAsync(CancellationToken.None)
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task Snapshot_UnmergedIndexFailsBeforeCreatingSnapshotStorage()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string feature = Path.Combine(opened.WorkspacePath, "feature.txt");
+
+        await fixture.GitInWorkspaceAsync("config", "user.name", "E2E Fixture");
+        await fixture.GitInWorkspaceAsync("config", "user.email", "test@example.invalid");
+        await fixture.GitInWorkspaceAsync("checkout", "-b", "snapshot-ours");
+        File.WriteAllText(feature, "ours\n");
+        await fixture.GitInWorkspaceAsync("add", "feature.txt");
+        await fixture.GitInWorkspaceAsync("commit", "-m", "ours");
+
+        await fixture.GitInWorkspaceAsync(
+            "checkout", "-b", "snapshot-theirs", "HEAD~1"
+        );
+        File.WriteAllText(feature, "theirs\n");
+        await fixture.GitInWorkspaceAsync("add", "feature.txt");
+        await fixture.GitInWorkspaceAsync("commit", "-m", "theirs");
+
+        // A merge conflict creates stages 1/2/3 in the real Git index.
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.GitInWorkspaceAsync("merge", "--no-commit", "snapshot-ours")
+        );
+        string conflictContents = File.ReadAllText(feature);
+        Assert.Contains("ours", conflictContents);
+        Assert.Contains("theirs", conflictContents);
+
+        InvalidOperationException failure = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.SnapshotAsync()
+        );
+
+        Assert.Contains("Unmerged", failure.Message);
+        Assert.Equal(conflictContents, File.ReadAllText(feature));
+        Assert.False(Directory.Exists(fixture.SnapshotRoot));
+        Assert.Empty(await fixture.ListPublishedSnapshotsAsync());
+        Assert.True(await fixture.IsRegisteredWorktreeAsync(opened.WorkspacePath));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task Snapshot_SubmoduleIndexFailsBeforeCreatingSnapshotStorage()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string head = await new GitCliWorkspaceGit().GetWorktreeCommitAsync(
+            opened.WorkspacePath, CancellationToken.None
+        );
+
+        await fixture.GitInWorkspaceAsync(
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            $"160000,{head},external/submodule"
+        );
+        string note = Path.Combine(opened.WorkspacePath, "notes.local");
+        File.WriteAllText(note, "never remove");
+
+        InvalidOperationException failure = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.SnapshotAsync()
+        );
+
+        Assert.Contains("submodule", failure.Message);
+        Assert.Equal("never remove", File.ReadAllText(note));
+        Assert.False(Directory.Exists(fixture.SnapshotRoot));
+        Assert.Empty(await fixture.ListPublishedSnapshotsAsync());
+        Assert.True(await fixture.IsRegisteredWorktreeAsync(opened.WorkspacePath));
+    }
+
     [Fact]
     [Trait("Category", "FastE2E")]
     public async Task Snapshot_UnknownSnapshotCannotAllocateRecoveryWorktree()
@@ -1212,6 +1324,7 @@ public sealed class GitWorkspaceE2ETests
 
         SnapshotCheckpoint[] boundaries =
         [
+            SnapshotCheckpoint.ExportIndexCopied,
             SnapshotCheckpoint.ExportReadyToPublish,
             SnapshotCheckpoint.ExportPublished,
         ];
@@ -1252,6 +1365,7 @@ public sealed class GitWorkspaceE2ETests
         SnapshotCheckpoint[] boundaries =
         [
             SnapshotCheckpoint.RestoreWorktreeCreated,
+            SnapshotCheckpoint.RestoreFilesApplied,
             SnapshotCheckpoint.RestoreIndexApplied,
         ];
 
