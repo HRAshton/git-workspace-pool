@@ -52,7 +52,8 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [x] Journal version-7 release preparations under an OS lock and Git preflight; atomic slot/generation CAS, durable idempotent retry, and explicit cancellation. Block unparking while a preparation remains active.
 - [x] Include all pending release preparations in read-only recovery diagnostics, with original owned paths and explicit cancellation instructions.
 - [x] Complete the first explicit release handoff: SQLite v8 keeps Released PR snapshot/history and parked files while a locked, generation-CAS finalization atomically drops its original-path reservation, releases the Held lease and makes the original slot Ready. No automatic allocation or cross-session worktree reuse is enabled.
-- [ ] Connect Ready-slot acquisition, verified checkout and full fault/recovery gates before enabling cross-PR recycling.
+- [x] Implement explicit opt-in cross-PR Ready-slot allocation: SQLite atomically creates the new PR session and generation-specific Held lease; a verified checkout atomically activates the new owner. Real offline Git E2E demonstrates PR 18 in the former PR 17 slot while preserving PR 17's parked files and snapshots.
+- [ ] Wire user-facing consent, candidate discovery and restart reconciliation of interrupted slot reservations before any automatic recycling or true warm artifact reuse.
 - [x] Implement explicit non-destructive snapshot export for staged/unstaged, untracked, ignored and binary files, with independent staged blobs and a Git index.
 - [x] Restore a journalled snapshot into a separate Git worktree on the saved commit; verify index, working tree files and exact Git status.
 - [x] Reject corrupted payloads and manifest path traversal before allocating a recovery worktree.
@@ -81,7 +82,7 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 
 **Gate:** every destructive transition can recover after simulated kill; unknown/user data is never silently removed.
 
-**Slot ownership design gate:** [Exclusive slot ownership and safe release](docs/SLOT_OWNERSHIP.md). The current parked sessions still reserve their original path; no cross-session reuse is allowed until a separate generation-aware lease registry is implemented and verified.
+**Slot ownership design gate:** [Exclusive slot ownership and safe release](docs/SLOT_OWNERSHIP.md). Only explicitly Released sessions relinquish their original slot reservation; ordinary Parked sessions retain exclusive ownership. An opt-in service can now allocate a Ready former slot to a second PR using a fresh checkout; automatic warm candidate selection and artifact transfer are not enabled.
 
 ## P2 — Reusable warm pool
 

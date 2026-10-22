@@ -1,4 +1,5 @@
 using GitWorkspacePool.Core.Application.WarmPool;
+using GitWorkspacePool.Core.Domain;
 using GitWorkspacePool.Core.Domain.WarmPool;
 using Microsoft.Data.Sqlite;
 
@@ -8,7 +9,7 @@ namespace GitWorkspacePool.Infrastructure;
 /// Transactional slot compare-and-swap. Slot readiness must be established by a
 /// separate, not-yet-enabled verified release workflow.
 /// </summary>
-public sealed class SqliteWorkspaceSlotRegistry : IWorkspaceSlotRegistry, IWorkspaceSlotOwnershipAuditor, IWorkspaceSlotReleasePreparationJournal, IWorkspaceSlotReleaseCommitJournal
+public sealed class SqliteWorkspaceSlotRegistry : IWorkspaceSlotRegistry, IWorkspaceSlotOwnershipAuditor, IWorkspaceSlotReleasePreparationJournal, IWorkspaceSlotReleaseCommitJournal, IWorkspaceReadySlotAllocator
 {
     private readonly string _connectionString;
 
@@ -150,6 +151,273 @@ public sealed class SqliteWorkspaceSlotRegistry : IWorkspaceSlotRegistry, IWorks
         insert.ExecuteNonQuery();
         transaction.Commit();
         return Task.FromResult<WorkspaceSlotLease?>(lease);
+    }
+
+    /// <inheritdoc/>
+    public Task<WorkspaceReadySlotReservation?> TryReserveAsync(
+        Guid slotId,
+        long expectedGeneration,
+        string repositoryKey,
+        int pullRequestNumber,
+        string sourcePath,
+        CancellationToken cancellationToken
+    )
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (
+            slotId == Guid.Empty
+            || expectedGeneration < 0
+            || string.IsNullOrWhiteSpace(repositoryKey)
+            || pullRequestNumber <= 0
+        )
+        {
+            throw new ArgumentException("A valid slot generation and PR are required.");
+        }
+
+        string source = Path.GetFullPath(sourcePath);
+        using SqliteConnection connection = Open();
+        using SqliteTransaction transaction = connection.BeginTransaction();
+
+        WorkspaceSlot slot;
+        using (SqliteCommand find = connection.CreateCommand())
+        {
+            find.Transaction = transaction;
+            find.CommandText = """
+                SELECT slot_id, repository_key, source_path, workspace_path,
+                       generation, state, head_commit
+                  FROM workspace_slots WHERE slot_id = $slot
+                """;
+            find.Parameters.AddWithValue("$slot", slotId.ToString("N"));
+            using SqliteDataReader reader = find.ExecuteReader();
+            if (!reader.Read())
+            {
+                return Task.FromResult<WorkspaceReadySlotReservation?>(null);
+            }
+
+            slot = ReadSlot(reader);
+        }
+
+        StringComparison comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        if (
+            slot.State != WorkspaceSlotState.Ready
+            || slot.Generation != expectedGeneration
+            || !slot.RepositoryKey.Equals(repositoryKey, StringComparison.OrdinalIgnoreCase)
+            || !Path.GetFullPath(slot.SourcePath).Equals(source, comparison)
+        )
+        {
+            return Task.FromResult<WorkspaceReadySlotReservation?>(null);
+        }
+
+        // The old Released owner's historical path may be reused, but every
+        // live original path and every parked path remains reserved. Reject
+        // nested/alias collisions, not only equal SQL UNIQUE values.
+        using (SqliteCommand existing = connection.CreateCommand())
+        {
+            existing.Transaction = transaction;
+            existing.CommandText = """
+                SELECT repository_key, pr_number, workspace_path,
+                       parking_path, state FROM sessions
+                """;
+            using SqliteDataReader reader = existing.ExecuteReader();
+            while (reader.Read())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (
+                    reader.GetString(0).Equals(repositoryKey, StringComparison.OrdinalIgnoreCase)
+                    && reader.GetInt32(1) == pullRequestNumber
+                )
+                {
+                    return Task.FromResult<WorkspaceReadySlotReservation?>(null);
+                }
+
+                if (
+                    (reader.GetString(4) != "Released"
+                        && OverlapsSlotPaths(slot.WorkspacePath, reader.GetString(2)))
+                    || (!reader.IsDBNull(3)
+                        && OverlapsSlotPaths(slot.WorkspacePath, reader.GetString(3)))
+                )
+                {
+                    return Task.FromResult<WorkspaceReadySlotReservation?>(null);
+                }
+            }
+        }
+
+        using (SqliteCommand ready = connection.CreateCommand())
+        {
+            ready.Transaction = transaction;
+            ready.CommandText = """
+                UPDATE workspace_slots
+                   SET state = 'Reserved', generation = generation + 1,
+                       updated_utc = $utc
+                 WHERE slot_id = $slot AND state = 'Ready'
+                   AND generation = $generation
+                   AND generation < 9223372036854775807
+                   AND NOT EXISTS (
+                       SELECT 1 FROM workspace_slot_leases
+                        WHERE slot_id = $slot AND state = 'Held'
+                   )
+                """;
+            ready.Parameters.AddWithValue("$slot", slotId.ToString("N"));
+            ready.Parameters.AddWithValue("$generation", expectedGeneration);
+            ready.Parameters.AddWithValue("$utc", DateTimeOffset.UtcNow.ToString("O"));
+            if (ready.ExecuteNonQuery() != 1)
+            {
+                return Task.FromResult<WorkspaceReadySlotReservation?>(null);
+            }
+        }
+
+        WorkspaceSession session = new(
+            Guid.NewGuid(),
+            repositoryKey,
+            pullRequestNumber,
+            source,
+            slot.WorkspacePath,
+            WorkspaceSessionState.Preparing,
+            null
+        );
+        WorkspaceSlotLease lease = new(
+            Guid.NewGuid(), slotId, session.OperationId, checked(expectedGeneration + 1)
+        );
+        using (SqliteCommand insert = connection.CreateCommand())
+        {
+            insert.Transaction = transaction;
+            insert.CommandText = """
+                INSERT INTO sessions (
+                    operation_id, repository_key, pr_number, source_path,
+                    workspace_path, state, pinned_commit, updated_utc
+                ) VALUES ($session, $repository, $pr, $source, $path,
+                          'Preparing', NULL, $utc);
+
+                INSERT INTO workspace_slot_leases (
+                    lease_id, slot_id, session_id, generation, state, created_utc
+                ) VALUES ($lease, $slot, $session, $generation, 'Held', $utc);
+
+                INSERT INTO session_events(operation_id, kind, created_utc)
+                VALUES ($session, 'ReleasedSlotReserved', $utc);
+                """;
+            insert.Parameters.AddWithValue("$session", session.OperationId.ToString("D"));
+            insert.Parameters.AddWithValue("$repository", repositoryKey);
+            insert.Parameters.AddWithValue("$pr", pullRequestNumber);
+            insert.Parameters.AddWithValue("$source", source);
+            insert.Parameters.AddWithValue("$path", slot.WorkspacePath);
+            insert.Parameters.AddWithValue("$slot", slotId.ToString("N"));
+            insert.Parameters.AddWithValue("$lease", lease.LeaseId.ToString("N"));
+            insert.Parameters.AddWithValue("$generation", lease.Generation);
+            insert.Parameters.AddWithValue("$utc", DateTimeOffset.UtcNow.ToString("O"));
+            insert.ExecuteNonQuery();
+        }
+
+        transaction.Commit();
+        return Task.FromResult<WorkspaceReadySlotReservation?>(
+            new WorkspaceReadySlotReservation(session, lease)
+        );
+    }
+
+    /// <inheritdoc/>
+    public Task<bool> TryActivateAsync(
+        WorkspaceReadySlotReservation reservation,
+        string commitSha,
+        CancellationToken cancellationToken
+    )
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (
+            reservation.Lease.Generation <= 0
+            || commitSha.Length is not (40 or 64)
+            || !commitSha.All(Uri.IsHexDigit)
+        )
+        {
+            throw new ArgumentException("A valid reservation and full Git commit are required.");
+        }
+
+        using SqliteConnection connection = Open();
+        using SqliteTransaction transaction = connection.BeginTransaction();
+        using (SqliteCommand protect = connection.CreateCommand())
+        {
+            protect.Transaction = transaction;
+            protect.CommandText = """
+                UPDATE workspace_slots
+                   SET state = 'Protected', head_commit = $commit,
+                       updated_utc = $utc
+                 WHERE slot_id = $slot AND state = 'Reserved'
+                   AND generation = $generation
+                   AND EXISTS (
+                       SELECT 1 FROM workspace_slot_leases AS lease
+                       JOIN sessions AS session
+                         ON session.operation_id = lease.session_id
+                      WHERE lease.lease_id = $lease
+                        AND lease.slot_id = workspace_slots.slot_id
+                        AND lease.session_id = $session
+                        AND lease.generation = workspace_slots.generation
+                        AND lease.state = 'Held'
+                        AND session.state = 'Preparing'
+                        AND session.pinned_commit = $commit
+                        AND session.workspace_path = workspace_slots.workspace_path
+                        AND session.source_path = workspace_slots.source_path
+                        AND session.repository_key = workspace_slots.repository_key
+                   )
+                """;
+            protect.Parameters.AddWithValue("$slot", reservation.Lease.SlotId.ToString("N"));
+            protect.Parameters.AddWithValue("$lease", reservation.Lease.LeaseId.ToString("N"));
+            protect.Parameters.AddWithValue("$session", reservation.Session.OperationId.ToString("D"));
+            protect.Parameters.AddWithValue("$generation", reservation.Lease.Generation);
+            protect.Parameters.AddWithValue("$commit", commitSha.ToLowerInvariant());
+            protect.Parameters.AddWithValue("$utc", DateTimeOffset.UtcNow.ToString("O"));
+            if (protect.ExecuteNonQuery() != 1)
+            {
+                return Task.FromResult(false);
+            }
+        }
+
+        using (SqliteCommand active = connection.CreateCommand())
+        {
+            active.Transaction = transaction;
+            active.CommandText = """
+                UPDATE sessions SET state = 'Active', updated_utc = $utc
+                 WHERE operation_id = $session
+                   AND state = 'Preparing' AND pinned_commit = $commit
+                """;
+            active.Parameters.AddWithValue("$session", reservation.Session.OperationId.ToString("D"));
+            active.Parameters.AddWithValue("$commit", commitSha.ToLowerInvariant());
+            active.Parameters.AddWithValue("$utc", DateTimeOffset.UtcNow.ToString("O"));
+            if (active.ExecuteNonQuery() != 1)
+            {
+                throw new InvalidOperationException("Released slot activation owner CAS failed.");
+            }
+        }
+
+        using (SqliteCommand audit = connection.CreateCommand())
+        {
+            audit.Transaction = transaction;
+            audit.CommandText = """
+                INSERT INTO session_events(operation_id, kind, created_utc)
+                VALUES ($session, 'ReleasedSlotActivated', $utc)
+                """;
+            audit.Parameters.AddWithValue("$session", reservation.Session.OperationId.ToString("D"));
+            audit.Parameters.AddWithValue("$utc", DateTimeOffset.UtcNow.ToString("O"));
+            audit.ExecuteNonQuery();
+        }
+
+        transaction.Commit();
+        return Task.FromResult(true);
+    }
+
+    private static bool OverlapsSlotPaths(string left, string right)
+    {
+        string a = Path.GetFullPath(left).TrimEnd(
+            Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar
+        );
+        string b = Path.GetFullPath(right).TrimEnd(
+            Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar
+        );
+        StringComparison comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        return a.Equals(b, comparison)
+            || a.StartsWith(b + Path.DirectorySeparatorChar, comparison)
+            || b.StartsWith(a + Path.DirectorySeparatorChar, comparison);
     }
 
     /// <inheritdoc/>

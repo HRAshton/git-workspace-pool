@@ -689,6 +689,162 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task ReadySlot_ExplicitSecondPrCheckoutRetainsFirstPrParkedData()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult first = await fixture.OpenAsync(PullRequestUrl);
+        WorkspaceSession firstOwner = await fixture.OwnedSessionAsync();
+        File.WriteAllText(Path.Combine(first.WorkspacePath, "feature.txt"), "stage protected");
+        await fixture.GitInWorkspaceAsync("add", "feature.txt");
+        File.WriteAllText(Path.Combine(first.WorkspacePath, "feature.txt"), "unstaged protected");
+        File.WriteAllText(Path.Combine(first.WorkspacePath, "private.local"), "secret user data");
+        WorkspaceSnapshotReceipt saved = await fixture.SnapshotAsync();
+        string parked = await fixture.ParkAsync(firstOwner.OperationId);
+        WorkspaceSlotReleasePreparation preparation = await fixture.PrepareReleaseAsync(
+            firstOwner.OperationId
+        );
+        _ = await fixture.FinalizeReleaseAsync(preparation.PreparationId);
+
+        await fixture.CreatePullRequestAsync(18);
+        WorkspaceSlot slot = Assert.IsType<WorkspaceSlot>(
+            await new SqliteWorkspaceSlotRegistry(fixture.DatabasePath)
+                .FindSlotAsync(preparation.SlotId, CancellationToken.None)
+        );
+        Assert.Equal(WorkspaceSlotState.Ready, slot.State);
+
+        OpenPullRequestResult second = await fixture.OpenInReadySlotAsync(
+            "https://github.com/owner/repo/pull/18",
+            slot.SlotId,
+            slot.Generation
+        );
+        Assert.Equal(first.WorkspacePath, second.WorkspacePath);
+        Assert.False(second.Reused);
+        Assert.True(await fixture.IsRegisteredWorktreeAsync(second.WorkspacePath));
+        Assert.Equal("feature for pr 18", File.ReadAllText(
+            Path.Combine(second.WorkspacePath, "feature.txt")
+        ));
+        Assert.False(File.Exists(Path.Combine(second.WorkspacePath, "private.local")));
+        Assert.Equal("unstaged protected", File.ReadAllText(
+            Path.Combine(parked, "feature.txt")
+        ));
+        Assert.Equal("secret user data", File.ReadAllText(
+            Path.Combine(parked, "private.local")
+        ));
+        Assert.Equal("stage protected", await fixture.ReadStagedFeatureAsync(parked));
+        Assert.Equal(WorkspaceSessionState.Released,
+            (await fixture.SessionAsync(firstOwner.OperationId))!.State);
+        WorkspaceSnapshotRecord historical = Assert.IsType<WorkspaceSnapshotRecord>(
+            await new SqliteWorkspaceSessionJournal(fixture.DatabasePath)
+                .GetSnapshotAsync(saved.SnapshotId, CancellationToken.None)
+        );
+        Assert.Equal(firstOwner.OperationId, historical.Session.OperationId);
+
+        SqliteWorkspaceSlotRegistry registry = new(fixture.DatabasePath);
+        WorkspaceSlot reused = Assert.IsType<WorkspaceSlot>(
+            await registry.FindSlotAsync(slot.SlotId, CancellationToken.None)
+        );
+        Assert.Equal(WorkspaceSlotState.Protected, reused.State);
+        Assert.Equal(slot.Generation + 1, reused.Generation);
+        Assert.Empty(await registry.AuditAsync(CancellationToken.None));
+
+        OpenPullRequestResult reopened = await fixture.OpenWithFreshHandlerAsync(
+            "https://github.com/owner/repo/pull/18"
+        );
+        Assert.True(reopened.Reused);
+        Assert.Equal(second.WorkspacePath, reopened.WorkspacePath);
+        Assert.Equal("secret user data", File.ReadAllText(
+            Path.Combine(parked, "private.local")
+        ));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task ReadySlot_RejectsStaleAndOccupiedExplicitAllocation()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        _ = await fixture.OpenAsync(PullRequestUrl);
+        WorkspaceSession first = await fixture.OwnedSessionAsync();
+        string parked = await fixture.ParkAsync(first.OperationId);
+        WorkspaceSlotReleasePreparation prepared = await fixture.PrepareReleaseAsync(first.OperationId);
+        _ = await fixture.FinalizeReleaseAsync(prepared.PreparationId);
+        await fixture.CreatePullRequestAsync(18);
+
+        WorkspaceSlot slot = Assert.IsType<WorkspaceSlot>(
+            await new SqliteWorkspaceSlotRegistry(fixture.DatabasePath)
+                .FindSlotAsync(prepared.SlotId, CancellationToken.None)
+        );
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.OpenInReadySlotAsync(
+                "https://github.com/owner/repo/pull/18",
+                slot.SlotId,
+                slot.Generation + 1
+            )
+        );
+
+        Directory.CreateDirectory(slot.WorkspacePath);
+        string foreign = Path.Combine(slot.WorkspacePath, "foreign.txt");
+        File.WriteAllText(foreign, "do not delete");
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.OpenInReadySlotAsync(
+                "https://github.com/owner/repo/pull/18",
+                slot.SlotId,
+                slot.Generation
+            )
+        );
+        Assert.Equal("do not delete", File.ReadAllText(foreign));
+        Assert.True(await fixture.IsRegisteredWorktreeAsync(parked));
+        Assert.Equal(WorkspaceSlotState.Ready, (await new SqliteWorkspaceSlotRegistry(
+            fixture.DatabasePath
+        ).FindSlotAsync(slot.SlotId, CancellationToken.None))!.State);
+        Assert.Empty(await new SqliteWorkspaceSessionJournal(fixture.DatabasePath)
+            .ListActiveAsync(CancellationToken.None));
+        Directory.Delete(slot.WorkspacePath, recursive: true);
+        Assert.False(Directory.Exists(slot.WorkspacePath));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task ReadySlot_ReservationCannotBeIssuedTwiceAcrossConnections()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        _ = await fixture.OpenAsync(PullRequestUrl);
+        WorkspaceSession first = await fixture.OwnedSessionAsync();
+        string parked = await fixture.ParkAsync(first.OperationId);
+        WorkspaceSlotReleasePreparation prepared = await fixture.PrepareReleaseAsync(first.OperationId);
+        _ = await fixture.FinalizeReleaseAsync(prepared.PreparationId);
+
+        SqliteWorkspaceSlotRegistry one = new(fixture.DatabasePath);
+        SqliteWorkspaceSlotRegistry two = new(fixture.DatabasePath);
+        Task<WorkspaceReadySlotReservation?> a = one.TryReserveAsync(
+            prepared.SlotId, prepared.Generation, "github:owner/repo", 18,
+            fixture.SourcePath, CancellationToken.None
+        );
+        Task<WorkspaceReadySlotReservation?> b = two.TryReserveAsync(
+            prepared.SlotId, prepared.Generation, "github:owner/repo", 19,
+            fixture.SourcePath, CancellationToken.None
+        );
+        WorkspaceReadySlotReservation?[] results = await Task.WhenAll(a, b);
+        WorkspaceReadySlotReservation winner = Assert.Single(
+            results.Where(item => item is not null)
+        )!;
+        Assert.Equal(1, results.Count(item => item is null));
+        WorkspaceSlot slot = Assert.IsType<WorkspaceSlot>(
+            await new SqliteWorkspaceSlotRegistry(fixture.DatabasePath)
+                .FindSlotAsync(prepared.SlotId, CancellationToken.None)
+        );
+        Assert.Equal(WorkspaceSlotState.Reserved, slot.State);
+        Assert.Equal(prepared.Generation + 1, slot.Generation);
+        Assert.Equal(WorkspaceSessionState.Preparing,
+            (await fixture.SessionAsync(winner.Session.OperationId))!.State);
+        Assert.False(Directory.Exists(slot.WorkspacePath));
+        Assert.True(await fixture.IsRegisteredWorktreeAsync(parked));
+        Assert.Null(await one.TryReserveAsync(prepared.SlotId,
+            prepared.Generation, "github:owner/repo", 20,
+            fixture.SourcePath, CancellationToken.None));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task ReleaseCommit_RejectsOccupiedOriginalAndAllowsCancel()
     {
         using Fixture fixture = await Fixture.CreateAsync();
@@ -2955,6 +3111,44 @@ public sealed class GitWorkspaceE2ETests
                 )
             );
             return await service.RestoreAsync(snapshotId, cancellationToken);
+        }
+
+        public async Task CreatePullRequestAsync(int number)
+        {
+            string seed = Path.Combine(_root, "seed");
+            await GitAsync(seed, "checkout", "main");
+            await GitAsync(seed, "checkout", "-b", "feature/pr-" + number);
+            File.WriteAllText(Path.Combine(seed, "feature.txt"), "feature for pr " + number);
+            await GitAsync(seed, "add", "feature.txt");
+            await GitAsync(seed, "commit", "-m", "PR " + number);
+            await GitAsync(seed, "push", "origin", "HEAD:refs/pull/" + number + "/head");
+        }
+
+        public Task<OpenPullRequestResult> OpenInReadySlotAsync(
+            string url,
+            Guid slotId,
+            long generation
+        )
+        {
+            Assert.True(PullRequestReference.TryParse(url, out PullRequestReference? request));
+            SqliteWorkspaceSessionJournal journal = new(DatabasePath);
+            SqliteWorkspaceSlotRegistry slots = new(DatabasePath);
+            AcquireExplicitReadySlotService service = new(
+                slots,
+                slots,
+                new WorkspaceReadySlotSafety(),
+                new GitCliWorkspaceGit(),
+                new WorkspaceDirectories(),
+                journal,
+                new FileWorkspaceOperationLock(Path.Combine(_root, "state", "locks"))
+            );
+            return service.AcquireAsync(
+                request!,
+                new RepositoryRegistration("owner/repo", _source, _workspaces),
+                slotId,
+                generation,
+                CancellationToken.None
+            );
         }
 
         public Task<OpenPullRequestResult> OpenAsync(string url) =>

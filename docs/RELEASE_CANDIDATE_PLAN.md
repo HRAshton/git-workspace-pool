@@ -56,7 +56,8 @@
 - [x] SQLite v6 protected slot registry and Held generation-aware leases: transactional backfill of existing sessions, atomic new session registration, unique live leases and CAS reservation with stale-generation rejection.
 - [x] Add durable, idempotent SQLite v7 release preparations after locked Git/slot preflight; pending operations block unparking, and cancellation restores the ability to unpark without changing files.
 - [x] Implement the explicit, non-destructive Ready-state handoff for an already verified Parked session: schema v8 preserves immutable original paths and snapshots, excludes only Released rows from the old-slot reservation index, and atomically commits the prepared generation/lease handoff after locked Git preflight.
-- [ ] Integrate a generation-checked Ready-slot allocator, full cross-owner checkout and post-crash reconciliation; a release is **not** automatic worktree reuse.
+- [x] Implement a narrowly scoped, opt-in Ready-slot acquisition and cross-owner Git checkout: an atomic CAS creates a new Preparing PR session with Held lease, verifies a clean target and Git commit, then atomically marks Active/Protected. Never silently delete or recycle earlier PR data.
+- [ ] Wire explicit user confirmation, candidate discovery, restart reconciliation for interrupted Reserved/Preparing allocations, and fault testing at allocator side effects before automatic cross-PR reuse.
 - [ ] `ReleaseSession` use case: confirm → lock → inspect → snapshot and round-trip verify (where required) → journal intent → prepare disposition → verify → commit; otherwise `RecoveryRequired`.
 - [x] Add explicit whole-worktree parking using `git worktree move`, a private destination on the same root, durable SQLite intent before move, and no file deletion.
 - [x] Add explicit unparking, including recorded return intent, occupied-destination refusal, and recovery after interrupted moves.

@@ -1,6 +1,6 @@
 # Exclusive slot ownership and safe release (design gate)
 
-**Status:** SQLite v8 adds an explicit finalization use case for an already Prepared, Parked PR: after locked Git/filesystem revalidation it atomically retains the Released PR history and parking location, commits the preparation, releases its Held lease, and marks the original slot Ready. **A Ready slot is not yet allocated by production checkout; cross-PR warm reuse and all destructive cleanup remain disabled.**
+**Status:** SQLite v8 finalizes explicit release of a Parked PR while retaining the historical session, snapshots and parked user data. An opt-in allocation service can now reserve a specific Ready slot for another PR and perform a fresh, verified Git checkout at the former path. **This is not connected to automatic PR opening or warm artifact reuse; destructive cleanup remains disabled.**
 
 ## Why parking is not release
 
@@ -57,7 +57,7 @@ workspace-path rule.
 - `workspace_slot_leases` records slot/session/generation, and partial unique indexes forbid more than one Held lease for a slot or a session. A unique slot/generation pair rejects duplicate historical issuance.
 - Upgrading an existing journal from v5 creates Protected slots and Held leases for **every existing session**, including Parked, suspended and RecoveryRequired owners; it cannot infer free slots from missing directories. A new session inserts its Protected slot and Held lease in the same SQLite transaction as the session reservation.
 - `SqliteWorkspaceSlotRegistry.TryLeaseReadyAsync` uses an atomic compare-and-swap of the expected generation and Ready state, checks session repository/source/path identity and unleased Preparing state, increments the generation, and persists a Held lease in one transaction. Stale or ineligible requests return no lease.
-- SQLite v8 can publish Ready only by finalizing an explicitly prepared and verified Parked owner; it cannot automatically create warm Git worktrees or allocate Ready slots in the PR-opening handler. Synthetic Ready slots in tests still exercise CAS without authorizing checkout.
+- SQLite v8 can publish Ready only by finalizing an explicitly prepared and verified Parked owner. An explicit `AcquireExplicitReadySlotService` uses the atomic `TryReserveAsync` to create a second PR session and Held lease at the next generation. It requires an empty unregistered Git path and verifies checkout before the `TryActivateAsync` CAS transitions the slot to Protected and the owner to Active. The normal PR-opening handler never selects Ready slots.
 - Schema v8 changes the old-path reservation to a partial unique index for non-Released sessions. Immutable Released history keeps its original path and all snapshots; its parking path remains exclusive. The transaction-based cross-session overlap guard ignores only the Released old slot, never the retained parked worktree.
 - Neither migration nor reservation touches the filesystem, runs Git, frees disk, performs a checkout or modifies an active PR.
 
@@ -108,8 +108,8 @@ preparation nor cancellation moves Git files, releases a lease or sets a
 slot Ready. The explicit v8 finalizer now makes that handoff through a
 single transaction after repeating the Git and path checks under the OS
 lock. Cancellation and preparation by themselves still never release
-anything. Checkout of a Ready slot is a separate, currently disabled
-use case requiring its own physical preflight and reservation.
+anything. Checkout of a Ready slot is a separate, explicit opt-in
+use case requiring its own physical preflight, generation reservation and Git verification; production warm candidate selection is still disabled.
 
 ## Required invariants
 
