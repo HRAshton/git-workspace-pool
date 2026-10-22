@@ -269,6 +269,77 @@ public sealed class SqliteWorkspaceSlotRegistryTests
     }
 
     [Fact]
+    public async Task ReleasePreparation_ExistingIntentRefusesStaleOwnerOrLeaseGeneration()
+    {
+        using Fixture fixture = new();
+        SqliteWorkspaceSessionJournal journal = new(fixture.DatabasePath);
+        WorkspaceSession owner = await fixture.ReserveAsync(journal);
+        await journal.PinCommitAsync(
+            owner.OperationId, new string('a', 40), CancellationToken.None
+        );
+        await journal.ActivateAsync(owner.OperationId, CancellationToken.None);
+        await journal.BeginParkingAsync(
+            owner.OperationId,
+            Path.Combine(fixture.Root, "parked"),
+            new string('a', 40),
+            CancellationToken.None
+        );
+        await journal.CompleteParkingAsync(owner.OperationId, CancellationToken.None);
+
+        SqliteWorkspaceSlotRegistry registry = new(fixture.DatabasePath);
+        WorkspaceSlot slot = Assert.IsType<WorkspaceSlot>(
+            await registry.FindHeldSlotAsync(owner.OperationId, CancellationToken.None)
+        );
+        WorkspaceSlotReleasePreparation original = Assert.IsType<WorkspaceSlotReleasePreparation>(
+            await registry.TryPrepareAsync(
+                owner.OperationId, slot.SlotId, slot.Generation, CancellationToken.None
+            )
+        );
+
+        using SqliteConnection db = fixture.Open();
+        using SqliteCommand update = db.CreateCommand();
+        update.CommandText = """
+            UPDATE workspace_slots SET state = 'RecoveryRequired'
+             WHERE slot_id = $slot
+            """;
+        update.Parameters.AddWithValue("$slot", slot.SlotId.ToString("N"));
+        Assert.Equal(1, update.ExecuteNonQuery());
+
+        // An existing prepared record must not be mistaken for permission to
+        // operate after its protected slot has been quarantined.
+        Assert.Null(await registry.TryPrepareAsync(
+            owner.OperationId, slot.SlotId, slot.Generation, CancellationToken.None
+        ));
+        Assert.Equal(original, Assert.Single(
+            await registry.ListPreparedAsync(CancellationToken.None)
+        ));
+
+        update.CommandText = """
+            UPDATE workspace_slots SET state = 'Protected'
+             WHERE slot_id = $slot
+            """;
+        Assert.Equal(1, update.ExecuteNonQuery());
+        update.CommandText = """
+            UPDATE workspace_slot_leases
+               SET generation = generation + 1
+             WHERE session_id = $session AND state = 'Held'
+            """;
+        update.Parameters.AddWithValue("$session", owner.OperationId.ToString("D"));
+        Assert.Equal(1, update.ExecuteNonQuery());
+
+        Assert.Null(await new SqliteWorkspaceSlotRegistry(fixture.DatabasePath)
+            .TryPrepareAsync(
+                owner.OperationId, slot.SlotId, slot.Generation, CancellationToken.None
+            ));
+        Assert.Equal(original, Assert.Single(
+            await registry.ListPreparedAsync(CancellationToken.None)
+        ));
+
+        Assert.True(await registry.CancelAsync(original.PreparationId, CancellationToken.None));
+        Assert.Empty(await registry.ListPreparedAsync(CancellationToken.None));
+    }
+
+    [Fact]
     public async Task ReleasePreparation_RacingConnectionsReturnOneDurableIntent()
     {
         using Fixture fixture = new();

@@ -267,9 +267,27 @@ public sealed class SqliteWorkspaceSlotRegistry : IWorkspaceSlotRegistry, IWorks
         using SqliteCommand existing = connection.CreateCommand();
         existing.Transaction = transaction;
         existing.CommandText = """
-            SELECT preparation_id, slot_id, session_id, generation, state
-              FROM workspace_slot_release_preparations
-             WHERE session_id = $session AND state = 'Prepared'
+            SELECT prepared.preparation_id, prepared.slot_id,
+                   prepared.session_id, prepared.generation, prepared.state,
+                   EXISTS (
+                       SELECT 1 FROM workspace_slots AS slots
+                       JOIN workspace_slot_leases AS leases
+                         ON leases.slot_id = slots.slot_id AND leases.state = 'Held'
+                       JOIN sessions AS owners
+                         ON owners.operation_id = leases.session_id
+                      WHERE slots.slot_id = prepared.slot_id
+                        AND slots.generation = prepared.generation
+                        AND slots.state = 'Protected'
+                        AND leases.generation = prepared.generation
+                        AND owners.operation_id = prepared.session_id
+                        AND owners.state = 'Parked'
+                        AND owners.parking_path IS NOT NULL
+                        AND owners.repository_key = slots.repository_key
+                        AND owners.source_path = slots.source_path
+                        AND owners.workspace_path = slots.workspace_path
+                   )
+              FROM workspace_slot_release_preparations AS prepared
+             WHERE prepared.session_id = $session AND prepared.state = 'Prepared'
             """;
         existing.Parameters.AddWithValue("$session", sessionId.ToString("D"));
 
@@ -279,7 +297,9 @@ public sealed class SqliteWorkspaceSlotRegistry : IWorkspaceSlotRegistry, IWorks
             {
                 WorkspaceSlotReleasePreparation saved = ReadPreparation(reader);
                 return Task.FromResult<WorkspaceSlotReleasePreparation?>(
-                    saved.SlotId == slotId && saved.Generation == expectedGeneration
+                    saved.SlotId == slotId
+                        && saved.Generation == expectedGeneration
+                        && reader.GetInt64(5) == 1
                         ? saved
                         : null
                 );

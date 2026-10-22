@@ -94,8 +94,10 @@ session and slot. `PrepareWorkspaceSlotReleaseService` acquires the existing
 cross-process worktree lock, reruns the complete Git/filesystem release
 preflight under that lock, and atomically compares the protected slot,
 held lease, parked session identity and generation **before** journalling.
-Retries return the same durable preparation; a stale generation or
-unverified path refuses the request. Recovery diagnostics now lists all bounded
+Retries return the same durable preparation only while the original
+Parked/Protected/Held ownership and lease generation still agree. A stale
+generation, quarantined slot or unverified path refuses the request; the
+journalled preparation remains visible for explicit cancellation. Recovery diagnostics now lists all bounded
 Prepared records using a read-only SQLite join to their original reserved
 session paths; cancellation makes the preparation finding disappear.
 
