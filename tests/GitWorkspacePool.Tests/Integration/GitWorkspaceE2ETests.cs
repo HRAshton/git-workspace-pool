@@ -605,6 +605,58 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task Parking_RefusesUntrackedNestedGitRepositoryWithoutJournalIntent()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        WorkspaceSession session = await fixture.OwnedSessionAsync();
+        string nested = Path.Combine(opened.WorkspacePath, "local-tools");
+        Directory.CreateDirectory(nested);
+        await fixture.GitInDirectoryAsync(nested, "init");
+        string note = Path.Combine(nested, "user-notes.txt");
+        File.WriteAllText(note, "preserve nested repo changes");
+
+        InvalidOperationException failure = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.ParkAsync(session.OperationId)
+        );
+
+        Assert.Contains("nested Git repository", failure.Message);
+        Assert.Equal("preserve nested repo changes", File.ReadAllText(note));
+        WorkspaceSession stillOwned = (await fixture.SessionAsync(session.OperationId))!;
+        Assert.Equal(WorkspaceSessionState.Active, stillOwned.State);
+        Assert.Null(stillOwned.ParkingPath);
+        Assert.True(await fixture.IsRegisteredWorktreeAsync(opened.WorkspacePath));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task Unparking_RefusesNestedGitRepositoryWithoutReturnIntent()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        WorkspaceSession session = await fixture.OwnedSessionAsync();
+        string parked = await fixture.ParkAsync(session.OperationId);
+        string nested = Path.Combine(parked, "local-tools");
+        Directory.CreateDirectory(nested);
+        await fixture.GitInDirectoryAsync(nested, "init");
+        string note = Path.Combine(nested, "user-notes.txt");
+        File.WriteAllText(note, "retain separate Git data");
+
+        InvalidOperationException failure = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.UnparkAsync(session.OperationId)
+        );
+
+        Assert.Contains("nested Git repository", failure.Message);
+        Assert.Equal("retain separate Git data", File.ReadAllText(note));
+        WorkspaceSession stillParked = (await fixture.SessionAsync(session.OperationId))!;
+        Assert.Equal(WorkspaceSessionState.Parked, stillParked.State);
+        Assert.Equal(parked, stillParked.ParkingPath);
+        Assert.False(Directory.Exists(opened.WorkspacePath));
+        Assert.True(await fixture.IsRegisteredWorktreeAsync(parked));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task Parking_SubmoduleIndexEntryIsRefusedBeforeMoveIntent()
     {
         using Fixture fixture = await Fixture.CreateAsync();
