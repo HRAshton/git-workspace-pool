@@ -75,7 +75,8 @@
 - [x] Read-only diagnostics now identify interrupted parking/unparking and missing or unverifiable parked trees without changing the working files.
 - [x] Guard reservation and parking transactions against nested and cross-column path overlaps; test that other PR sessions cannot claim existing parked directories.
 - [x] Fail closed on staged/committed Git submodule index entries before recording a parking intent; offline Git E2E verifies no path or journal mutation.
-- [ ] Harden locked paths, external editor races, cross-process moves, untracked nested Git repositories and other relocation failures before automatic slot reuse.
+- [x] Refuse nested Git repositories/gitfiles in untracked or ignored paths before park/unpark intent and Git move, with a bounded non-following scan and real offline Git E2E.
+- [ ] Harden locked paths, external editor races, cross-process moves and filesystem replacement during relocation before automatic slot reuse.
 - [x] Offer a verified editor reopen of a Released session's immutable retained parking path, without moving any worktree or reclaiming its released slot. An edited/committed retained Git worktree may be reopened; an unregistered/missing tree fails closed.
 - [ ] `RestoreParkedSession` with safe location allocation, exact content validation and explicit activation.
 - [ ] Ensure moving worktrees updates Git metadata, with hard stop on unsupported submodules and Windows sharing violations.

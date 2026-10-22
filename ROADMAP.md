@@ -53,6 +53,7 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [x] Explicit parking/unparking through Git-aware worktree moves, preserving staged/ignored/untracked files and journal ownership; no release inferred from editor lifecycle.
 - [x] Prevent nested and cross-column SQLite path ownership conflicts between active workspaces and reserved parked trees.
 - [x] Detect Git submodule index entries before worktree relocation and refuse unsupported moves without changing session state.
+- [x] Refuse untracked nested Git repositories before park/unpark intent and at the move boundary using a bounded non-following filesystem scan. Offline real-Git E2E proves separate repository files and leases are preserved; remaining relocation races still block automatic reuse.
 - [x] Implement read-only, lock-scoped release eligibility assessment: require Parked state, Protected Held lease, exact Git registration and safe path ancestry; validate on real local Git.
 - [x] Add bounded, read-only audit of protected/ready/reserved slot leases, owner identity and generation mismatches; expose conflicts through tray recovery diagnostics.
 - [x] Journal version-7 release preparations under an OS lock and Git preflight; atomic slot/generation CAS, durable idempotent retry, and explicit cancellation. Block unparking while a preparation remains active.

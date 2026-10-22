@@ -86,6 +86,7 @@ public sealed class GitWorkspaceParkingOperations : IWorkspaceParkingOperations
         // Refuse junctions/symlinks on the inspected path before writing any
         // parking intent, not only inside the later Git move adapter.
         CheckAncestors(Path.GetFullPath(worktree));
+        RefuseNestedGitRepositories(worktree, cancellationToken);
 
         ProcessStartInfo start = new("git")
         {
@@ -158,6 +159,7 @@ public sealed class GitWorkspaceParkingOperations : IWorkspaceParkingOperations
     )
     {
         CheckAncestors(Path.GetFullPath(source));
+        RefuseNestedGitRepositories(source, cancellationToken);
         CheckAncestors(Path.GetDirectoryName(Path.GetFullPath(destination))!);
         if (Exists(destination))
         {
@@ -172,6 +174,67 @@ public sealed class GitWorkspaceParkingOperations : IWorkspaceParkingOperations
             destination,
             cancellationToken
         );
+    }
+
+    private static void RefuseNestedGitRepositories(
+        string worktree,
+        CancellationToken cancellationToken
+    )
+    {
+        // Only the linked worktree root may have its own .git metadata.
+        // A nested .git directory or gitfile belongs to another repository.
+        // Do not follow reparse points, including junctions outside the root.
+        const int maxEntries = 100000;
+        string root = Path.GetFullPath(worktree);
+        Stack<string> directories = new();
+        directories.Push(root);
+        int inspected = 0;
+
+        while (directories.TryPop(out string? directory))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            foreach (string path in Directory.EnumerateFileSystemEntries(directory))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (++inspected > maxEntries)
+                {
+                    throw new InvalidOperationException(
+                        "Parking scan exceeded its safety limit; no worktree move was attempted."
+                    );
+                }
+
+                string name = Path.GetFileName(path);
+                if (name.Equals(".git", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!directory.Equals(
+                        root,
+                        OperatingSystem.IsWindows()
+                            ? StringComparison.OrdinalIgnoreCase
+                            : StringComparison.Ordinal
+                    ))
+                    {
+                        throw new InvalidOperationException(
+                            "Parking cannot move an untracked nested Git repository; "
+                                + "its files remain at the original path."
+                        );
+                    }
+
+                    continue;
+                }
+
+                FileAttributes attributes = File.GetAttributes(path);
+                if ((attributes & FileAttributes.ReparsePoint) != 0)
+                {
+                    // A link can point outside the worktree. Skip, never traverse.
+                    continue;
+                }
+
+                if ((attributes & FileAttributes.Directory) != 0)
+                {
+                    directories.Push(path);
+                }
+            }
+        }
     }
 
     private static void CheckAncestors(string path)
