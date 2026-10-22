@@ -2,7 +2,9 @@ param(
     [Parameter(Mandatory = $true)]
     [string] $PackagePath,
     [Parameter(Mandatory = $true)]
-    [string] $TestRoot
+    [string] $TestRoot,
+
+    [string[]] $RequiredDocs = @()
 )
 
 Set-StrictMode -Version Latest
@@ -28,6 +30,19 @@ $extracted = Join-Path $root 'extracted'
 $install = Join-Path $root 'installed'
 New-Item -ItemType Directory -Path $extracted | Out-Null
 Expand-Archive -LiteralPath $PackagePath -DestinationPath $extracted
+
+# A candidate archive must contain the documented user safety procedures;
+# validate the actual ZIP contents, not only repository file existence.
+foreach ($document in $RequiredDocs) {
+    if ([System.IO.Path]::GetFileName($document) -ne $document) {
+        throw "Unsafe RC documentation name: $document"
+    }
+    $documentPath = Join-Path $extracted $document
+    if (-not (Test-Path -LiteralPath $documentPath -PathType Leaf) -or
+        (Get-Item -LiteralPath $documentPath).Length -eq 0) {
+        throw "RC package missing required recovery documentation: $document"
+    }
+}
 
 $installer = Join-Path $extracted 'Install-PerUser.ps1'
 if (-not (Test-Path -LiteralPath $installer)) {

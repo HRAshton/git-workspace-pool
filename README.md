@@ -10,6 +10,8 @@ Experimental Windows preview. Configured local repositories create or reopen a d
 
 The [RC2 Windows candidate workflow](.github/workflows/rc2.yml) builds the next unsigned self-contained Windows x64 package after full real-process crash/recovery and package/backup smoke tests. RC2 adds the included [verified backup-first migration helper](docs/RC2_RELEASE_NOTES.md): stop the tray, run `Backup-PerUserState.ps1 -BackupDirectory <new-safe-location>`, and verify the copied SQLite journal, WAL/SHM files and settings. **Back up worktrees, parked worktrees and snapshots separately.** An actual older-profile migration, GUI acceptance, signed public release and safe rollback are still manual [RC2 acceptance gates](docs/RC2_ACCEPTANCE.md).
 
+The extracted RC2 ZIP also bundles [safe recovery and support guidance](docs/RECOVERY.md) for read-only diagnostics, preservation of unfinished operations and credential-safe support requests.
+
 ## RC1 engineering candidate
 
 A dedicated [RC1 Windows candidate workflow](.github/workflows/rc1.yml) builds an unsigned, self-contained Windows x64 package with app version `0.1.0-rc.1`, source provenance and a SHA-256 checksum. It also runs extended real-process recovery/crash tests. Download the `GitWorkspacePool-win-x64-rc1-candidate` artifact from a successful RC1 workflow run. This is **not** a signed GitHub Release.

@@ -117,7 +117,7 @@
 - [x] Build an unsigned self-contained preview ZIP in PR CI with bundled userscript, SHA-256 checksum, per-user versioned install, explicit HKCU protocol registration/unregistration, and isolated no-UI smoke including a second idempotent install that preserves unknown existing files. Existing preview binaries and all SQLite/settings/worktrees are left alone.
 - [ ] Signed per-user installer/update/uninstall, trusted release publishing, real tray/browser/editor installed smoke and safe downgrade/SQLite rollback proof.
 - [ ] Windows Defender/AV smoke, NTFS/ReFS, multiple drives, locked files, Unicode, long paths, submodules, sparse checkout and Git LFS policies.
-- [ ] Document safe recovery and support procedure before first RC.
+- [x] Document a safe read-only recovery and support procedure for RC testers, including finding categories, separate backup of workspace/snapshots, Git worktree registry inspection, credential redaction and no-cleanup instructions. The guide is bundled in RC2 and checked by package smoke; actual operator acceptance remains a manual gate.
 - [ ] Launch performance/space benchmark against cold worktree on representative large repos; report medians and p95.
 - [ ] Release notes, checksums and archived evidence from all RC gates.
 

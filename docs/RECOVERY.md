@@ -40,6 +40,16 @@ On startup the tray checks the bounded SQLite Reserved/Preparing allocation inve
 
 Only the most recent 25 findings are shown in the tray menu; scanning still examines all entries under a protective count limit. The path and description appear in the item tooltip. A scanner error indicates **unknown safety**, not a clean state.
 
+## RC2 user-data and support evidence checklist
+
+Stop the Git Workspace Pool tray before taking a backup; preserve any SQLite `sessions.db-wal` and `sessions.db-shm` files with the main journal. RC2 packages `Backup-PerUserState.ps1`: choose a **new directory outside the live profile** and retain its `BACKUP_MANIFEST.json` (SHA-256 for settings and journal). It does not back up snapshots, parked folders, the cloned Git repository, or managed worktrees: back up those separately before any upgrade, restore or support intervention.
+
+Use the tray's **Recovery diagnostics...** menu first. Copy the finding kind, description, affected path and time into a private support note. Record the installed RC build number, Windows and Git versions, any reproducible error, and whether the source clone and volume are available. For registered Git worktrees, `git -C "<source-clone>" worktree list --porcelain` lists paths without cleaning them. Run it only in the trusted configured clone, and keep the output private.
+
+**Do not send** `settings.json`, raw `sessions.db`, Git remotes containing tokens, private source code or raw worktree contents to a public issue; scrub user names, local paths, hostnames, PR details and credentials from any diagnostic excerpt. A support note can document the SHA-256 hashes and counts without attaching user data.
+
+When an interrupted restore or snapshot is not verifiable, keep the original active session and every pending artifact intact. Use side-by-side restore only for journalled, verified snapshots; never promote or delete an orphan based only on a support note.
+
 ## Safe investigation procedure
 
 1. Close the tray app and any affected editor windows before making backups. Do not delete or move any worktree.
@@ -52,6 +62,6 @@ Only the most recent 25 findings are shown in the tray menu; scanning still exam
 
 **Forbidden shortcuts:** `git clean -fdx`, `git reset --hard`, manual deletion of `.git/worktrees`, blindly moving linked worktrees, deleting snapshots to silence diagnostics, or treating a successful file copy as proof of safe user-data removal.
 
-## Limitations before RC1
+## Limits before automatic recovery or recycling
 
 Recovery inspection alone is **not** an operation journal for the restore lifecycle. Concurrent filesystem modifications, disk exhaustion, reparse-point races and unsupported Git features still require further hardening. No automatic release, recycle, eviction or snapshot pruning is enabled by this functionality.

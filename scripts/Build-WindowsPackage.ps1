@@ -57,6 +57,9 @@ Copy-Item -LiteralPath (Join-Path $projectRoot 'userscript/git-workspace-pool.us
 if ($PackageVersion) {
     Copy-Item -LiteralPath (Join-Path $projectRoot ("docs/" + $ReleaseDocsPrefix + "_RELEASE_NOTES.md")) -Destination $package
     Copy-Item -LiteralPath (Join-Path $projectRoot ("docs/" + $ReleaseDocsPrefix + "_ACCEPTANCE.md")) -Destination $package
+    if ($ReleaseDocsPrefix -eq 'RC2') {
+        Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/RECOVERY.md') -Destination $package
+    }
 }
 
 $zipName = "$PackageBaseName.zip"
