@@ -31,6 +31,9 @@ jobs:
         run: dotnet restore GitWorkspacePool.slnx
       - name: Build
         run: dotnet build GitWorkspacePool.slnx --configuration Release --no-restore -p:ContinuousIntegrationBuild=true
+      - name: Parse-check manual benchmark harness (no benchmarks run)
+        shell: pwsh
+        run: ./scripts/Benchmark-WarmReuse.ps1 -ValidateOnly
       - name: Unit tests
         run: dotnet test tests/GitWorkspacePool.Tests/GitWorkspacePool.Tests.csproj --configuration Release --no-build --no-restore --filter "Category!=FastE2E&Category!=SlowE2E"
       - name: Fast offline Git E2E

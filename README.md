@@ -86,6 +86,22 @@ The tray now exposes **Reuse compatible npm dependencies (copy only)...** after 
 
 This is an **experimental manual feature**, not automatically selected warm reuse. Compatibility is strict and limited to npm; it makes no claim that file transfer is faster than dependency installation. To collect reproducible local timings, run the offline synthetic benchmark via `dotnet test tests/GitWorkspacePool.Tests/GitWorkspacePool.Tests.csproj --filter "FullyQualifiedName~WarmNpm_BenchmarkColdCheckoutVsVerifiedArtifactCopy" --logger "console;verbosity=detailed"`. Timings are environment-specific and exclude `npm install`, VS Code startup and web-to-tray latency.
 
+## Opt-in Windows performance measurements
+
+Run the **Manual reuse benchmark** workflow from GitHub Actions when you want repeatable Windows-runner evidence without consuming CI time on every PR. The workflow is **manual-only**, produces a downloadable `manual-warm-reuse-results` JSON/log artifact, and takes 3, 5, or 10 samples. It uses temporary offline Git fixture repositories, real SQLite ownership transitions and the **production verified npm artifact copier** with 1,024 synthetic files. It does not install npm packages or launch VS Code.
+
+For reference hardware, PowerShell 7, .NET 10, Git and optionally Node/npm:
+
+```powershell
+.\scripts\Benchmark-WarmReuse.ps1 -OutputDirectory "$env:TEMP\gwp-git-benchmark-$(Get-Date -Format yyyyMMdd-HHmmss)" -Iterations 5
+```
+
+Add `-NpmProjectPath 'C:\src\trusted-npm-project'` for **a second, separate comparison** of warmed-cache `npm ci --offline --ignore-scripts` versus ordinary `node_modules` file copying using a trusted, standalone project with `package-lock.json`. The benchmark copies only manifests and never runs npm lifecycle scripts or touches the supplied project's `node_modules`. Its initial disposable donor install may access the package registry to prime an isolated cache; later timed installs run offline. Local file/Git dependencies, npm workspaces and symlinked payloads are refused.
+
+The runner saves every raw timing sample, p50/p95 (nearest rank), file count, logical copied bytes and caveats in `benchmark-results.json`. It refuses existing output directories and **does not automatically clean up** the output folder or its npm trial directories (the Git E2E fixture cleans up its own disposable worktrees). Inspect the output and delete it manually when finished; large npm projects consume extra disk space.
+
+**Interpretation:** A reused *empty slot* still needs a fresh Git checkout. The standalone npm baseline measures ordinary file copy, not the app's integrity-verified copying; compare it alongside, not as if the two copy implementations are identical. Git fixture timings use a fake editor. Neither benchmark proves actual browser-click-to-visible-editor latency, lifecycle-script/install equivalence, physical NTFS disk savings or a user-visible speedup. Installed Windows browser/VS Code measurements on representative projects remain a release gate.
+
 ## Experimental workspace snapshots
 
 The tray menu provides **Snapshot active PR...** for an explicit, non-destructive snapshot. Captures include the Git index, staged blobs independently from unstaged working files, tracked changes, untracked and ignored files (including binary data), deletions and a SHA-256 manifest. Snapshots are stored under `%LOCALAPPDATA%\\GitWorkspacePool\\snapshots`. Only explicitly selected active sessions are eligible.
