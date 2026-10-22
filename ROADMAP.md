@@ -59,7 +59,8 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [x] Inventory interrupted Reserved/Preparing allocations read-only in recovery diagnostics and warn in the tray at startup; show slot/generation/owner and require explicit recovery. No auto repair or deletion.
 - [x] Expose explicit parked-PR release, cancellation of pending release, and Ready-slot candidate selection in the Windows tray. Recheck trusted GitHub origin and slot generation before the fresh checkout; require separate user confirmations. Real-Git E2E covers selected-slot opening, retained parked data, refused PRs and stale selection.
 - [x] Add six real subprocess-kill handoff checkpoints across release preparation/commit and cross-PR reservation/HEAD pin/Git checkout/activation. Restore persisted state from a fresh process, prove original parked files and published snapshots survive, refuse incomplete checkouts and manually reconcile a proven clean checkout. The focused kill suite is a required PR CI step.
-- [ ] Measure actual artifact-preserving warm reuse and Time to Editor against a cold checkout; process kills alone do not authorize automatic recycling.
+- [x] Add a manual synthetic npm reference benchmark that measures PR cold checkout, explicitly reused-slot checkout, copy time and bytes for 1,024 cached files. These are observed costs, **not** proof of improved Time to Editor or dependency-install acceleration.
+- [ ] Benchmark real npm dependency reinstallation vs compatible artifact copying, VS Code launch and browser-to-editor latency on Windows reference repos before making a speedup claim or enabling automatic recycling.
 - [x] Implement explicit non-destructive snapshot export for staged/unstaged, untracked, ignored and binary files, with independent staged blobs and a Git index.
 - [x] Restore a journalled snapshot into a separate Git worktree on the saved commit; verify index, working tree files and exact Git status.
 - [x] Reject corrupted payloads and manifest path traversal before allocating a recovery worktree.
@@ -94,7 +95,8 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 
 - [x] Implement pure deterministic warm candidate ranking by exact HEAD, artifact invalidation and changed-path estimates; reject allocated, dirty, pinned, mismatched and recovery-required candidates.
 - [ ] Collect verified on-disk candidates, measure transition cost, and connect the allocator only after exclusive slot release and ownership transfer are proven.
-- [ ] Preserve configured artifacts such as `node_modules`, `bin`, `obj`; no build execution.
+- [x] Add manual, copy-only `node_modules` reuse from a Released parked PR into a verified Active PR in the exact former slot. Require matching npm manifests, matching durable Git owner/source/HEAD, ignored/untracked paths, no links or destination collisions, and bounded per-file integrity checks. Expose explicit tray consent, bytes, file counts, and wall-clock transfer duration.
+- [ ] Expand to configurable artifact classes (`bin`, `obj` etc.) only after a compatibility policy and safety tests; do not execute builds.
 - [ ] Safe fallback for unsupported paths/filesystems.
 - [ ] Optional ReFS block cloning where available.
 - [ ] Disk budget and eviction based on size, usage, and recreation cost.

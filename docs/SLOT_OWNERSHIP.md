@@ -164,6 +164,10 @@ The test-only `IWorkspaceSlotHandoffCheckpointSink` stops a disposable process a
 
 This validates **process crash boundaries**, not arbitrary power loss, concurrent filesystem mutations, or the safety of retaining and reusing build artifacts. It does not enable automatic cleanup, warm ranking or eviction.
 
+## Manual compatible npm artifact copy
+
+After explicit release, allocation and activation, the old PR's parked tree retains its ignored `node_modules`. A separate tray command may copy it into the exact former slot only when the old PR is durably Released, the new PR is Active, both worktrees remain Git-registered on their pinned commits, and both `package.json` and `package-lock.json` match. The adapter rejects tracked caches, symlink/junction payloads, existing target directories, unsupported aliases and budget overruns. Destination files are always written with create-new, never replaced. A failure retains partial copies and the original parked files for inspection; no automatic rollback or cleanup occurs. The source continues to occupy disk, so copying is not disk-efficient or guaranteed faster than package installation. Speed must be established through measured representative workloads.
+
 ## Acceptance/fault matrix before enabling reuse
 
 - Two processes concurrently release/acquire the same slot; stale-generation CAS fails.
