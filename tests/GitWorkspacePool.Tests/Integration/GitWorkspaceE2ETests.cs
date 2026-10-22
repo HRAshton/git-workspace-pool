@@ -129,6 +129,7 @@ public sealed class GitWorkspaceE2ETests
     }
 
     [Theory]
+    [Trait("Category", "FastE2E")]
     [InlineData("core.sshCommand", "never-run")]
     [InlineData("core.gitProxy", "never-run")]
     [InlineData("remote.origin.vcs", "never-run")]
