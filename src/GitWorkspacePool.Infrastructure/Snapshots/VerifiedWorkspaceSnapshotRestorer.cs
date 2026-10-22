@@ -526,7 +526,7 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
         }
     }
 
-    private static void ValidateManifestPaths(WorkspaceSnapshotManifest manifest)
+    internal static void ValidateManifestPaths(WorkspaceSnapshotManifest manifest)
     {
         // Independent staged payload paths may overlap working files, but paths
         // within one tree must never alias or put a file above another entry.

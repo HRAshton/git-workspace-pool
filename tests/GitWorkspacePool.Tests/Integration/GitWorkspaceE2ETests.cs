@@ -2177,6 +2177,110 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task Recovery_CorruptStoredStagedBlobIsUnverifiableWithoutChangingSource()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string original = Path.Combine(opened.WorkspacePath, "feature.txt");
+        File.WriteAllText(original, "staged value");
+        await fixture.GitInWorkspaceAsync("add", "feature.txt");
+        File.WriteAllText(original, "unstaged value");
+
+        WorkspaceSnapshotReceipt snapshot = await fixture.SnapshotAsync();
+        string restored = await fixture.RestoreSnapshotAsync(snapshot.SnapshotId);
+        Assert.Contains(
+            await fixture.ScanRecoveryAsync(),
+            finding => finding.Kind == WorkspaceRecoveryKind.VerifiedRecoveryWorktree
+                && finding.Path == restored
+        );
+
+        string storedStaged = Path.Combine(snapshot.Folder, "staged", "feature.txt");
+        File.WriteAllText(storedStaged, "STAGED VALUE");
+        IReadOnlyList<WorkspaceRecoveryFinding> findings = await fixture.ScanRecoveryAsync();
+        Assert.Contains(
+            findings,
+            finding => finding.Kind == WorkspaceRecoveryKind.UnverifiableRecoveryDirectory
+                && finding.Path == restored
+        );
+        Assert.DoesNotContain(
+            findings,
+            finding => finding.Kind == WorkspaceRecoveryKind.VerifiedRecoveryWorktree
+                && finding.Path == restored
+        );
+        Assert.Equal("unstaged value", File.ReadAllText(original));
+        Assert.Equal("unstaged value", File.ReadAllText(Path.Combine(restored, "feature.txt")));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task Recovery_DuplicateRecordedFilesAreUnverifiableDespiteMatchingHashes()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        File.WriteAllText(Path.Combine(opened.WorkspacePath, ".gitignore"), "generated/\n");
+        string dir = Path.Combine(opened.WorkspacePath, "generated");
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "a.bin"), "same payload");
+        File.WriteAllText(Path.Combine(dir, "b.bin"), "same payload");
+
+        WorkspaceSnapshotReceipt snapshot = await fixture.SnapshotAsync();
+        string restored = await fixture.RestoreSnapshotAsync(snapshot.SnapshotId);
+        string manifestPath = Path.Combine(snapshot.Folder, "manifest.json");
+        WorkspaceSnapshotManifest manifest = JsonSerializer.Deserialize<WorkspaceSnapshotManifest>(
+            File.ReadAllText(manifestPath)
+        )!;
+        int target = manifest.Files.FindIndex(file => file.RelativePath == "generated/b.bin");
+        Assert.True(target >= 0);
+        manifest.Files[target] = manifest.Files[target] with { RelativePath = "generated/a.bin" };
+        File.WriteAllText(manifestPath, JsonSerializer.Serialize(manifest));
+
+        IReadOnlyList<WorkspaceRecoveryFinding> findings = await fixture.ScanRecoveryAsync();
+        Assert.Contains(
+            findings,
+            finding => finding.Kind == WorkspaceRecoveryKind.UnverifiableRecoveryDirectory
+                && finding.Path == restored
+        );
+        Assert.DoesNotContain(
+            findings,
+            finding => finding.Kind == WorkspaceRecoveryKind.VerifiedRecoveryWorktree
+                && finding.Path == restored
+        );
+        Assert.Equal("same payload", File.ReadAllText(Path.Combine(dir, "a.bin")));
+        Assert.Equal("same payload", File.ReadAllText(Path.Combine(dir, "b.bin")));
+        Assert.Equal("same payload", File.ReadAllText(Path.Combine(restored, "generated", "b.bin")));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task Recovery_ManifestByteCountDriftIsUnverifiable()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string source = Path.Combine(opened.WorkspacePath, "note.local");
+        File.WriteAllText(source, "important user content");
+        WorkspaceSnapshotReceipt snapshot = await fixture.SnapshotAsync();
+        string restored = await fixture.RestoreSnapshotAsync(snapshot.SnapshotId);
+
+        string manifestPath = Path.Combine(snapshot.Folder, "manifest.json");
+        WorkspaceSnapshotManifest manifest = JsonSerializer.Deserialize<WorkspaceSnapshotManifest>(
+            File.ReadAllText(manifestPath)
+        )!;
+        int file = manifest.Files.FindIndex(item => !item.IsDirectory);
+        Assert.True(file >= 0);
+        manifest.Files[file] = manifest.Files[file] with { Length = manifest.Files[file].Length + 1 };
+        File.WriteAllText(manifestPath, JsonSerializer.Serialize(manifest));
+
+        Assert.Contains(
+            await fixture.ScanRecoveryAsync(),
+            finding => finding.Kind == WorkspaceRecoveryKind.UnverifiableRecoveryDirectory
+                && finding.Path == restored
+        );
+        Assert.Equal("important user content", File.ReadAllText(source));
+        Assert.Equal("important user content", File.ReadAllText(Path.Combine(restored, "note.local")));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task Recovery_ReducedManifestFileListIsUnverifiableWithoutChangingFiles()
     {
         using Fixture fixture = await Fixture.CreateAsync();

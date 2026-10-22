@@ -261,6 +261,7 @@ public sealed class WorkspaceRecoveryInspector : IWorkspaceRecoveryInspector
                         );
                         kind = await WorkspaceRecoveryVerifier.MatchesAsync(
                             path,
+                            record.Receipt.Folder,
                             manifest,
                             cancellationToken
                         )
@@ -451,16 +452,43 @@ public sealed class WorkspaceRecoveryInspector : IWorkspaceRecoveryInspector
             );
         }
 
-        // A record published with N payloads must not silently become a smaller
-        // manifest on a later read-only inventory pass.
+        // The same path topology rules used by restore must apply to read-only
+        // verification; a duplicate, aliased or colliding manifest must never
+        // be reported as a valid recovery just because its hashes line up.
+        VerifiedWorkspaceSnapshotRestorer.ValidateManifestPaths(manifest);
+
+        // Receipt counts are durable, independently journalled evidence.
+        // Preserve them even if the manifest is later replaced or truncated.
         int count = checked(
             1 + manifest.Files.Count(file => !file.IsDirectory)
                 + manifest.StagedFiles.Count
         );
-        if (count != record.Receipt.FileCount)
+        if (count != record.Receipt.FileCount || record.Receipt.CopiedBytes < 0)
         {
             throw new InvalidOperationException(
                 "Snapshot manifest no longer matches its journalled file count."
+            );
+        }
+
+        string index = Path.Combine(record.Receipt.Folder, "index.bin");
+        WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(index);
+        long bytes = new FileInfo(index).Length;
+        foreach (WorkspaceSnapshotFile file in manifest.Files.Concat(manifest.StagedFiles))
+        {
+            if (file.Length < 0 || file.Length > record.Receipt.CopiedBytes - bytes)
+            {
+                throw new InvalidOperationException(
+                    "Snapshot manifest exceeds its journalled byte count."
+                );
+            }
+
+            bytes += file.Length;
+        }
+
+        if (bytes != record.Receipt.CopiedBytes)
+        {
+            throw new InvalidOperationException(
+                "Snapshot manifest no longer matches its journalled byte count."
             );
         }
 

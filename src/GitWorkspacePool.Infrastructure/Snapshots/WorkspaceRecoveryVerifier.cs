@@ -16,6 +16,7 @@ internal static class WorkspaceRecoveryVerifier
 
     public static async Task<bool> MatchesAsync(
         string recoveryPath,
+        string snapshotFolder,
         WorkspaceSnapshotManifest manifest,
         CancellationToken cancellationToken
     )
@@ -57,6 +58,39 @@ internal static class WorkspaceRecoveryVerifier
         )
         {
             return false;
+        }
+
+        foreach (WorkspaceSnapshotFile file in manifest.StagedFiles)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (file is null || file.IsDirectory || file.Length < 0 || !ValidHash(file.Sha256))
+            {
+                throw new InvalidOperationException(
+                    "Saved staged snapshot evidence is invalid."
+                );
+            }
+
+            string staged = WorkspaceSnapshotPathPolicy.Resolve(
+                Path.Combine(snapshotFolder, "staged"),
+                file.RelativePath
+            );
+            if (
+                !await MatchesHashAsync(
+                    staged,
+                    file.Sha256!,
+                    file.Length,
+                    cancellationToken,
+                    bytes => checkedBytes = AddVerifiedBytes(checkedBytes, bytes)
+                )
+            )
+            {
+                // A damaged saved blob means the snapshot is not a trustworthy
+                // recovery source, even if this particular restored copy still
+                // matches its working tree.
+                throw new InvalidOperationException(
+                    "Saved staged snapshot payload is missing or damaged."
+                );
+            }
         }
 
         foreach (WorkspaceSnapshotFile file in manifest.Files)
