@@ -117,6 +117,7 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [ ] Expand to configurable artifact classes (`bin`, `obj` etc.) only after a compatibility policy and safety tests; do not execute builds.
 - [ ] Safe fallback for unsupported paths/filesystems.
 - [ ] Optional ReFS block cloning where available.
+- [x] Offer bounded read-only logical disk accounting for app-owned snapshots and isolated recovery worktrees from the tray; refuse unknown, linked or excessive filesystem entries. This inventory never authorizes cleanup, eviction or reuse.
 - [ ] Disk budget and eviction based on size, usage, and recreation cost.
 - [ ] Explicitly configured baseline branches (`main`, `master`, `release/*`) refreshed in the background, without checkout.
 

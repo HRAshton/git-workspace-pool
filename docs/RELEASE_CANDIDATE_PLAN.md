@@ -102,6 +102,8 @@ One PR may batch compatible changes in a workstream, but a failed check is repai
 
 ### M3/M4 — reuse and disk
 
+- [x] Add a bounded read-only snapshot/recovery disk inspector and tray readout of logical file bytes/count; refuse reparse points and unknown data instead of guessing reclaimable space. No workspace eviction or cleanup is enabled.
+
 - [x] Implement a bounded and deterministic, side-effect-free candidate-ranking policy that never mutates worktrees or decides ownership; prefer exact commit, then estimated artifact invalidation, tracked paths and optional observed duration.
 - [ ] Collect trusted Git/disk candidate observations and connect the policy to a transactional allocator only after M2 slot-release gates are complete. Benchmark transition time and re-rank using measured costs.
 - [ ] Explicit artifact glob policies, with safe defaults for ignored files; `node_modules`, `bin/obj` remain **best-effort** reuse only.

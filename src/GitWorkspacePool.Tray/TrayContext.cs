@@ -162,6 +162,11 @@ internal sealed class TrayContext : ApplicationContext
         recoveryMenu.DropDownOpening += async (_, _) => await PopulateRecoveryDiagnosticsAsync(recoveryMenu);
         menu.Items.Insert(3, recoveryMenu);
 
+        ToolStripMenuItem diskUsageMenu = new("Local disk usage (read-only)...");
+        diskUsageMenu.DropDownOpening += async (_, _) =>
+            await PopulateLocalDiskUsageAsync(diskUsageMenu, stateRoot);
+        menu.Items.Insert(4, diskUsageMenu);
+
         ToolStripMenuItem suspendMenu = new("Suspend active PR (keep worktree)...");
         suspendMenu.DropDownOpening += async (_, _) => await PopulateSuspensionsAsync(suspendMenu);
         menu.Items.Insert(4, suspendMenu);
@@ -382,6 +387,55 @@ internal sealed class TrayContext : ApplicationContext
         catch (Exception exception)
         {
             Notify("Recovery could not be verified", exception.Message);
+        }
+    }
+
+    private async Task PopulateLocalDiskUsageAsync(
+        ToolStripMenuItem menu,
+        string stateRoot
+    )
+    {
+        menu.DropDownItems.Clear();
+        try
+        {
+            // Enumeration can be expensive. Never freeze the Windows tray UI,
+            // follow reparse points, silently swallow scan errors or reclaim data.
+            WorkspaceLocalStorageUsage usage = await Task.Run(
+                () => new WorkspaceLocalStorageInspector(stateRoot).Inspect(_shutdown.Token),
+                _shutdown.Token
+            );
+            menu.DropDownItems.Add(new ToolStripMenuItem(
+                $"Snapshots: {usage.Snapshots.Bytes / 1048576d:F1} MiB ({usage.Snapshots.Files} files)"
+            )
+            {
+                Enabled = false,
+            });
+            menu.DropDownItems.Add(new ToolStripMenuItem(
+                $"Recovered: {usage.Recovered.Bytes / 1048576d:F1} MiB ({usage.Recovered.Files} files)"
+            )
+            {
+                Enabled = false,
+            });
+            menu.DropDownItems.Add(new ToolStripMenuItem(
+                "Read-only logical sizes; no cleanup or eviction."
+            )
+            {
+                Enabled = false,
+            });
+        }
+        catch (OperationCanceledException)
+        {
+            // Application is exiting.
+        }
+        catch (Exception exception)
+        {
+            menu.DropDownItems.Add(new ToolStripMenuItem(
+                "Disk usage unknown: " + exception.Message
+            )
+            {
+                Enabled = false,
+            });
+            Notify("Storage inventory unavailable", exception.Message);
         }
     }
 

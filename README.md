@@ -136,6 +136,10 @@ The runner saves every raw timing sample, p50/p95 (nearest rank), file count, lo
 
 **Interpretation:** A reused *empty slot* still needs a fresh Git checkout. The standalone npm baseline measures ordinary file copy, not the app's integrity-verified copying; compare it alongside, not as if the two copy implementations are identical. Git fixture timings use a fake editor. Neither benchmark proves actual browser-click-to-visible-editor latency, lifecycle-script/install equivalence, physical NTFS disk savings or a user-visible speedup. Installed Windows browser/VS Code measurements on representative projects remain a release gate.
 
+## Read-only local evidence disk usage
+
+The tray provides **Local disk usage (read-only)...** to count logical bytes and regular files held in the app's snapshot and isolated recovery directories. Inspection is bounded, runs off the UI thread and refuses links, inaccessible/unknown stores and excessive entries instead of showing a misleading zero. The readout does not inspect arbitrary repositories, authorize eviction or deletion, or promise NTFS physical allocated bytes; **automatic cleanup remains disabled**.
+
 ## Experimental workspace snapshots
 
 The tray menu provides **Snapshot active PR...** for an explicit, non-destructive snapshot. Captures include the Git index, staged blobs independently from unstaged working files, tracked changes, untracked and ignored files (including binary data), deletions and a SHA-256 manifest. Snapshots are stored under `%LOCALAPPDATA%\\GitWorkspacePool\\snapshots`. Only explicitly selected active sessions are eligible.
