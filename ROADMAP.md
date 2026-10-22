@@ -64,6 +64,8 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 
 **Gate:** every destructive transition can recover after simulated kill; unknown/user data is never silently removed.
 
+**Slot ownership design gate:** [Exclusive slot ownership and safe release](docs/SLOT_OWNERSHIP.md). The current parked sessions still reserve their original path; no cross-session reuse is allowed until a separate generation-aware lease registry is implemented and verified.
+
 ## P2 — Reusable warm pool
 
 - [x] Implement pure deterministic warm candidate ranking by exact HEAD, artifact invalidation and changed-path estimates; reject allocated, dirty, pinned, mismatched and recovery-required candidates.
