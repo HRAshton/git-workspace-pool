@@ -767,6 +767,106 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task ReleasedPR_ReopenRetainedParkingAfterSecondPrClaimsFormerSlot()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult first = await fixture.OpenAsync(PullRequestUrl);
+        WorkspaceSession original = await fixture.OwnedSessionAsync();
+        File.WriteAllText(Path.Combine(first.WorkspacePath, "feature.txt"), "staged old PR");
+        await fixture.GitInWorkspaceAsync("add", "feature.txt");
+        File.WriteAllText(Path.Combine(first.WorkspacePath, "feature.txt"), "unstaged old PR");
+        File.WriteAllText(Path.Combine(first.WorkspacePath, "private.local"), "old owner data");
+
+        string parked = await fixture.ParkAsync(original.OperationId);
+        WorkspaceSlotReleasePreparation prepared = await fixture.PrepareReleaseAsync(
+            original.OperationId
+        );
+        _ = await fixture.FinalizeReleaseAsync(prepared.PreparationId);
+        await fixture.CreatePullRequestAsync(18);
+        OpenPullRequestResult second = await fixture.OpenInReadySlotAsync(
+            "https://github.com/owner/repo/pull/18",
+            prepared.SlotId,
+            prepared.Generation
+        );
+        Assert.Equal(first.WorkspacePath, second.WorkspacePath);
+
+        int before = fixture.Editor.OpenedPaths.Count;
+        Assert.Equal(parked, await fixture.OpenRetainedReleasedAsync(original.OperationId));
+        Assert.Equal(before + 1, fixture.Editor.OpenedPaths.Count);
+        Assert.Equal(parked, fixture.Editor.OpenedPaths.Last());
+
+        Assert.Equal("unstaged old PR", File.ReadAllText(
+            Path.Combine(parked, "feature.txt")
+        ));
+        Assert.Equal("staged old PR", await fixture.ReadStagedFeatureAsync(parked));
+        Assert.Equal("old owner data", File.ReadAllText(
+            Path.Combine(parked, "private.local")
+        ));
+        Assert.Equal("feature for pr 18", File.ReadAllText(
+            Path.Combine(second.WorkspacePath, "feature.txt")
+        ));
+        Assert.False(File.Exists(Path.Combine(second.WorkspacePath, "private.local")));
+        Assert.Equal(WorkspaceSessionState.Released,
+            (await fixture.SessionAsync(original.OperationId))!.State);
+
+        // The retained worktree is editable. A user commit must not strand
+        // them: the Git registration and path still establish ownership.
+        await fixture.GitInDirectoryAsync(
+            parked, "-c", "user.name=E2E", "-c", "user.email=test@example.invalid",
+            "commit", "--allow-empty", "-m", "more work on released PR"
+        );
+        Assert.Equal(parked, await fixture.OpenRetainedReleasedAsync(original.OperationId));
+        Assert.Equal("unstaged old PR", File.ReadAllText(
+            Path.Combine(parked, "feature.txt")
+        ));
+        Assert.Equal("feature for pr 18", File.ReadAllText(
+            Path.Combine(second.WorkspacePath, "feature.txt")
+        ));
+        Assert.Equal(WorkspaceSessionState.Released,
+            (await fixture.SessionAsync(original.OperationId))!.State);
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task ReleasedPR_RetainedOpenRejectsUnreleasedAndMissingGitTree()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult first = await fixture.OpenAsync(PullRequestUrl);
+        WorkspaceSession original = await fixture.OwnedSessionAsync();
+        File.WriteAllText(Path.Combine(first.WorkspacePath, "private.local"), "preserve me");
+        string parked = await fixture.ParkAsync(original.OperationId);
+        int openedBefore = fixture.Editor.OpenedPaths.Count;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.OpenRetainedReleasedAsync(original.OperationId)
+        );
+        Assert.Equal(openedBefore, fixture.Editor.OpenedPaths.Count);
+
+        WorkspaceSlotReleasePreparation prepared = await fixture.PrepareReleaseAsync(
+            original.OperationId
+        );
+        _ = await fixture.FinalizeReleaseAsync(prepared.PreparationId);
+        string displaced = parked + "-displaced";
+        Directory.Move(parked, displaced);
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.OpenRetainedReleasedAsync(original.OperationId)
+        );
+
+        Assert.Equal(openedBefore, fixture.Editor.OpenedPaths.Count);
+        Assert.Equal("preserve me", File.ReadAllText(
+            Path.Combine(displaced, "private.local")
+        ));
+        WorkspaceSlot slot = Assert.IsType<WorkspaceSlot>(
+            await new SqliteWorkspaceSlotRegistry(fixture.DatabasePath)
+                .FindSlotAsync(prepared.SlotId, CancellationToken.None)
+        );
+        Assert.Equal(WorkspaceSlotState.Ready, slot.State);
+        Assert.Equal(WorkspaceSessionState.Released,
+            (await fixture.SessionAsync(original.OperationId))!.State);
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task WarmNpm_ExplicitCopyReusesIgnoredDependenciesAndPreservesFormerPr()
     {
         using Fixture fixture = await Fixture.CreateAsync();
@@ -3566,6 +3666,18 @@ public sealed class GitWorkspaceE2ETests
                 new WorkspaceDirectories()
             );
             return await service.SuspendAsync(operationId, CancellationToken.None);
+        }
+
+        public Task<string> OpenRetainedReleasedAsync(Guid sessionId)
+        {
+            SqliteWorkspaceSessionJournal journal = new(DatabasePath);
+            OpenReleasedParkedWorkspaceService service = new(
+                journal,
+                new FileWorkspaceOperationLock(Path.Combine(_root, "state", "locks")),
+                new GitWorkspaceParkingOperations(new GitCliWorkspaceGit()),
+                Editor
+            );
+            return service.OpenAsync(sessionId, CancellationToken.None);
         }
 
         public Task<WorkspaceSlotReleasePreparation> PrepareReleaseAsync(Guid operationId)
