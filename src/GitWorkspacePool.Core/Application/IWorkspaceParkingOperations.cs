@@ -11,6 +11,12 @@ public interface IWorkspaceParkingOperations
     /// <summary>Validates the destination's parent and creates only the parking root.</summary>
     void PrepareParkingDirectory(string original, string destination);
 
+    /// <summary>
+    /// Read-only path ancestry check for source clone, original slot and parked worktree.
+    /// Fails closed on reparse points. Does not create any directories.
+    /// </summary>
+    void EnsureReleasePathsSafe(string repository, string original, string parked);
+
     /// <summary>Queries actual linked-worktree Git registration.</summary>
     Task<bool> IsRegisteredAsync(string repository, string path, CancellationToken cancellationToken);
 

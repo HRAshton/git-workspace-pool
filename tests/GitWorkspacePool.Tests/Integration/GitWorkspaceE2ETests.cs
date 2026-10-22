@@ -2,7 +2,9 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
 using GitWorkspacePool.Core.Application;
+using GitWorkspacePool.Core.Application.WarmPool;
 using GitWorkspacePool.Core.Domain;
+using GitWorkspacePool.Core.Domain.WarmPool;
 using GitWorkspacePool.Core.Protocol;
 using GitWorkspacePool.Infrastructure;
 using GitWorkspacePool.Infrastructure.Snapshots;
@@ -528,6 +530,122 @@ public sealed class GitWorkspaceE2ETests
         );
         Assert.Null((await fixture.SessionAsync(session.OperationId))!.ParkingPath);
         Assert.True(await fixture.IsRegisteredWorktreeAsync(opened.WorkspacePath));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task ReleasePreflight_RejectsActiveAndApprovesOnlyVerifiedParkedOwner()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        WorkspaceSession owner = await fixture.OwnedSessionAsync();
+        File.WriteAllText(Path.Combine(opened.WorkspacePath, "notes.local"), "keep this");
+
+        WorkspaceReleaseAssessment active = await fixture.AssessReleaseAsync(owner.OperationId);
+        Assert.False(active.CanBeginRelease);
+        Assert.Equal(WorkspaceReleaseBlocker.SessionNotParked, active.Blocker);
+        Assert.NotNull(active.SlotId);
+        Assert.Equal(0L, active.Generation);
+
+        string parked = await fixture.ParkAsync(owner.OperationId);
+        WorkspaceReleaseAssessment eligible = await fixture.AssessReleaseAsync(owner.OperationId);
+        Assert.True(eligible.CanBeginRelease);
+        Assert.Equal(active.SlotId, eligible.SlotId);
+        Assert.Equal(active.Generation, eligible.Generation);
+        Assert.Equal("keep this", File.ReadAllText(Path.Combine(parked, "notes.local")));
+
+        // Assessment never commits Ready, removes ownership, or deletes anything.
+        WorkspaceSlot protectedSlot = Assert.IsType<WorkspaceSlot>(
+            await new SqliteWorkspaceSlotRegistry(fixture.DatabasePath).FindHeldSlotAsync(
+                owner.OperationId, CancellationToken.None
+            )
+        );
+        Assert.Equal(WorkspaceSlotState.Protected, protectedSlot.State);
+        Assert.True(await fixture.IsRegisteredWorktreeAsync(parked));
+
+        string returned = await fixture.UnparkAsync(owner.OperationId);
+        Assert.Equal(opened.WorkspacePath, returned);
+        Assert.Equal(
+            WorkspaceReleaseBlocker.SessionNotParked,
+            (await fixture.AssessReleaseAsync(owner.OperationId)).Blocker
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task ReleasePreflight_FailsClosedOnOccupiedOriginalOrMissingParkedPath()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        _ = await fixture.OpenAsync(PullRequestUrl);
+        WorkspaceSession owner = await fixture.OwnedSessionAsync();
+        string parked = await fixture.ParkAsync(owner.OperationId);
+
+        Directory.CreateDirectory(owner.WorkspacePath);
+        File.WriteAllText(Path.Combine(owner.WorkspacePath, "foreign.txt"), "not pool-owned");
+        Assert.Equal(
+            WorkspaceReleaseBlocker.OriginalPathOccupied,
+            (await fixture.AssessReleaseAsync(owner.OperationId)).Blocker
+        );
+        Assert.Equal("not pool-owned", File.ReadAllText(
+            Path.Combine(owner.WorkspacePath, "foreign.txt")
+        ));
+        Directory.Delete(owner.WorkspacePath, recursive: true);
+
+        string retained = Path.Combine(parked, "retained.txt");
+        File.WriteAllText(retained, "keep");
+        string temporarilyMoved = parked + "-inspection";
+        Directory.Move(parked, temporarilyMoved);
+
+        try
+        {
+            Assert.Equal(
+                WorkspaceReleaseBlocker.ParkedWorktreeMissing,
+                (await fixture.AssessReleaseAsync(owner.OperationId)).Blocker
+            );
+        }
+        finally
+        {
+            Directory.Move(temporarilyMoved, parked);
+        }
+
+        Assert.Equal("keep", File.ReadAllText(retained));
+        Assert.True((await fixture.AssessReleaseAsync(owner.OperationId)).CanBeginRelease);
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task ReleasePreflight_RefusesUnprotectedOrUnknownLeaseState()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        _ = await fixture.OpenAsync(PullRequestUrl);
+        WorkspaceSession owner = await fixture.OwnedSessionAsync();
+        _ = await fixture.ParkAsync(owner.OperationId);
+
+        Assert.Equal(
+            WorkspaceReleaseBlocker.UnknownSession,
+            (await fixture.AssessReleaseAsync(Guid.NewGuid())).Blocker
+        );
+
+        SqliteWorkspaceSlotRegistry registry = new(fixture.DatabasePath);
+        WorkspaceSlot protectedSlot = Assert.IsType<WorkspaceSlot>(
+            await registry.FindHeldSlotAsync(owner.OperationId, CancellationToken.None)
+        );
+
+        // Simulates a corrupted/inappropriately marked Ready slot, not a production release.
+        using Microsoft.Data.Sqlite.SqliteConnection connection = new(
+            $"Data Source={fixture.DatabasePath};Pooling=False"
+        );
+        connection.Open();
+        using Microsoft.Data.Sqlite.SqliteCommand command = connection.CreateCommand();
+        command.CommandText = "UPDATE workspace_slots SET state = 'Ready' WHERE slot_id = $id";
+        command.Parameters.AddWithValue("$id", protectedSlot.SlotId.ToString("N"));
+        Assert.Equal(1, command.ExecuteNonQuery());
+
+        Assert.Equal(
+            WorkspaceReleaseBlocker.SlotNotProtected,
+            (await fixture.AssessReleaseAsync(owner.OperationId)).Blocker
+        );
+        Assert.Equal(WorkspaceSessionState.Parked, (await fixture.SessionAsync(owner.OperationId))!.State);
     }
 
     [Fact]
@@ -1492,6 +1610,18 @@ public sealed class GitWorkspaceE2ETests
                 new WorkspaceDirectories()
             );
             return await service.SuspendAsync(operationId, CancellationToken.None);
+        }
+
+        public Task<WorkspaceReleaseAssessment> AssessReleaseAsync(Guid operationId)
+        {
+            SqliteWorkspaceSessionJournal journal = new(DatabasePath);
+            AssessWorkspaceReleaseService inspector = new(
+                journal,
+                new SqliteWorkspaceSlotRegistry(DatabasePath),
+                new FileWorkspaceOperationLock(Path.Combine(_root, "state", "locks")),
+                new GitWorkspaceParkingOperations(new GitCliWorkspaceGit())
+            );
+            return inspector.AssessAsync(operationId, CancellationToken.None);
         }
 
         public Task<string> ParkAsync(

@@ -63,6 +63,14 @@ public sealed class GitWorkspaceParkingOperations : IWorkspaceParkingOperations
     }
 
     /// <inheritdoc/>
+    public void EnsureReleasePathsSafe(string repository, string original, string parked)
+    {
+        CheckAncestors(Path.GetFullPath(repository));
+        CheckAncestors(Path.GetFullPath(original));
+        CheckAncestors(Path.GetFullPath(parked));
+    }
+
+    /// <inheritdoc/>
     public Task<bool> IsRegisteredAsync(
         string repository,
         string path,

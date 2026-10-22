@@ -61,6 +61,19 @@ workspace-path rule.
 - The legacy `sessions.workspace_path` uniqueness and parked-path reservations stay in place. The transaction-based cross-session path overlap checks remain enforced by the existing session journal.
 - Neither migration nor reservation touches the filesystem, runs Git, frees disk, performs a checkout or modifies an active PR.
 
+## Read-only pre-release assessment
+
+`AssessWorkspaceReleaseService` is a non-mutating, locked eligibility check for an explicit
+future release. It reads the SQLite Held lease and Protected slot, verifies the session
+is fully Parked, checks immutable repository/source/path identity, rejects reparse-point
+ancestors and occupied original paths, confirms Git does **not** register the original
+slot but **does** register the preserved parked tree, and validates the parked HEAD.
+
+The result contains a precise blocker or an advisory `CanBeginRelease` flag and observed
+slot generation. It makes **no Ready transition**, does not release any lease, and cannot
+be used as a checkout permission. The eventual write transaction must revalidate every
+condition under the same lock immediately before changing the generation.
+
 ## Required invariants
 
 1. **One mutator per slot:** a successful lease reservation atomically advances the slot's
