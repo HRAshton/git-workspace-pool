@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using GitWorkspacePool.Core.Application;
+using GitWorkspacePool.Core.Application.WarmPool;
 using GitWorkspacePool.Core.Domain;
 using GitWorkspacePool.Infrastructure.Snapshots;
 using Xunit;
@@ -36,6 +37,18 @@ public sealed class SubprocessCrashTests
         string signalRoot
     ) => KillAtNamedCheckpointAsync(
         operation, database, id, storageRoot, checkpoint.ToString(), signalRoot
+    );
+
+    /// <summary>Terminates a real release/Ready-slot process after its durable boundary.</summary>
+    public static Task<string> KillAtSlotHandoffCheckpointAsync(
+        string operation,
+        string database,
+        Guid id,
+        string prUrlOrStorageRoot,
+        WorkspaceSlotHandoffCheckpoint checkpoint,
+        string signalRoot
+    ) => KillAtNamedCheckpointAsync(
+        operation, database, id, prUrlOrStorageRoot, checkpoint.ToString(), signalRoot
     );
 
     private static async Task<string> KillAtNamedCheckpointAsync(

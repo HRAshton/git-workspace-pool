@@ -35,6 +35,9 @@ jobs:
         run: dotnet test tests/GitWorkspacePool.Tests/GitWorkspacePool.Tests.csproj --configuration Release --no-build --no-restore --filter "Category!=FastE2E&Category!=SlowE2E"
       - name: Fast offline Git E2E
         run: dotnet test tests/GitWorkspacePool.Tests/GitWorkspacePool.Tests.csproj --configuration Release --no-build --no-restore --filter "Category=FastE2E"
+      - name: Slot handoff real-process crash E2E
+        if: github.event_name == 'pull_request'
+        run: dotnet test tests/GitWorkspacePool.Tests/GitWorkspacePool.Tests.csproj --configuration Release --no-build --no-restore --filter "FullyQualifiedName~Release_RealProcessKillAtBothDurableBoundariesNeverLosesParkedUserWork|FullyQualifiedName~ReadySlot_RealProcessKillAtEachBoundaryPreservesBothOwners"
       - name: Crash-resilience E2E (manual)
         if: github.event_name == 'workflow_dispatch'
         run: dotnet test tests/GitWorkspacePool.Tests/GitWorkspacePool.Tests.csproj --configuration Release --no-build --no-restore --filter "Category=SlowE2E"

@@ -58,7 +58,8 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [x] Reject ordinary PR reopen and legacy ActivateAsync for a Reserved slot: only a verified generation-CAS activation may transfer the owner from Preparing to Active. Fast E2E proves no files or leases are silently changed after interruption.
 - [x] Inventory interrupted Reserved/Preparing allocations read-only in recovery diagnostics and warn in the tray at startup; show slot/generation/owner and require explicit recovery. No auto repair or deletion.
 - [x] Expose explicit parked-PR release, cancellation of pending release, and Ready-slot candidate selection in the Windows tray. Recheck trusted GitHub origin and slot generation before the fresh checkout; require separate user confirmations. Real-Git E2E covers selected-slot opening, retained parked data, refused PRs and stale selection.
-- [ ] Prove process-kill allocator transitions and true artifact-preserving warm-reuse benchmarks before considering automatic recycling.
+- [x] Add six real subprocess-kill handoff checkpoints across release preparation/commit and cross-PR reservation/HEAD pin/Git checkout/activation. Restore persisted state from a fresh process, prove original parked files and published snapshots survive, refuse incomplete checkouts and manually reconcile a proven clean checkout. The focused kill suite is a required PR CI step.
+- [ ] Measure actual artifact-preserving warm reuse and Time to Editor against a cold checkout; process kills alone do not authorize automatic recycling.
 - [x] Implement explicit non-destructive snapshot export for staged/unstaged, untracked, ignored and binary files, with independent staged blobs and a Git index.
 - [x] Restore a journalled snapshot into a separate Git worktree on the saved commit; verify index, working tree files and exact Git status.
 - [x] Reject corrupted payloads and manifest path traversal before allocating a recovery worktree.
@@ -113,7 +114,7 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 
 - GitHub Actions runs use concurrency grouping by workflow and branch, cancelling superseded runs.
 - Markdown-only pushes and PR changes skip the expensive Windows test workflow.
-- Real subprocess-kill crash E2E run only on manual `workflow_dispatch` (and release validation), not on every push; the fast lane retains local Git/session/recovery tests.
+- Focused six-boundary release/slot handoff real subprocess-kill E2E runs on each PR; the larger snapshot/parking crash suite remains manual under `workflow_dispatch` (and release validation). No duplicate CI is triggered on squash commits to `main`.
 - The subprocess checkpoint signal reader retries Windows sharing violations, eliminating a race when the signal filename appears before its writer closes.
 - Prefer complete, meaningful code batches over many tiny `main` pushes.
 
