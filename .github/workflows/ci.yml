@@ -41,3 +41,19 @@ jobs:
       - name: Crash-resilience E2E (manual)
         if: github.event_name == 'workflow_dispatch'
         run: dotnet test tests/GitWorkspacePool.Tests/GitWorkspacePool.Tests.csproj --configuration Release --no-build --no-restore --filter "Category=SlowE2E"
+      - name: Publish and smoke Windows preview ZIP
+        if: github.event_name == 'pull_request'
+        run: |
+          $output = Join-Path $env:RUNNER_TEMP "gwp-preview-package"
+          & ./scripts/Build-WindowsPackage.ps1 -OutputDirectory $output
+          & ./scripts/Test-WindowsPackage.ps1 -PackagePath (Join-Path $output "GitWorkspacePool-win-x64-preview.zip") -TestRoot (Join-Path $env:RUNNER_TEMP "gwp-preview-smoke")
+      - name: Attach verified Windows preview ZIP
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: GitWorkspacePool-win-x64-preview
+          path: |
+            ${{ runner.temp }}/gwp-preview-package/GitWorkspacePool-win-x64-preview.zip
+            ${{ runner.temp }}/gwp-preview-package/GitWorkspacePool-win-x64-preview.zip.sha256
+          if-no-files-found: error
+          retention-days: 14

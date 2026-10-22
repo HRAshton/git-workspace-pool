@@ -6,6 +6,27 @@ A Windows tray application that opens GitHub pull requests in local VS Code work
 
 Early MVP. The initial vertical slice uses explicitly configured local repositories and creates or reopens a dedicated worktree per PR. New workspaces are reserved in a local SQLite journal before checkout and Git commit identity is pinned for safe recovery. It does **not** compile projects, install packages, recycle occupied worktrees, or delete user files.
 
+## Windows preview ZIP (no .NET SDK required)
+
+A PR Windows CI run produces a **self-contained, unsigned win-x64 preview ZIP** as a downloadable workflow artifact, plus a SHA-256 checksum. The installer only uses the current user's profile and does not need administrator rights.
+
+1. Download the `GitWorkspacePool-win-x64-preview` artifact from a successful PR workflow run. Verify `GitWorkspacePool-win-x64-preview.zip` using the adjacent `.sha256` file and PowerShell `Get-FileHash -Algorithm SHA256`.
+2. Extract the ZIP to a temporary folder. Review and run `.\Install-PerUser.ps1` from that folder. The installer copies the app into `%LOCALAPPDATA%\Programs\GitWorkspacePool\versions\<exe-hash>`, runs a no-UI startup smoke test, then registers the **current-user** `prworkspace:` protocol. It never starts the tray automatically.
+3. Start the installed `GitWorkspacePool.Tray.exe` printed by the installer. It creates (if absent) `%APPDATA%\GitWorkspacePool\settings.json`; configure the trusted repository root there. Install the included `git-workspace-pool.user.js` into Tampermonkey. Git and VS Code must be installed and on the appropriate PATH.
+4. When upgrading, **exit the old tray** before running the new ZIP's installer, then start the new path. The old version directory and all data stay in place for rollback. The new startup performs the existing conservative SQLite journal migration. Do not restore a newer SQLite journal with an older application without a backup.
+5. To disable the protocol registration, run `.\Unregister-PerUser.ps1` from the extracted package, using the matching `-InstallRoot` if customized. It refuses to unregister a handler outside the install root and **does not delete installed binaries, user settings, snapshots, parked worktrees, or any other data**. Remove unused versioned binaries manually only after verifying backups and that the tray is not running.
+
+**Distribution limitations:** The preview ZIP is unsigned and not an MSI/MSIX installer. Windows SmartScreen may flag unsigned executables. The automated packaging smoke test proves only that the self-contained executable launches, the upgrade-safe files can be staged twice, and existing files remain untouched. It does **not** run an actual Windows tray UI, browser userscript, protocol round-trip, VS Code, or AV/ACL/power-loss testing. CI artifacts are temporary and are not signed GitHub Release downloads.
+
+For maintainers, the same package can be built with:
+
+```powershell
+.\scripts\Build-WindowsPackage.ps1 -OutputDirectory .\artifacts\preview-2026-10-22
+.\scripts\Test-WindowsPackage.ps1 -PackagePath .\artifacts\preview-2026-10-22\GitWorkspacePool-win-x64-preview.zip -TestRoot .\artifacts\isolated-install-smoke
+```
+
+Both output and isolated smoke directories must be new. The smoke's `-SkipProtocolRegistration` path never changes HKCU registry associations.
+
 ## Getting started (Windows, .NET 10 SDK)
 
 1. Build the solution: `dotnet build GitWorkspacePool.slnx`.
