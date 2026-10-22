@@ -8,7 +8,7 @@ namespace GitWorkspacePool.Infrastructure;
 /// Transactional slot compare-and-swap. Slot readiness must be established by a
 /// separate, not-yet-enabled verified release workflow.
 /// </summary>
-public sealed class SqliteWorkspaceSlotRegistry : IWorkspaceSlotRegistry
+public sealed class SqliteWorkspaceSlotRegistry : IWorkspaceSlotRegistry, IWorkspaceSlotOwnershipAuditor
 {
     private readonly string _connectionString;
 
@@ -66,6 +66,7 @@ public sealed class SqliteWorkspaceSlotRegistry : IWorkspaceSlotRegistry
               FROM workspace_slots AS slots
               JOIN workspace_slot_leases AS leases ON leases.slot_id = slots.slot_id
              WHERE leases.session_id = $session AND leases.state = 'Held'
+               AND leases.generation = slots.generation
             """;
         command.Parameters.AddWithValue("$session", sessionId.ToString("D"));
 
@@ -149,6 +150,102 @@ public sealed class SqliteWorkspaceSlotRegistry : IWorkspaceSlotRegistry
         insert.ExecuteNonQuery();
         transaction.Commit();
         return Task.FromResult<WorkspaceSlotLease?>(lease);
+    }
+
+    /// <inheritdoc/>
+    public Task<IReadOnlyList<WorkspaceSlotIntegrityFinding>> AuditAsync(
+        CancellationToken cancellationToken
+    )
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using SqliteConnection connection = Open();
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT slots.slot_id, slots.workspace_path, slots.state,
+                   slots.generation, slots.repository_key, slots.source_path,
+                   leases.session_id, leases.generation,
+                   owners.repository_key, owners.source_path, owners.workspace_path
+              FROM workspace_slots AS slots
+              LEFT JOIN workspace_slot_leases AS leases
+                ON leases.slot_id = slots.slot_id AND leases.state = 'Held'
+              LEFT JOIN sessions AS owners
+                ON owners.operation_id = leases.session_id
+             ORDER BY slots.rowid
+             LIMIT 10001
+            """;
+
+        List<WorkspaceSlotIntegrityFinding> findings = [];
+        using SqliteDataReader reader = command.ExecuteReader();
+        int count = 0;
+
+        while (reader.Read())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (++count > 10000)
+            {
+                throw new InvalidOperationException(
+                    "The slot ownership inventory exceeds the safe inspection limit."
+                );
+            }
+
+            Guid slotId = Guid.Parse(reader.GetString(0));
+            string path = reader.GetString(1);
+            WorkspaceSlotState state = Enum.Parse<WorkspaceSlotState>(
+                reader.GetString(2), ignoreCase: false
+            );
+            long generation = reader.GetInt64(3);
+            bool hasLease = !reader.IsDBNull(6);
+            Guid? sessionId = hasLease ? Guid.Parse(reader.GetString(6)) : null;
+
+            void Report(WorkspaceSlotIntegrityIssue issue) =>
+                findings.Add(new WorkspaceSlotIntegrityFinding(slotId, path, issue, sessionId));
+
+            if (state == WorkspaceSlotState.Protected && !hasLease)
+            {
+                Report(WorkspaceSlotIntegrityIssue.ProtectedLeaseMissing);
+            }
+            else if (state == WorkspaceSlotState.Ready && hasLease)
+            {
+                Report(WorkspaceSlotIntegrityIssue.ReadyWithHeldLease);
+            }
+            else if (state == WorkspaceSlotState.Reserved && !hasLease)
+            {
+                Report(WorkspaceSlotIntegrityIssue.ReservedLeaseMissing);
+            }
+
+            if (!hasLease)
+            {
+                continue;
+            }
+
+            if (reader.GetInt64(7) != generation)
+            {
+                Report(WorkspaceSlotIntegrityIssue.LeaseGenerationMismatch);
+            }
+
+            StringComparison paths = OperatingSystem.IsWindows()
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal;
+
+            if (
+                reader.IsDBNull(8)
+                || !reader.GetString(4).Equals(
+                    reader.GetString(8), StringComparison.OrdinalIgnoreCase
+                )
+                || !Path.GetFullPath(reader.GetString(5)).Equals(
+                    Path.GetFullPath(reader.GetString(9)), paths
+                )
+                || !Path.GetFullPath(path).Equals(
+                    Path.GetFullPath(reader.GetString(10)), paths
+                )
+            )
+            {
+                Report(WorkspaceSlotIntegrityIssue.LeaseOwnerMismatch);
+            }
+        }
+
+        return Task.FromResult<IReadOnlyList<WorkspaceSlotIntegrityFinding>>(findings);
     }
 
     private static WorkspaceSlot ReadSlot(SqliteDataReader reader) => new(

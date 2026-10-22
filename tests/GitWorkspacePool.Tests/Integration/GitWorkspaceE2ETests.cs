@@ -650,6 +650,42 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task SlotAudit_RecoveryDiagnosticsFlagsConflictingLeaseWithoutMovingUserData()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string userFile = Path.Combine(opened.WorkspacePath, "notes.local");
+        File.WriteAllText(userFile, "preserve");
+
+        using Microsoft.Data.Sqlite.SqliteConnection db = new(
+            $"Data Source={fixture.DatabasePath};Pooling=False"
+        );
+        db.Open();
+        using Microsoft.Data.Sqlite.SqliteCommand update = db.CreateCommand();
+        update.CommandText = """
+            UPDATE workspace_slot_leases
+               SET generation = generation + 1
+             WHERE state = 'Held'
+            """;
+        Assert.Equal(1, update.ExecuteNonQuery());
+
+        IReadOnlyList<WorkspaceRecoveryFinding> findings = await fixture.ScanRecoveryAsync();
+        Assert.Contains(
+            findings,
+            finding => finding.Kind == WorkspaceRecoveryKind.SlotOwnershipInconsistent
+                && finding.Description.Contains("LeaseGenerationMismatch")
+        );
+
+        Assert.Equal(
+            WorkspaceReleaseBlocker.MissingLease,
+            (await fixture.AssessReleaseAsync((await fixture.OwnedSessionAsync()).OperationId)).Blocker
+        );
+        Assert.Equal("preserve", File.ReadAllText(userFile));
+        Assert.True(await fixture.IsRegisteredWorktreeAsync(opened.WorkspacePath));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task Parking_UnparkRefusesOccupiedDestinationWithoutChangingEitherTree()
     {
         using Fixture fixture = await Fixture.CreateAsync();
@@ -1581,7 +1617,8 @@ public sealed class GitWorkspaceE2ETests
                 SnapshotRoot,
                 RecoveryRoot,
                 sessions,
-                new GitCliWorkspaceGit()
+                new GitCliWorkspaceGit(),
+                new SqliteWorkspaceSlotRegistry(DatabasePath)
             );
             return inspector.ScanAsync(CancellationToken.None);
         }

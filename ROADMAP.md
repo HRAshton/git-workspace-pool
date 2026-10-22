@@ -48,6 +48,7 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [x] Prevent nested and cross-column SQLite path ownership conflicts between active workspaces and reserved parked trees.
 - [x] Detect Git submodule index entries before worktree relocation and refuse unsupported moves without changing session state.
 - [x] Implement read-only, lock-scoped release eligibility assessment: require Parked state, Protected Held lease, exact Git registration and safe path ancestry; validate on real local Git.
+- [x] Add bounded, read-only audit of protected/ready/reserved slot leases, owner identity and generation mismatches; expose conflicts through tray recovery diagnostics.
 - [ ] Safe release and recycling after relocation safety gates.
 - [x] Implement explicit non-destructive snapshot export for staged/unstaged, untracked, ignored and binary files, with independent staged blobs and a Git index.
 - [x] Restore a journalled snapshot into a separate Git worktree on the saved commit; verify index, working tree files and exact Git status.

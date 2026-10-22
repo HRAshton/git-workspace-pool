@@ -1,4 +1,6 @@
 using GitWorkspacePool.Core.Application;
+using GitWorkspacePool.Core.Domain.WarmPool;
+using GitWorkspacePool.Core.Application.WarmPool;
 using GitWorkspacePool.Core.Domain;
 
 namespace GitWorkspacePool.Infrastructure.Snapshots;
@@ -14,6 +16,7 @@ public sealed class WorkspaceRecoveryInspector : IWorkspaceRecoveryInspector
     private readonly string _recoveryRoot;
     private readonly IWorkspaceRecoveryJournal _journal;
     private readonly IWorkspaceGit _git;
+    private readonly IWorkspaceSlotOwnershipAuditor? _slotAudit;
     private readonly StringComparer _paths = OperatingSystem.IsWindows()
         ? StringComparer.OrdinalIgnoreCase
         : StringComparer.Ordinal;
@@ -25,13 +28,15 @@ public sealed class WorkspaceRecoveryInspector : IWorkspaceRecoveryInspector
         string snapshotRoot,
         string recoveryRoot,
         IWorkspaceRecoveryJournal journal,
-        IWorkspaceGit git
+        IWorkspaceGit git,
+        IWorkspaceSlotOwnershipAuditor? slotAudit = null
     )
     {
         _snapshotRoot = Path.GetFullPath(snapshotRoot);
         _recoveryRoot = Path.GetFullPath(recoveryRoot);
         _journal = journal;
         _git = git;
+        _slotAudit = slotAudit;
     }
 
     /// <inheritdoc/>
@@ -321,6 +326,22 @@ public sealed class WorkspaceRecoveryInspector : IWorkspaceRecoveryInspector
             )
             {
                 Add(findings, WorkspaceRecoveryKind.UnverifiableParkedWorktree, location, null);
+            }
+        }
+
+        if (_slotAudit is not null)
+        {
+            IReadOnlyList<WorkspaceSlotIntegrityFinding> slotIssues =
+                await _slotAudit.AuditAsync(cancellationToken);
+
+            foreach (WorkspaceSlotIntegrityFinding issue in slotIssues)
+            {
+                findings.Add(new WorkspaceRecoveryFinding(
+                    WorkspaceRecoveryKind.SlotOwnershipInconsistent,
+                    issue.WorkspacePath,
+                    null,
+                    "Slot " + issue.SlotId.ToString("N") + ": " + issue.Issue
+                ));
             }
         }
 

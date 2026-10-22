@@ -49,6 +49,9 @@ public enum WorkspaceRecoveryKind
 
     /// <summary>The Git identity of a parked worktree could not be inspected.</summary>
     UnverifiableParkedWorktree,
+
+    /// <summary>SQLite slot/lease ownership contradicts itself; no reuse is permitted.</summary>
+    SlotOwnershipInconsistent,
 }
 
 /// <summary>

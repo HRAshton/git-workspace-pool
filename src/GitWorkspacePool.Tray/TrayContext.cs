@@ -84,7 +84,8 @@ internal sealed class TrayContext : ApplicationContext
             Path.Combine(stateRoot, "snapshots"),
             Path.Combine(stateRoot, "recovered"),
             journal,
-            git
+            git,
+            new SqliteWorkspaceSlotRegistry(Path.Combine(stateRoot, "sessions.db"))
         );
         WorkspaceAcquisitionService acquisition = new(
             git,

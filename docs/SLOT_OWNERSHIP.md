@@ -74,6 +74,18 @@ slot generation. It makes **no Ready transition**, does not release any lease, a
 be used as a checkout permission. The eventual write transaction must revalidate every
 condition under the same lock immediately before changing the generation.
 
+## Read-only slot/lease integrity audit
+
+The SQLite slot registry now exposes a bounded, read-only scan for malformed ownership:
+Protected without a Held lease, Ready with a Held lease, Reserved without a lease,
+a stale lease generation and disagreement between lease owner's repository/source/path
+and the slot. Tray recovery diagnostics surfaces these as `SlotOwnershipInconsistent`.
+The release preflight also requires the Held lease generation to match the slot generation
+before recognizing ownership; a stale lease fails closed.
+The audit is a diagnostic, **never** a permission to mark slots Ready, delete, or repair
+a worktree automatically. Deliberately corrupted SQLite test fixtures demonstrate the
+detector refuses to silently treat conflicting records as available.
+
 ## Required invariants
 
 1. **One mutator per slot:** a successful lease reservation atomically advances the slot's

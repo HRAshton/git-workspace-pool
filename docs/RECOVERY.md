@@ -28,6 +28,7 @@ The recovery scanner does not recursively inspect arbitrary user directories. It
 | `InterruptedUnparking` | A return move has an intent but no committed completion. | Use Unpark only when the original destination is unoccupied. |
 | `MissingParkedWorktree` | A parked worktree is missing or not registered by Git. | Investigate the original clone; never delete its journal entry. |
 | `UnverifiableParkedWorktree` | Git registration for a parked worktree could not be confirmed. | Leave all paths intact and check source clone availability. |
+| `SlotOwnershipInconsistent` | Protected/Ready/Reserved slot state disagrees with its exclusive lease, generation or PR owner. | Stop release/recycling attempts; preserve SQLite and all worktree files for inspection. |
 | `UnregisteredRecoveryDirectory` | A recovery directory exists without a corresponding Git worktree registration. | Inspect manually. Do not assume partial checkout means it is safe to delete. |
 | `UnverifiableRecoveryDirectory` | Git could not establish registration. | Check the original clone is accessible and retry diagnostics; preserve data. |
 | `UnknownEntry` | Unexpected name/file or a directory whose owner cannot be proven. | Do not delete; inspect ownership. |

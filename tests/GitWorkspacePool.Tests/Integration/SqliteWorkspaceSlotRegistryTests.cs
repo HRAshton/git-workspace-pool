@@ -147,6 +147,70 @@ public sealed class SqliteWorkspaceSlotRegistryTests
     }
 
     [Fact]
+    public async Task SlotAudit_IsEmptyForNewlyProtectedSession()
+    {
+        using Fixture fixture = new();
+        SqliteWorkspaceSessionJournal journal = new(fixture.DatabasePath);
+        _ = await fixture.ReserveAsync(journal);
+        SqliteWorkspaceSlotRegistry registry = new(fixture.DatabasePath);
+
+        Assert.Empty(await registry.AuditAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task SlotAudit_DetectsReadySlotWithHeldLease()
+    {
+        using Fixture fixture = new();
+        SqliteWorkspaceSessionJournal journal = new(fixture.DatabasePath);
+        WorkspaceSession session = await fixture.ReserveAsync(journal);
+        SqliteWorkspaceSlotRegistry registry = new(fixture.DatabasePath);
+
+        using SqliteConnection connection = fixture.Open();
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE workspace_slots SET state = 'Ready'
+             WHERE workspace_path = $path
+            """;
+        command.Parameters.AddWithValue("$path", session.WorkspacePath);
+        Assert.Equal(1, command.ExecuteNonQuery());
+
+        WorkspaceSlotIntegrityFinding issue = Assert.Single(
+            await registry.AuditAsync(CancellationToken.None)
+        );
+        Assert.Equal(WorkspaceSlotIntegrityIssue.ReadyWithHeldLease, issue.Issue);
+        Assert.Equal(session.OperationId, issue.SessionId);
+    }
+
+    [Fact]
+    public async Task SlotAudit_DetectsMissingLeaseAndGenerationMismatch()
+    {
+        using Fixture fixture = new();
+        SqliteWorkspaceSessionJournal journal = new(fixture.DatabasePath);
+        _ = await fixture.ReserveAsync(journal);
+        SqliteWorkspaceSlotRegistry registry = new(fixture.DatabasePath);
+
+        using SqliteConnection connection = fixture.Open();
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE workspace_slot_leases
+               SET generation = generation + 1
+             WHERE state = 'Held'
+            """;
+        Assert.Equal(1, command.ExecuteNonQuery());
+        Assert.Contains(
+            await registry.AuditAsync(CancellationToken.None),
+            issue => issue.Issue == WorkspaceSlotIntegrityIssue.LeaseGenerationMismatch
+        );
+
+        command.CommandText = "DELETE FROM workspace_slot_leases WHERE state = 'Held'";
+        Assert.Equal(1, command.ExecuteNonQuery());
+        Assert.Equal(
+            WorkspaceSlotIntegrityIssue.ProtectedLeaseMissing,
+            Assert.Single(await registry.AuditAsync(CancellationToken.None)).Issue
+        );
+    }
+
+    [Fact]
     public async Task ReadySlotCompareAndSwap_GrantsExactlyOneGenerationLease()
     {
         using Fixture fixture = new();
