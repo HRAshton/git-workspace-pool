@@ -130,7 +130,7 @@ internal sealed class TrayContext : ApplicationContext
             journal, locks, new GitWorkspaceParkingOperations(git), editor
         );
         _open = new OpenPullRequestHandler(
-            repositories, originVerifier, acquisition, editor
+            repositories, originVerifier, acquisition, editor, journal, _openRetained
         );
         _openInReadySlot = new OpenPullRequestInReadySlotHandler(
             repositories,
