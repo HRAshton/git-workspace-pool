@@ -2727,6 +2727,49 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task Restore_RejectsInterveningTrackedCheckoutEditsWithoutOverwriting()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string sourceReadme = Path.Combine(opened.WorkspacePath, "README.md");
+        string sourceFeature = Path.Combine(opened.WorkspacePath, "feature.txt");
+        File.WriteAllText(sourceReadme, "saved readme");
+        File.WriteAllText(sourceFeature, "saved feature");
+        WorkspaceSnapshotReceipt receipt = await fixture.SnapshotAsync();
+
+        string? competingFile = null;
+        ISnapshotCopyProgressSink competingEditor = new MutateCopyOnce(
+            SnapshotCopyPhase.RestoreWorkingFile,
+            () =>
+            {
+                string recovery = Assert.Single(Directory.GetDirectories(fixture.RecoveryRoot));
+                competingFile = Path.Combine(recovery, "feature.txt");
+                // README.md precedes feature.txt in the verified payload order.
+                File.WriteAllText(competingFile, "another editor updated this file");
+            }
+        );
+
+        InvalidOperationException failure = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.RestoreSnapshotAsync(
+                receipt.SnapshotId, copyProgress: competingEditor
+            )
+        );
+
+        Assert.Contains("changed since clean validation", failure.Message);
+        Assert.NotNull(competingFile);
+        Assert.Equal("another editor updated this file", File.ReadAllText(competingFile));
+        Assert.Equal("saved readme", File.ReadAllText(sourceReadme));
+        Assert.Equal("saved feature", File.ReadAllText(sourceFeature));
+        Assert.Equal(WorkspaceSessionState.Active, (await fixture.OwnedSessionAsync()).State);
+        WorkspaceRestoreOperation attempt = Assert.Single(
+            await new SqliteWorkspaceSessionJournal(fixture.DatabasePath)
+                .ListRecoveryRestoresAsync(CancellationToken.None)
+        );
+        Assert.Equal(WorkspaceRestoreState.Preparing, attempt.State);
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task Snapshot_RejectsWorkingFileMutationImmediatelyBeforePublish()
     {
         using Fixture fixture = await Fixture.CreateAsync();
