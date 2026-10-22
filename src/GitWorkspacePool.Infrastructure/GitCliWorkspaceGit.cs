@@ -154,7 +154,7 @@ public sealed class GitCliWorkspaceGit : IWorkspaceGit, IGitRemoteReader
     {
         string names = await RunAsync(
             repositoryPath,
-            ["config", "--list", "--name-only", "--null"],
+            ["config", "--list", "--null"],
             cancellationToken
         );
         GitProcessSafety.RejectUnsafeFetchConfiguration(names);

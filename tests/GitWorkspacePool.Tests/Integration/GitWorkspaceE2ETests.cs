@@ -130,6 +130,53 @@ public sealed class GitWorkspaceE2ETests
 
     [Theory]
     [Trait("Category", "FastE2E")]
+    [InlineData("credential.helper", "!echo never-run")]
+    [InlineData("credential.helper", "/untrusted/credential-helper")]
+    [InlineData("credential.helper", "manager --unsafe-argument")]
+    [InlineData("credential.https://github.com.helper", "!echo never-run")]
+    [InlineData("core.askPass", "untrusted-prompt")]
+    public async Task GitCli_RejectsUnsafeCredentialCommandsBeforeFetch(
+        string key,
+        string helperValue
+    )
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        await fixture.GitInDirectoryAsync(
+            fixture.SourcePath, "config", "--local", key, helperValue
+        );
+
+        GitCliWorkspaceGit git = new();
+        InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => git.GetOriginUrlAsync(fixture.SourcePath, CancellationToken.None)
+        );
+        Assert.Contains("untrusted credential helper or askpass", error.Message);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => git.FetchPullRequestAsync(
+                fixture.SourcePath, 17, CancellationToken.None
+            )
+        );
+        Assert.False(Directory.Exists(fixture.WorkspacePath(17)));
+        Assert.Empty(fixture.Editor.OpenedPaths);
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task GitCli_NamedCredentialHelperRemainsSupportedForOfflineLocalFetch()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        await fixture.GitInDirectoryAsync(
+            fixture.SourcePath, "config", "--local", "credential.helper", "manager"
+        );
+
+        GitCliWorkspaceGit git = new();
+        await git.GetOriginUrlAsync(fixture.SourcePath, CancellationToken.None);
+        await git.FetchPullRequestAsync(fixture.SourcePath, 17, CancellationToken.None);
+        Assert.False(Directory.Exists(fixture.WorkspacePath(17)));
+    }
+
+    [Theory]
+    [Trait("Category", "FastE2E")]
     [InlineData("core.sshCommand", "never-run")]
     [InlineData("core.gitProxy", "never-run")]
     [InlineData("remote.origin.vcs", "never-run")]
