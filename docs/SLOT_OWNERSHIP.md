@@ -1,6 +1,6 @@
 # Exclusive slot ownership and safe release (design gate)
 
-**Status:** first persistence slice implemented in SQLite v6: new and migrated sessions receive Protected slots with Held leases; an isolated generation-CAS reservation primitive exists for a future verified Ready slot. **No production workflow can mark slots Ready, release a lease, or reuse a worktree yet.** Remaining transitions below are design requirements.
+**Status:** SQLite v8 adds an explicit finalization use case for an already Prepared, Parked PR: after locked Git/filesystem revalidation it atomically retains the Released PR history and parking location, commits the preparation, releases its Held lease, and marks the original slot Ready. **A Ready slot is not yet allocated by production checkout; cross-PR warm reuse and all destructive cleanup remain disabled.**
 
 ## Why parking is not release
 
@@ -57,8 +57,8 @@ workspace-path rule.
 - `workspace_slot_leases` records slot/session/generation, and partial unique indexes forbid more than one Held lease for a slot or a session. A unique slot/generation pair rejects duplicate historical issuance.
 - Upgrading an existing journal from v5 creates Protected slots and Held leases for **every existing session**, including Parked, suspended and RecoveryRequired owners; it cannot infer free slots from missing directories. A new session inserts its Protected slot and Held lease in the same SQLite transaction as the session reservation.
 - `SqliteWorkspaceSlotRegistry.TryLeaseReadyAsync` uses an atomic compare-and-swap of the expected generation and Ready state, checks session repository/source/path identity and unleased Preparing state, increments the generation, and persists a Held lease in one transaction. Stale or ineligible requests return no lease.
-- The Ready state is intentionally **not reachable through the production APIs**. Tests seed a synthetic Ready state directly into a disposable database to prove CAS semantics and concurrent exclusivity, not to authorize real worktree checkout.
-- The legacy `sessions.workspace_path` uniqueness and parked-path reservations stay in place. The transaction-based cross-session path overlap checks remain enforced by the existing session journal.
+- SQLite v8 can publish Ready only by finalizing an explicitly prepared and verified Parked owner; it cannot automatically create warm Git worktrees or allocate Ready slots in the PR-opening handler. Synthetic Ready slots in tests still exercise CAS without authorizing checkout.
+- Schema v8 changes the old-path reservation to a partial unique index for non-Released sessions. Immutable Released history keeps its original path and all snapshots; its parking path remains exclusive. The transaction-based cross-session overlap guard ignores only the Released old slot, never the retained parked worktree.
 - Neither migration nor reservation touches the filesystem, runs Git, frees disk, performs a checkout or modifies an active PR.
 
 ## Read-only pre-release assessment
@@ -105,9 +105,11 @@ While an intent is Prepared, `BeginUnparkingAsync` fails closed. An
 explicit cancellation permits unparking again. This preserves the parked
 files and avoids silently invalidating a pending operation. Neither
 preparation nor cancellation moves Git files, releases a lease or sets a
-slot Ready. The future actual release must first separate immutable
-session history from exclusive slot-path reservations and then commit
-the lease handoff in a single audited transition.
+slot Ready. The explicit v8 finalizer now makes that handoff through a
+single transaction after repeating the Git and path checks under the OS
+lock. Cancellation and preparation by themselves still never release
+anything. Checkout of a Ready slot is a separate, currently disabled
+use case requiring its own physical preflight and reservation.
 
 ## Required invariants
 

@@ -13,7 +13,7 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
     private readonly string _connectionString;
 
     /// <summary>
-    /// Initializes or upgrades the local SQLite journal to schema version seven.
+    /// Initializes or upgrades the local SQLite journal to schema version eight.
     /// </summary>
     public SqliteWorkspaceSessionJournal(string databasePath)
     {
@@ -35,7 +35,7 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
         version.CommandText = "PRAGMA user_version";
         long currentVersion = (long)version.ExecuteScalar()!;
 
-        if (currentVersion > 7)
+        if (currentVersion > 8)
         {
             throw new InvalidOperationException("Session journal schema is newer than this application.");
         }
@@ -99,6 +99,11 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
         {
             UpgradeReleasePreparations(connection);
         }
+
+        if (currentVersion < 8)
+        {
+            UpgradeReleasedOwnership(connection);
+        }
     }
 
     /// <inheritdoc/>
@@ -142,6 +147,13 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
 
         if (existing is not null)
         {
+            if (existing.State == WorkspaceSessionState.Released)
+            {
+                throw new InvalidOperationException(
+                    "The PR is explicitly released and still parked; never silently reclaim its old slot."
+                );
+            }
+
             if (
                 !existing.SourcePath.Equals(sourcePath, StringComparison.OrdinalIgnoreCase)
                 || !existing.WorkspacePath.Equals(workspacePath, StringComparison.OrdinalIgnoreCase)
@@ -326,7 +338,7 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
             SELECT operation_id, repository_key, pr_number, source_path,
                    workspace_path, state, pinned_commit, parking_path, parking_head
               FROM sessions
-             WHERE state IN ('Parking', 'Parked', 'Unparking')
+             WHERE state IN ('Parking', 'Parked', 'Unparking', 'Released')
              ORDER BY updated_utc DESC
              LIMIT 10001
             """;
@@ -871,7 +883,7 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
         using SqliteCommand command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT operation_id, workspace_path, parking_path
+            SELECT operation_id, workspace_path, parking_path, state
               FROM sessions
             """;
 
@@ -885,7 +897,8 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
             }
 
             if (
-                Overlaps(requestedPath, reader.GetString(1))
+                (reader.GetString(3) != "Released"
+                    && Overlaps(requestedPath, reader.GetString(1)))
                 || (!reader.IsDBNull(2) && Overlaps(requestedPath, reader.GetString(2)))
             )
             {
@@ -915,6 +928,106 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
         return left.Equals(right, comparison)
             || left.StartsWith(right + boundary, comparison)
             || right.StartsWith(left + boundary, comparison);
+    }
+
+    private static void UpgradeReleasedOwnership(SqliteConnection connection)
+    {
+        // Keep immutable operation IDs, parked data, snapshots, restore intents,
+        // and leases intact. Only Released history stops reserving its old slot.
+        using (SqliteCommand disable = connection.CreateCommand())
+        {
+            disable.CommandText = "PRAGMA foreign_keys = OFF";
+            disable.ExecuteNonQuery();
+        }
+
+        try
+        {
+            using SqliteTransaction transaction = connection.BeginTransaction();
+            using SqliteCommand upgrade = connection.CreateCommand();
+            upgrade.Transaction = transaction;
+            upgrade.CommandText = """
+                CREATE TABLE sessions_v8 (
+                    operation_id TEXT PRIMARY KEY,
+                    repository_key TEXT NOT NULL COLLATE NOCASE,
+                    pr_number INTEGER NOT NULL CHECK (pr_number > 0),
+                    source_path TEXT NOT NULL COLLATE NOCASE,
+                    workspace_path TEXT NOT NULL COLLATE NOCASE,
+                    state TEXT NOT NULL CHECK (state IN (
+                        'Preparing', 'Active', 'Suspended', 'Parking', 'Parked',
+                        'Unparking', 'Released', 'RecoveryRequired'
+                    )),
+                    pinned_commit TEXT,
+                    parking_path TEXT COLLATE NOCASE UNIQUE,
+                    parking_head TEXT,
+                    updated_utc TEXT NOT NULL,
+                    UNIQUE (repository_key, pr_number)
+                );
+
+                INSERT INTO sessions_v8(
+                    operation_id, repository_key, pr_number, source_path,
+                    workspace_path, state, pinned_commit, parking_path,
+                    parking_head, updated_utc
+                )
+                SELECT operation_id, repository_key, pr_number, source_path,
+                       workspace_path, state, pinned_commit, parking_path,
+                       parking_head, updated_utc
+                  FROM sessions;
+
+                DROP TABLE sessions;
+                ALTER TABLE sessions_v8 RENAME TO sessions;
+
+                CREATE UNIQUE INDEX ux_exclusively_owned_workspace_path
+                  ON sessions(workspace_path) WHERE state != 'Released';
+
+                CREATE TABLE release_preparations_v8 (
+                    preparation_id TEXT PRIMARY KEY,
+                    slot_id TEXT NOT NULL REFERENCES workspace_slots(slot_id),
+                    session_id TEXT NOT NULL REFERENCES sessions(operation_id),
+                    generation INTEGER NOT NULL CHECK (generation >= 0),
+                    state TEXT NOT NULL CHECK (
+                        state IN ('Prepared', 'Cancelled', 'Committed')
+                    ),
+                    created_utc TEXT NOT NULL,
+                    updated_utc TEXT NOT NULL
+                );
+
+                INSERT INTO release_preparations_v8
+                SELECT preparation_id, slot_id, session_id, generation,
+                       state, created_utc, updated_utc
+                  FROM workspace_slot_release_preparations;
+
+                DROP TABLE workspace_slot_release_preparations;
+                ALTER TABLE release_preparations_v8
+                  RENAME TO workspace_slot_release_preparations;
+
+                CREATE UNIQUE INDEX ux_prepared_slot
+                  ON workspace_slot_release_preparations(slot_id)
+                  WHERE state = 'Prepared';
+                CREATE UNIQUE INDEX ux_prepared_session
+                  ON workspace_slot_release_preparations(session_id)
+                  WHERE state = 'Prepared';
+
+                PRAGMA user_version = 8;
+                """;
+            upgrade.ExecuteNonQuery();
+            transaction.Commit();
+        }
+        finally
+        {
+            using SqliteCommand enable = connection.CreateCommand();
+            enable.CommandText = "PRAGMA foreign_keys = ON";
+            enable.ExecuteNonQuery();
+        }
+
+        using SqliteCommand validation = connection.CreateCommand();
+        validation.CommandText = "PRAGMA foreign_key_check";
+        using SqliteDataReader reader = validation.ExecuteReader();
+        if (reader.Read())
+        {
+            throw new InvalidOperationException(
+                "Released ownership migration failed foreign-key preservation."
+            );
+        }
     }
 
     private static void UpgradeReleasePreparations(SqliteConnection connection)

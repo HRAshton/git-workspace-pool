@@ -8,7 +8,7 @@ namespace GitWorkspacePool.Infrastructure;
 /// Transactional slot compare-and-swap. Slot readiness must be established by a
 /// separate, not-yet-enabled verified release workflow.
 /// </summary>
-public sealed class SqliteWorkspaceSlotRegistry : IWorkspaceSlotRegistry, IWorkspaceSlotOwnershipAuditor, IWorkspaceSlotReleasePreparationJournal
+public sealed class SqliteWorkspaceSlotRegistry : IWorkspaceSlotRegistry, IWorkspaceSlotOwnershipAuditor, IWorkspaceSlotReleasePreparationJournal, IWorkspaceSlotReleaseCommitJournal
 {
     private readonly string _connectionString;
 
@@ -358,6 +358,147 @@ public sealed class SqliteWorkspaceSlotRegistry : IWorkspaceSlotRegistry, IWorks
                 WorkspaceSlotReleasePreparationState.Prepared
             )
         );
+    }
+
+    /// <inheritdoc/>
+    public Task<WorkspaceSlotReleasePreparation?> FindPreparationAsync(
+        Guid preparationId,
+        CancellationToken cancellationToken
+    )
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using SqliteConnection connection = Open();
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT preparation_id, slot_id, session_id, generation, state
+              FROM workspace_slot_release_preparations
+             WHERE preparation_id = $preparation
+            """;
+        command.Parameters.AddWithValue("$preparation", preparationId.ToString("N"));
+        using SqliteDataReader reader = command.ExecuteReader();
+        return Task.FromResult(reader.Read() ? ReadPreparation(reader) : null);
+    }
+
+    /// <inheritdoc/>
+    public Task<bool> TryCommitPreparedAsync(
+        Guid preparationId,
+        Guid slotId,
+        Guid sessionId,
+        long expectedGeneration,
+        CancellationToken cancellationToken
+    )
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using SqliteConnection connection = Open();
+        using SqliteTransaction transaction = connection.BeginTransaction();
+
+        // Filesystem and Git were checked under the OS lock. Recheck SQLite
+        // identity, state and generation in one atomic, rollback-safe handoff.
+        using SqliteCommand ready = connection.CreateCommand();
+        ready.Transaction = transaction;
+        ready.CommandText = """
+            UPDATE workspace_slots
+               SET state = 'Ready', head_commit = NULL, updated_utc = $utc
+             WHERE slot_id = $slot
+               AND state = 'Protected'
+               AND generation = $generation
+               AND EXISTS (
+                   SELECT 1 FROM workspace_slot_release_preparations AS prep
+                   JOIN workspace_slot_leases AS lease
+                     ON lease.slot_id = prep.slot_id
+                    AND lease.state = 'Held'
+                    AND lease.session_id = prep.session_id
+                    AND lease.generation = prep.generation
+                   JOIN sessions AS owner
+                     ON owner.operation_id = prep.session_id
+                  WHERE prep.preparation_id = $preparation
+                    AND prep.state = 'Prepared'
+                    AND prep.slot_id = workspace_slots.slot_id
+                    AND prep.session_id = $session
+                    AND prep.generation = $generation
+                    AND owner.state = 'Parked'
+                    AND owner.parking_path IS NOT NULL
+                    AND owner.parking_head IS NOT NULL
+                    AND owner.repository_key = workspace_slots.repository_key
+                    AND owner.source_path = workspace_slots.source_path
+                    AND owner.workspace_path = workspace_slots.workspace_path
+               )
+            """;
+        ready.Parameters.AddWithValue("$preparation", preparationId.ToString("N"));
+        ready.Parameters.AddWithValue("$slot", slotId.ToString("N"));
+        ready.Parameters.AddWithValue("$session", sessionId.ToString("D"));
+        ready.Parameters.AddWithValue("$generation", expectedGeneration);
+        ready.Parameters.AddWithValue("$utc", DateTimeOffset.UtcNow.ToString("O"));
+        if (ready.ExecuteNonQuery() != 1)
+        {
+            return Task.FromResult(false);
+        }
+
+        using SqliteCommand release = connection.CreateCommand();
+        release.Transaction = transaction;
+        release.CommandText = """
+            UPDATE workspace_slot_leases
+               SET state = 'Released'
+             WHERE slot_id = $slot
+               AND session_id = $session
+               AND generation = $generation
+               AND state = 'Held'
+            """;
+        release.Parameters.AddWithValue("$slot", slotId.ToString("N"));
+        release.Parameters.AddWithValue("$session", sessionId.ToString("D"));
+        release.Parameters.AddWithValue("$generation", expectedGeneration);
+        if (release.ExecuteNonQuery() != 1)
+        {
+            throw new InvalidOperationException("Release lease CAS mismatch.");
+        }
+
+        using SqliteCommand park = connection.CreateCommand();
+        park.Transaction = transaction;
+        park.CommandText = """
+            UPDATE sessions
+               SET state = 'Released', updated_utc = $utc
+             WHERE operation_id = $session AND state = 'Parked'
+               AND parking_path IS NOT NULL AND parking_head IS NOT NULL
+            """;
+        park.Parameters.AddWithValue("$session", sessionId.ToString("D"));
+        park.Parameters.AddWithValue("$utc", DateTimeOffset.UtcNow.ToString("O"));
+        if (park.ExecuteNonQuery() != 1)
+        {
+            throw new InvalidOperationException("Release owner CAS mismatch.");
+        }
+
+        using SqliteCommand done = connection.CreateCommand();
+        done.Transaction = transaction;
+        done.CommandText = """
+            UPDATE workspace_slot_release_preparations
+               SET state = 'Committed', updated_utc = $utc
+             WHERE preparation_id = $preparation
+               AND slot_id = $slot
+               AND session_id = $session
+               AND generation = $generation
+               AND state = 'Prepared'
+            """;
+        done.Parameters.AddWithValue("$preparation", preparationId.ToString("N"));
+        done.Parameters.AddWithValue("$slot", slotId.ToString("N"));
+        done.Parameters.AddWithValue("$session", sessionId.ToString("D"));
+        done.Parameters.AddWithValue("$generation", expectedGeneration);
+        done.Parameters.AddWithValue("$utc", DateTimeOffset.UtcNow.ToString("O"));
+        if (done.ExecuteNonQuery() != 1)
+        {
+            throw new InvalidOperationException("Release preparation CAS mismatch.");
+        }
+
+        using SqliteCommand audit = connection.CreateCommand();
+        audit.Transaction = transaction;
+        audit.CommandText = """
+            INSERT INTO session_events(operation_id, kind, created_utc)
+            VALUES ($session, 'SlotReleased', $utc)
+            """;
+        audit.Parameters.AddWithValue("$session", sessionId.ToString("D"));
+        audit.Parameters.AddWithValue("$utc", DateTimeOffset.UtcNow.ToString("O"));
+        audit.ExecuteNonQuery();
+        transaction.Commit();
+        return Task.FromResult(true);
     }
 
     /// <inheritdoc/>

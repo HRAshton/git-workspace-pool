@@ -10,6 +10,9 @@ public enum WorkspaceSlotReleasePreparationState
 
     /// <summary>The pending preparation was explicitly cancelled.</summary>
     Cancelled,
+
+    /// <summary>The parked session and slot lease were atomically released.</summary>
+    Committed,
 }
 
 /// <summary>

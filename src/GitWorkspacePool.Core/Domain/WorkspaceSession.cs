@@ -31,6 +31,12 @@ public enum WorkspaceSessionState
     Unparking,
 
     /// <summary>
+    /// The PR worktree is safely parked, but the original slot lease was
+    /// explicitly relinquished; it must not be unparked to the old slot.
+    /// </summary>
+    Released,
+
+    /// <summary>
     /// Filesystem and journal state disagree and require explicit inspection.
     /// </summary>
     RecoveryRequired,

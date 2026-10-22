@@ -51,7 +51,8 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [x] Add bounded, read-only audit of protected/ready/reserved slot leases, owner identity and generation mismatches; expose conflicts through tray recovery diagnostics.
 - [x] Journal version-7 release preparations under an OS lock and Git preflight; atomic slot/generation CAS, durable idempotent retry, and explicit cancellation. Block unparking while a preparation remains active.
 - [x] Include all pending release preparations in read-only recovery diagnostics, with original owned paths and explicit cancellation instructions.
-- [ ] Complete real release/handoff and recycling only after detaching immutable session history from reserved slot paths and passing all recovery gates.
+- [x] Complete the first explicit release handoff: SQLite v8 keeps Released PR snapshot/history and parked files while a locked, generation-CAS finalization atomically drops its original-path reservation, releases the Held lease and makes the original slot Ready. No automatic allocation or cross-session worktree reuse is enabled.
+- [ ] Connect Ready-slot acquisition, verified checkout and full fault/recovery gates before enabling cross-PR recycling.
 - [x] Implement explicit non-destructive snapshot export for staged/unstaged, untracked, ignored and binary files, with independent staged blobs and a Git index.
 - [x] Restore a journalled snapshot into a separate Git worktree on the saved commit; verify index, working tree files and exact Git status.
 - [x] Reject corrupted payloads and manifest path traversal before allocating a recovery worktree.
