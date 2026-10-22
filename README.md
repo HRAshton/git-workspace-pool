@@ -140,6 +140,20 @@ The runner saves every raw timing sample, p50/p95 (nearest rank), file count, lo
 
 The tray provides **Local disk usage (read-only)...** to count logical bytes and regular files held in the app's snapshot and isolated recovery directories. Inspection is bounded, runs off the UI thread and refuses links, inaccessible/unknown stores and excessive entries instead of showing a misleading zero. The readout does not inspect arbitrary repositories, authorize eviction or deletion, or promise NTFS physical allocated bytes; **automatic cleanup remains disabled**.
 
+## Advisory storage warning limits (no automatic cleanup)
+
+In `%APPDATA%\\GitWorkspacePool\\settings.json`, optionally set `StorageWarningLimits` to logical-byte warning thresholds, and restart the tray:
+
+```json
+"StorageWarningLimits": {
+  "MaxSnapshotBytes": 2147483648,
+  "MaxRecoveredBytes": 1073741824,
+  "MaxCombinedBytes": 3221225472
+}
+```
+
+Each threshold can be omitted or null to disable its warning. Values must be positive and at most 16 TiB. The **Local disk usage (read-only)...** tray menu displays snapshot, recovered and combined logical bytes, and clearly marks configured thresholds as within or over. Invalid settings fail closed; unknown, unsafe or over-limit directory scans never become misleading zero usage. The limits are **advisory only**: no files are deleted, sessions released, caches purged or slots recycled. Physical NTFS disk allocation, user clone/worktree storage, and actual free-space budgets remain out of scope.
+
 ## Experimental workspace snapshots
 
 The tray menu provides **Snapshot active PR...** for an explicit, non-destructive snapshot. Captures include the Git index, staged blobs independently from unstaged working files, tracked changes, untracked and ignored files (including binary data), deletions and a SHA-256 manifest. Snapshots are stored under `%LOCALAPPDATA%\\GitWorkspacePool\\snapshots`. Only explicitly selected active sessions are eligible.

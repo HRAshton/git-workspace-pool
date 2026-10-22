@@ -108,6 +108,7 @@ One PR may batch compatible changes in a workstream, but a failed check is repai
 - [ ] Collect trusted Git/disk candidate observations and connect the policy to a transactional allocator only after M2 slot-release gates are complete. Benchmark transition time and re-rank using measured costs.
 - [ ] Explicit artifact glob policies, with safe defaults for ignored files; `node_modules`, `bin/obj` remain **best-effort** reuse only.
 - [ ] Optional ReFS clone or copy fallback; never hardlink mutable artifacts across sessions.
+- [x] Add optional validated advisory snapshot/recovered/combined logical-byte warning thresholds and an accessible read-only tray readout. This does not measure full workspace storage, grant deletion rights, or provide eviction policy.
 - [ ] Policy-scoped cleanup, eviction transaction journal and dry-run disk estimate; protected active/parked/recovery state.
 - [ ] Configured baseline fetch with backoff, offline mode, no changed checked-out worktree and no arbitrary code execution.
 

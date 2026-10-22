@@ -20,6 +20,12 @@
 - [ ] Inject interruption, conflicting file occupant, link/junction, read-only file, locked file, low disk and unsafe Git config. Check recovery diagnostics while requiring no original user-file overwrites, resets, cleanup or arbitrary execution.
 - [ ] Confirm quit/restart never triggers eviction/recycling, automatic worktree cleanup, background install, user project build or PR speculation. Advanced manual released-slot handoff and `node_modules` copying are not certified beyond their isolated tests.
 
+## Configured storage-pressure advisories
+
+- [ ] Configure and verify individual snapshot, recovered and combined byte warnings in the tray; test below, equal and above threshold while preserving all evidence.
+- [ ] Confirm null/omitted warnings are disabled, invalid/nonpositive/out-of-range settings fail closed, and unsafe/unreadable directories are reported as unknown rather than freeable.
+- [ ] Confirm no warning triggers deletion, automatic eviction, project build, release or workspace recycling.
+
 ## Read-only storage diagnostics
 
 - [ ] Inspect the RC2 tray's **Local disk usage (read-only)...** against a disposable snapshot and side-by-side restore; confirm counts are plausible and clicking it never touches snapshot, recovery or active workspace contents.

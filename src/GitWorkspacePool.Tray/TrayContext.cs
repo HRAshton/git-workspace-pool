@@ -416,8 +416,48 @@ internal sealed class TrayContext : ApplicationContext
             {
                 Enabled = false,
             });
+            WorkspaceStorageWarningLimits limits = SettingsStore.Read().StorageWarningLimits;
+            WorkspaceStorageWarningAssessment assessment =
+                WorkspaceStorageWarningPolicy.Assess(usage, limits);
             menu.DropDownItems.Add(new ToolStripMenuItem(
-                "Read-only logical sizes; no cleanup or eviction."
+                $"Combined evidence: {assessment.TotalLogicalBytes / 1048576d:F1} MiB"
+            )
+            {
+                Enabled = false,
+            });
+
+            if (limits.MaxSnapshotBytes is long snapshotLimit)
+            {
+                menu.DropDownItems.Add(new ToolStripMenuItem(
+                    $"Snapshots {(assessment.SnapshotLimitExceeded ? "OVER" : "within")} "
+                        + $"warning threshold: {snapshotLimit / 1048576d:F1} MiB"
+                )
+                {
+                    Enabled = false,
+                });
+            }
+            if (limits.MaxRecoveredBytes is long recoveredLimit)
+            {
+                menu.DropDownItems.Add(new ToolStripMenuItem(
+                    $"Recovered {(assessment.RecoveredLimitExceeded ? "OVER" : "within")} "
+                        + $"warning threshold: {recoveredLimit / 1048576d:F1} MiB"
+                )
+                {
+                    Enabled = false,
+                });
+            }
+            if (limits.MaxCombinedBytes is long combinedLimit)
+            {
+                menu.DropDownItems.Add(new ToolStripMenuItem(
+                    $"Combined {(assessment.CombinedLimitExceeded ? "OVER" : "within")} "
+                        + $"warning threshold: {combinedLimit / 1048576d:F1} MiB"
+                )
+                {
+                    Enabled = false,
+                });
+            }
+            menu.DropDownItems.Add(new ToolStripMenuItem(
+                "Advisory logical-size warnings only; no cleanup or eviction."
             )
             {
                 Enabled = false,

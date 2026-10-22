@@ -99,12 +99,14 @@ internal sealed class SettingsStore : IRepositoryCatalog
             JsonOptions
         );
 
-        if (settings is null || settings.SnapshotLimits is null)
+        if (settings is null || settings.SnapshotLimits is null
+            || settings.StorageWarningLimits is null)
         {
             throw new InvalidOperationException("Invalid settings.json or SnapshotLimits.");
         }
 
         settings.SnapshotLimits.Validate();
+        settings.StorageWarningLimits.Validate();
         return settings;
     }
 }
