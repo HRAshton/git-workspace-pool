@@ -98,6 +98,7 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
             before.IndexPath,
             indexTarget,
             SnapshotCopyPhase.ExportIndex,
+            MaxSnapshotBytes,
             cancellationToken
         );
         fileCount++;
@@ -154,6 +155,7 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
                 source,
                 destination,
                 SnapshotCopyPhase.ExportWorkingFile,
+                MaxSnapshotBytes - copiedBytes,
                 cancellationToken
             );
             fileCount++;
@@ -193,6 +195,7 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
                 root,
                 relative,
                 destination,
+                MaxSnapshotBytes - copiedBytes,
                 cancellationToken
             );
 
@@ -329,6 +332,7 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
         string source,
         string destination,
         SnapshotCopyPhase phase,
+        long maxBytes,
         CancellationToken cancellationToken
     )
     {
@@ -338,7 +342,8 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
             FileMode.CreateNew,
             phase,
             _copyProgress,
-            cancellationToken
+            cancellationToken,
+            maxBytes
         );
 
         string hash = await HashFileAsync(destination, cancellationToken);

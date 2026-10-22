@@ -47,7 +47,7 @@
 - [x] Refuse checkout if effective Git config contains any non-LFS executable filter driver (smudge/clean/process). Force LFS smudge/process to identity by command-line overrides and skip actual LFS downloads. Offline E2E covers PR creation and snapshot restoration refusal without touching existing user files.
 - [ ] Extend hardening to Git external transport/authentication helpers and conditional configuration; explicit provider and user trust decisions may be required.
 - [ ] Migrate old manifest versions explicitly, never reinterpret unknown versions. Current v2 restore now requires an explicit version and refuses missing/v1/future versions before Git or journal allocation; legacy migration is not yet supported.
-- [ ] Establish snapshot budgets/settings and retention policy; preserve originals until verified recovery.
+- [ ] Establish configurable snapshot budgets/settings and retention policy; preserve originals until verified recovery. Current fixed conservative 2 GiB snapshot cap now applies during working/index and staged-blob stream writes; staged exporters terminate Git subprocesses on failure.
 
 ### M2 — ownership and parking
 

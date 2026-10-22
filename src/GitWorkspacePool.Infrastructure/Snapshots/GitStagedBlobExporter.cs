@@ -13,15 +13,22 @@ public sealed class GitStagedBlobExporter
     /// <param name="workspace">The trusted Git worktree.</param>
     /// <param name="relativePath">The Git-relative staged path.</param>
     /// <param name="destination">An app-owned new payload file.</param>
+    /// <param name="maxBytes">Maximum bytes allowed for this staged blob.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Number of staged bytes written.</returns>
     public async Task<long> ExportAsync(
         string workspace,
         string relativePath,
         string destination,
+        long maxBytes,
         CancellationToken cancellationToken
     )
     {
+        if (maxBytes < 0)
+        {
+            throw new InvalidOperationException("Staged snapshot byte budget is exhausted.");
+        }
+
         ProcessStartInfo start = new("git")
         {
             CreateNoWindow = true,
@@ -51,7 +58,24 @@ public sealed class GitStagedBlobExporter
                 FileOptions.WriteThrough
             ))
             {
-                await process.StandardOutput.BaseStream.CopyToAsync(target, cancellationToken);
+                byte[] buffer = new byte[65536];
+                long length = 0;
+                int count;
+                while ((count = await process.StandardOutput.BaseStream.ReadAsync(
+                    buffer, cancellationToken
+                )) != 0)
+                {
+                    if (count > maxBytes - length)
+                    {
+                        throw new InvalidOperationException(
+                            "Staged snapshot blob exceeds its remaining byte budget."
+                        );
+                    }
+
+                    await target.WriteAsync(buffer.AsMemory(0, count), cancellationToken);
+                    length += count;
+                }
+
                 await target.FlushAsync(cancellationToken);
                 target.Flush(flushToDisk: true);
             }
@@ -68,8 +92,11 @@ public sealed class GitStagedBlobExporter
 
             return new FileInfo(destination).Length;
         }
-        catch (OperationCanceledException)
+        catch
         {
+            // Do not leave a blocked git show process holding the snapshot
+            // pipeline open if the destination hits its byte budget, disk
+            // runs out or the caller cancels during a read/write.
             if (!process.HasExited)
             {
                 process.Kill(entireProcessTree: true);

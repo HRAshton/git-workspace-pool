@@ -268,6 +268,30 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
             );
         }
 
+        // Remember the exact file occupants present at the verified clean
+        // checkout. Testing File.Exists only at copy time is unsafe: a foreign
+        // file created after checkout could otherwise be mistaken for a
+        // tracked checkout file and overwritten by FileMode.Create.
+        HashSet<string> filesAtCleanCheckout = PathNames();
+        foreach (WorkspaceSnapshotFile file in manifest.Files.Where(item => !item.IsDirectory))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string relative = NormalizeFilePath(file.RelativePath);
+            string destination = WorkspaceSnapshotPathPolicy.Resolve(target, relative);
+            WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(destination);
+            if (Directory.Exists(destination))
+            {
+                throw new InvalidOperationException(
+                    "A recovery file destination is occupied by a directory."
+                );
+            }
+
+            if (File.Exists(destination))
+            {
+                filesAtCleanCheckout.Add(relative);
+            }
+        }
+
         foreach (WorkspaceSnapshotFile file in manifest.Files.Where(item => item.IsDirectory))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -290,10 +314,16 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
                 Path.Combine(snapshot, "files"),
                 relative
             );
-            bool existedAtCleanCheckout = File.Exists(destination);
+            bool existedAtCleanCheckout = filesAtCleanCheckout.Contains(relative);
             if (existedAtCleanCheckout)
             {
                 WorkspaceSnapshotPathPolicy.EnsureNotReparse(destination);
+                if (!File.Exists(destination))
+                {
+                    throw new InvalidOperationException(
+                        "A tracked recovery file disappeared after checkout."
+                    );
+                }
             }
 
             WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(source);

@@ -12,9 +12,15 @@ internal static class SnapshotFileCopier
         FileMode destinationMode,
         SnapshotCopyPhase phase,
         ISnapshotCopyProgressSink? progress,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        long maxBytes = long.MaxValue
     )
     {
+        if (maxBytes < 0)
+        {
+            throw new InvalidOperationException("Snapshot file byte budget is exhausted.");
+        }
+
         WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(source);
         WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(destination);
 
@@ -41,8 +47,15 @@ internal static class SnapshotFileCopier
 
         while ((count = await input.ReadAsync(buffer, cancellationToken)) != 0)
         {
+            if (count > maxBytes - bytesWritten)
+            {
+                throw new InvalidOperationException(
+                    "Snapshot file exceeds the remaining byte budget during copying."
+                );
+            }
+
             await output.WriteAsync(buffer.AsMemory(0, count), cancellationToken);
-            bytesWritten = checked(bytesWritten + count);
+            bytesWritten += count;
             if (progress is not null)
             {
                 await progress.AfterBytesWrittenAsync(phase, bytesWritten, cancellationToken);

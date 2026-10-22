@@ -1782,6 +1782,111 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task StagedBlobExporter_StopsAtByteBudgetWithoutChangingIndexOrUserData()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        byte[] userBytes = Enumerable.Repeat((byte)0x3C, 256 * 1024).ToArray();
+        string changed = Path.Combine(opened.WorkspacePath, "oversize.bin");
+        File.WriteAllBytes(changed, userBytes);
+        await fixture.GitInWorkspaceAsync("add", "oversize.bin");
+
+        Directory.CreateDirectory(fixture.SnapshotRoot);
+        string rejected = Path.Combine(fixture.SnapshotRoot, "partial.bin");
+        InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => new GitStagedBlobExporter().ExportAsync(
+                opened.WorkspacePath,
+                "oversize.bin",
+                rejected,
+                65536,
+                CancellationToken.None
+            )
+        );
+
+        Assert.Contains("byte budget", error.Message);
+        Assert.True(File.Exists(rejected));
+        Assert.InRange(new FileInfo(rejected).Length, 0, 65536);
+        Assert.Equal(userBytes, File.ReadAllBytes(changed));
+        Assert.Equal(WorkspaceSessionState.Active, (await fixture.OwnedSessionAsync()).State);
+
+        string complete = Path.Combine(fixture.SnapshotRoot, "complete.bin");
+        long length = await new GitStagedBlobExporter().ExportAsync(
+            opened.WorkspacePath,
+            "oversize.bin",
+            complete,
+            userBytes.Length,
+            CancellationToken.None
+        );
+        Assert.Equal(userBytes.Length, length);
+        Assert.Equal(userBytes, File.ReadAllBytes(complete));
+        Assert.Equal(userBytes, File.ReadAllBytes(changed));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task StagedBlobExporter_RejectsNegativeBudgetBeforeAllocating()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string source = Path.Combine(opened.WorkspacePath, "feature.txt");
+        File.WriteAllText(source, "staged value");
+        await fixture.GitInWorkspaceAsync("add", "feature.txt");
+
+        string rejected = Path.Combine(opened.WorkspacePath, "not-written.bin");
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => new GitStagedBlobExporter().ExportAsync(
+                opened.WorkspacePath,
+                "feature.txt",
+                rejected,
+                -1,
+                CancellationToken.None
+            )
+        );
+
+        Assert.False(File.Exists(rejected));
+        Assert.Equal("staged value", File.ReadAllText(source));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task StagedBlobExporter_RefusesOccupiedDestinationAndAllowsNextExport()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string source = Path.Combine(opened.WorkspacePath, "feature.txt");
+        File.WriteAllText(source, "staged and protected");
+        await fixture.GitInWorkspaceAsync("add", "feature.txt");
+
+        Directory.CreateDirectory(fixture.SnapshotRoot);
+        string occupied = Path.Combine(fixture.SnapshotRoot, "foreign.bin");
+        File.WriteAllText(occupied, "foreign data");
+
+        await Assert.ThrowsAnyAsync<IOException>(
+            () => new GitStagedBlobExporter().ExportAsync(
+                opened.WorkspacePath,
+                "feature.txt",
+                occupied,
+                1024,
+                CancellationToken.None
+            )
+        );
+
+        Assert.Equal("foreign data", File.ReadAllText(occupied));
+        string restored = Path.Combine(fixture.SnapshotRoot, "retry.bin");
+        long copied = await new GitStagedBlobExporter().ExportAsync(
+            opened.WorkspacePath,
+            "feature.txt",
+            restored,
+            1024,
+            CancellationToken.None
+        );
+        Assert.Equal(copied, new FileInfo(restored).Length);
+        Assert.Equal("staged and protected", File.ReadAllText(restored));
+        Assert.Equal("staged and protected", File.ReadAllText(source));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task Snapshot_CancellationDuringCopyPreservesOriginalAndPendingEvidence()
     {
         using Fixture fixture = await Fixture.CreateAsync();
