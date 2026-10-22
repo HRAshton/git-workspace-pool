@@ -43,7 +43,9 @@ public sealed class ReconcileExplicitReadySlotService
     public async Task<WorkspaceSession> ReconcileAsync(
         Guid slotId,
         RepositoryRegistration trustedRepository,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        long? selectedGeneration = null,
+        Guid? selectedOwnerId = null
     )
     {
         WorkspaceSlot slot = await _slots.FindSlotAsync(slotId, cancellationToken)
@@ -69,7 +71,15 @@ public sealed class ReconcileExplicitReadySlotService
                 );
         string? expected = reservation.Session.PinnedCommitSha;
         if (
-            !slot.RepositoryKey.Equals(
+            slot.State != WorkspaceSlotState.Reserved
+            || slot.Generation != reservation.Lease.Generation
+            || reservation.Lease.SlotId != slotId
+            || reservation.Lease.SessionId != reservation.Session.OperationId
+            || (selectedGeneration.HasValue
+                && reservation.Lease.Generation != selectedGeneration.Value)
+            || (selectedOwnerId.HasValue
+                && reservation.Session.OperationId != selectedOwnerId.Value)
+            || !slot.RepositoryKey.Equals(
                 "github:" + trustedRepository.RepositoryKey,
                 StringComparison.OrdinalIgnoreCase
             )

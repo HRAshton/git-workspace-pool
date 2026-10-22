@@ -28,6 +28,7 @@ internal sealed class TrayContext : ApplicationContext
     private readonly OpenReleasedParkedWorkspaceService _openRetained;
     private readonly IWorkspaceParkingJournal _parkingJournal;
     private readonly IWorkspaceSlotReservationInventory _pendingSlotInventory;
+    private readonly RecoverSelectedReservedSlotHandler _recoverReserved;
     private readonly IWorkspaceReadySlotCatalog _readyCatalog;
     private readonly IWorkspaceSlotRegistry _slotRegistry;
     private readonly IWorkspaceSlotReleasePreparationJournal _releasePreparations;
@@ -141,6 +142,15 @@ internal sealed class TrayContext : ApplicationContext
             ),
             editor
         );
+        _recoverReserved = new RecoverSelectedReservedSlotHandler(
+            slots,
+            repositories,
+            originVerifier,
+            new ReconcileExplicitReadySlotService(
+                slots, slots, new WorkspaceReadySlotSafety(),
+                new VerifiedReadySlotCheckout(), git, locks
+            )
+        );
 
         ToolStripMenuItem snapshotsMenu = new("Snapshot active PR...");
         snapshotsMenu.DropDownOpening += async (_, _) => await PopulateSnapshotsAsync(snapshotsMenu);
@@ -194,6 +204,13 @@ internal sealed class TrayContext : ApplicationContext
         retainedMenu.DropDownOpening += async (_, _) =>
             await PopulateRetainedReleasedAsync(retainedMenu);
         menu.Items.Insert(11, retainedMenu);
+
+        ToolStripMenuItem recoverSlotMenu = new(
+            "Finish interrupted PR checkout (verify clean worktree)..."
+        );
+        recoverSlotMenu.DropDownOpening += async (_, _) =>
+            await PopulateInterruptedSlotRecoveryAsync(recoverSlotMenu);
+        menu.Items.Insert(12, recoverSlotMenu);
 
         _ = ListenAsync(_shutdown.Token);
         _ = AnnounceInterruptedAllocationsAsync();
@@ -1151,6 +1168,106 @@ internal sealed class TrayContext : ApplicationContext
             Notify(
                 "Retained PR was not opened",
                 exception.Message + " No files or slot leases were changed."
+            );
+        }
+    }
+
+    private async Task PopulateInterruptedSlotRecoveryAsync(ToolStripMenuItem menu)
+    {
+        menu.DropDownItems.Clear();
+        try
+        {
+            IReadOnlyList<WorkspaceReadySlotReservation> pending =
+                await _pendingSlotInventory.ListReservedAsync(_shutdown.Token);
+            if (pending.Count == 0)
+            {
+                menu.DropDownItems.Add(new ToolStripMenuItem(
+                    "No interrupted reserved PR checkouts."
+                ) { Enabled = false });
+                return;
+            }
+
+            foreach (WorkspaceReadySlotReservation reservation in pending.Take(100))
+            {
+                WorkspaceSession owner = reservation.Session;
+                ToolStripMenuItem item = new(
+                    owner.RepositoryKey + " PR #" + owner.PullRequestNumber
+                    + " — " + Path.GetFileName(owner.WorkspacePath)
+                )
+                {
+                    ToolTipText = "Reserved generation " + reservation.Lease.Generation
+                        + ", session " + owner.OperationId.ToString("N")
+                        + Environment.NewLine + owner.WorkspacePath,
+                };
+                Guid slotId = reservation.Lease.SlotId;
+                long generation = reservation.Lease.Generation;
+                Guid ownerId = owner.OperationId;
+                item.Click += (_, _) =>
+                    _ = FinishSelectedInterruptedSlotAsync(slotId, generation, ownerId);
+                menu.DropDownItems.Add(item);
+            }
+
+            if (pending.Count > 100)
+            {
+                menu.DropDownItems.Add(new ToolStripMenuItem(
+                    "Showing first 100 interrupted allocations."
+                ) { Enabled = false });
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Application is exiting.
+        }
+        catch (Exception exception)
+        {
+            Notify("Interrupted checkout inventory unavailable", exception.Message);
+        }
+    }
+
+    private async Task FinishSelectedInterruptedSlotAsync(
+        Guid slotId, long generation, Guid ownerId
+    )
+    {
+        DialogResult confirmed = MessageBox.Show(
+            "Finish only this selected interrupted PR checkout?\n\n"
+                + "The app will recheck the configured GitHub clone, reserved owner "
+                + "and generation, registered Git worktree, exact pinned HEAD, "
+                + "clean Git index and worktree under an exclusive lock.\n\n"
+                + "If any check fails, the reservation stays protected for manual "
+                + "recovery. No checkout, reset, cleanup, file move or lease release "
+                + "is performed. The completed PR can then be opened normally.",
+            "Verify and finish interrupted checkout",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Warning,
+            MessageBoxDefaultButton.Button2
+        );
+        if (confirmed != DialogResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            WorkspaceSession activated = await _recoverReserved.HandleAsync(
+                slotId, generation, ownerId, _shutdown.Token
+            );
+            Notify(
+                "Interrupted PR checkout verified",
+                "PR #" + activated.PullRequestNumber + " is active at "
+                    + activated.WorkspacePath
+                    + ". Open its GitHub PR link to edit. No user files were changed."
+            );
+        }
+        catch (OperationCanceledException)
+        {
+            // Application is exiting, preserving the durable lease.
+        }
+        catch (Exception exception)
+        {
+            Notify(
+                "Interrupted PR checkout remains protected",
+                exception.Message
+                    + " No files were changed and the slot was not released."
             );
         }
     }

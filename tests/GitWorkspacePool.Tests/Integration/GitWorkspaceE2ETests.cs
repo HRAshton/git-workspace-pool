@@ -1451,7 +1451,35 @@ public sealed class GitWorkspaceE2ETests
         Assert.Equal(WorkspaceSlotState.Reserved,
             (await registry.FindSlotAsync(prepared.SlotId, CancellationToken.None))!.State);
 
-        WorkspaceSession recovered = await fixture.ReconcileReadySlotAsync(prepared.SlotId);
+        // A stale menu selection, different owner or untrusted clone must not
+        // complete the durable Preparing owner even for an otherwise clean tree.
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            fixture.RecoverSelectedReservedSlotAsync(
+                prepared.SlotId, reservation.Lease.Generation + 1,
+                reservation.Session.OperationId
+            ));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            fixture.RecoverSelectedReservedSlotAsync(
+                prepared.SlotId, reservation.Lease.Generation, Guid.NewGuid()
+            ));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            fixture.RecoverSelectedReservedSlotAsync(
+                prepared.SlotId, reservation.Lease.Generation,
+                reservation.Session.OperationId, configuredKey: "other/repo"
+            ));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            fixture.RecoverSelectedReservedSlotAsync(
+                prepared.SlotId, reservation.Lease.Generation,
+                reservation.Session.OperationId, rejectOrigin: true
+            ));
+        Assert.Equal(WorkspaceSlotState.Reserved,
+            (await registry.FindSlotAsync(prepared.SlotId, CancellationToken.None))!.State);
+        Assert.Equal(WorkspaceSessionState.Preparing,
+            (await fixture.SessionAsync(reservation.Session.OperationId))!.State);
+
+        WorkspaceSession recovered = await fixture.RecoverSelectedReservedSlotAsync(
+            prepared.SlotId, reservation.Lease.Generation, reservation.Session.OperationId
+        );
         Assert.Equal(reservation.Session.OperationId, recovered.OperationId);
         Assert.Equal(WorkspaceSessionState.Active, recovered.State);
         Assert.Equal(WorkspaceSlotState.Protected,
@@ -1513,6 +1541,11 @@ public sealed class GitWorkspaceE2ETests
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => fixture.ReconcileReadySlotAsync(prepared.SlotId)
         );
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            fixture.RecoverSelectedReservedSlotAsync(
+                prepared.SlotId, reservation.Lease.Generation,
+                reservation.Session.OperationId
+            ));
         Assert.Equal(WorkspaceSlotState.Reserved,
             (await registry.FindSlotAsync(prepared.SlotId, CancellationToken.None))!.State);
         Assert.Equal(WorkspaceSessionState.Preparing,
@@ -1556,6 +1589,11 @@ public sealed class GitWorkspaceE2ETests
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => fixture.ReconcileReadySlotAsync(prepared.SlotId)
         );
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            fixture.RecoverSelectedReservedSlotAsync(
+                prepared.SlotId, reservation.Lease.Generation,
+                reservation.Session.OperationId
+            ));
         // Even direct legacy activation cannot bypass the Protected-slot CAS.
         await new SqliteWorkspaceSessionJournal(fixture.DatabasePath)
             .PinCommitAsync(reservation.Session.OperationId,
@@ -3941,6 +3979,36 @@ public sealed class GitWorkspaceE2ETests
             return service.TransferAsync(sourceId, targetId, CancellationToken.None);
         }
 
+        public Task<WorkspaceSession> RecoverSelectedReservedSlotAsync(
+            Guid slotId,
+            long generation,
+            Guid ownerId,
+            string? configuredKey = null,
+            bool rejectOrigin = false
+        )
+        {
+            SqliteWorkspaceSlotRegistry slots = new(DatabasePath);
+            ReconcileExplicitReadySlotService recovery = new(
+                slots,
+                slots,
+                new WorkspaceReadySlotSafety(),
+                new VerifiedReadySlotCheckout(),
+                new GitCliWorkspaceGit(),
+                new FileWorkspaceOperationLock(Path.Combine(_root, "state", "locks"))
+            );
+            RecoverSelectedReservedSlotHandler handler = new(
+                slots,
+                new Catalog(new RepositoryRegistration(
+                    configuredKey ?? "owner/repo", _source, _workspaces
+                )),
+                rejectOrigin ? new RejectingOriginVerifier() : new LocalFixtureOriginVerifier(),
+                recovery
+            );
+            return handler.HandleAsync(
+                slotId, generation, ownerId, CancellationToken.None
+            );
+        }
+
         public Task<WorkspaceSession> ReconcileReadySlotAsync(Guid slotId)
         {
             SqliteWorkspaceSlotRegistry slots = new(DatabasePath);
@@ -4098,6 +4166,15 @@ public sealed class GitWorkspaceE2ETests
                 );
             }
         }
+    }
+
+    private sealed class RejectingOriginVerifier : IRepositoryOriginVerifier
+    {
+        public Task VerifyAsync(
+            PullRequestReference request,
+            RepositoryRegistration registration,
+            CancellationToken cancellationToken
+        ) => throw new InvalidOperationException("The configured origin was not verified.");
     }
 
     private sealed class LocalFixtureOriginVerifier : IRepositoryOriginVerifier
