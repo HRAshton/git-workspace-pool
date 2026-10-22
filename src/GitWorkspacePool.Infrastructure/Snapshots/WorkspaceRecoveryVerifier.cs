@@ -102,6 +102,11 @@ internal static class WorkspaceRecoveryVerifier
             }
         }
 
+        if (!MatchesRecordedDirectories(recoveryPath, manifest, cancellationToken))
+        {
+            return false;
+        }
+
         foreach (string relative in manifest.MissingPaths)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -140,6 +145,95 @@ internal static class WorkspaceRecoveryVerifier
             cancellationToken,
             null
         );
+    }
+
+    // Export captures every descendant under a recorded changed directory,
+    // including ignored and untracked files. Git's --ignored=matching status
+    // can collapse a whole directory into one entry, so hashing only manifest
+    // files would miss unexpected new files placed underneath it.
+    private static bool MatchesRecordedDirectories(
+        string recoveryPath,
+        WorkspaceSnapshotManifest manifest,
+        CancellationToken cancellationToken
+    )
+    {
+        StringComparer comparer = OperatingSystem.IsWindows()
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal;
+        Dictionary<string, HashSet<string>> children = new(comparer);
+        HashSet<string> recordedDirectories = new(comparer);
+
+        foreach (WorkspaceSnapshotFile file in manifest.Files)
+        {
+            string normalized = WorkspaceSnapshotPathPolicy.NormalizeRelative(
+                file.RelativePath
+            );
+            if (file.IsDirectory)
+            {
+                recordedDirectories.Add(normalized);
+                children.Add(normalized, new HashSet<string>(comparer));
+            }
+        }
+
+        foreach (WorkspaceSnapshotFile file in manifest.Files)
+        {
+            string normalized = WorkspaceSnapshotPathPolicy.NormalizeRelative(
+                file.RelativePath
+            );
+            int separator = normalized.LastIndexOf('/');
+            if (separator >= 0)
+            {
+                string parent = normalized[..separator];
+                if (children.TryGetValue(parent, out HashSet<string>? names))
+                {
+                    if (!names.Add(normalized[(separator + 1)..]))
+                    {
+                        throw new InvalidOperationException(
+                            "Snapshot contains duplicate directory descendants."
+                        );
+                    }
+                }
+            }
+        }
+
+        int scanned = 0;
+        foreach (string relative in recordedDirectories)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string directory = WorkspaceSnapshotPathPolicy.Resolve(
+                recoveryPath,
+                relative
+            );
+            WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(directory);
+            HashSet<string> expected = children[relative];
+            HashSet<string> found = new(comparer);
+
+            foreach (string entry in Directory.EnumerateFileSystemEntries(directory))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (++scanned > MaxVerificationEntries)
+                {
+                    throw new InvalidOperationException(
+                        "Recovery directory inventory exceeds the bounded entry limit."
+                    );
+                }
+
+                string name = Path.GetFileName(entry);
+                if (!expected.Contains(name) || !found.Add(name))
+                {
+                    return false;
+                }
+
+                WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(entry);
+            }
+
+            if (found.Count != expected.Count)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static bool MatchesGitState(

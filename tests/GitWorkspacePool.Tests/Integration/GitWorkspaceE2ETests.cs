@@ -1890,6 +1890,133 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task Restore_UnexpectedFileAfterGitCheckoutIsNotOverwritten()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string source = Path.Combine(opened.WorkspacePath, "personal.bin");
+        File.WriteAllBytes(source, [1, 2, 3, 4]);
+        WorkspaceSnapshotReceipt receipt = await fixture.SnapshotAsync();
+        string? occupiedPath = null;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.RestoreSnapshotAsync(
+                receipt.SnapshotId,
+                new MutateAtCheckpoint(
+                    SnapshotCheckpoint.RestoreWorktreeCreated,
+                    () =>
+                    {
+                        // Simulates another process creating a conflicting file
+                        // after Git reports successful recovery worktree creation.
+                        string recovery = Assert.Single(
+                            Directory.GetDirectories(fixture.RecoveryRoot)
+                        );
+                        occupiedPath = Path.Combine(recovery, "personal.bin");
+                        File.WriteAllBytes(occupiedPath, [9, 8, 7, 6]);
+                        return Task.CompletedTask;
+                    }
+                )
+            )
+        );
+
+        Assert.NotNull(occupiedPath);
+        Assert.Equal(new byte[] { 9, 8, 7, 6 }, File.ReadAllBytes(occupiedPath));
+        Assert.Equal(new byte[] { 1, 2, 3, 4 }, File.ReadAllBytes(source));
+        Assert.Equal(WorkspaceSessionState.Active, (await fixture.OwnedSessionAsync()).State);
+        WorkspaceRestoreOperation interrupted = Assert.Single(
+            await new SqliteWorkspaceSessionJournal(fixture.DatabasePath)
+                .ListRecoveryRestoresAsync(CancellationToken.None)
+        );
+        Assert.Equal(WorkspaceRestoreState.Preparing, interrupted.State);
+        Assert.Equal(occupiedPath, Path.Combine(interrupted.Path, "personal.bin"));
+
+        string retry = await fixture.RestoreSnapshotAsync(receipt.SnapshotId);
+        Assert.Equal(new byte[] { 1, 2, 3, 4 },
+            File.ReadAllBytes(Path.Combine(retry, "personal.bin")));
+        Assert.Equal(new byte[] { 9, 8, 7, 6 }, File.ReadAllBytes(occupiedPath));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task Restore_LateFileCreationBetweenCopiesIsNotOverwritten()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string original = Path.Combine(opened.WorkspacePath, "aaa.bin");
+        File.WriteAllBytes(original, [1, 2, 3]);
+        File.WriteAllBytes(Path.Combine(opened.WorkspacePath, "zzz.bin"), [4, 5, 6]);
+        WorkspaceSnapshotReceipt receipt = await fixture.SnapshotAsync();
+        string? foreign = null;
+
+        await Assert.ThrowsAnyAsync<IOException>(
+            () => fixture.RestoreSnapshotAsync(
+                receipt.SnapshotId,
+                copyProgress: new MutateCopyOnce(
+                    SnapshotCopyPhase.RestoreWorkingFile,
+                    () =>
+                    {
+                        // First payload is aaa.bin; inject a later destination
+                        // after the clean-checkout check but before zzz.bin opens.
+                        string recovery = Assert.Single(
+                            Directory.GetDirectories(fixture.RecoveryRoot)
+                        );
+                        foreign = Path.Combine(recovery, "zzz.bin");
+                        File.WriteAllBytes(foreign, [9, 9, 9]);
+                    }
+                )
+            )
+        );
+
+        Assert.NotNull(foreign);
+        Assert.Equal(new byte[] { 9, 9, 9 }, File.ReadAllBytes(foreign));
+        Assert.Equal(new byte[] { 1, 2, 3 }, File.ReadAllBytes(original));
+        Assert.Equal(new byte[] { 4, 5, 6 },
+            File.ReadAllBytes(Path.Combine(opened.WorkspacePath, "zzz.bin")));
+        WorkspaceRestoreOperation interrupted = Assert.Single(
+            await new SqliteWorkspaceSessionJournal(fixture.DatabasePath)
+                .ListRecoveryRestoresAsync(CancellationToken.None)
+        );
+        Assert.Equal(WorkspaceRestoreState.Preparing, interrupted.State);
+        Assert.Equal(foreign, Path.Combine(interrupted.Path, "zzz.bin"));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task Recovery_NewIgnoredFileMakesVerifiedDirectoryDiverged()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        File.WriteAllText(Path.Combine(opened.WorkspacePath, ".gitignore"), "generated/\n");
+        string generated = Path.Combine(opened.WorkspacePath, "generated");
+        Directory.CreateDirectory(generated);
+        File.WriteAllText(Path.Combine(generated, "original.bin"), "protected");
+
+        WorkspaceSnapshotReceipt receipt = await fixture.SnapshotAsync();
+        string restored = await fixture.RestoreSnapshotAsync(receipt.SnapshotId);
+        Assert.Contains(
+            await fixture.ScanRecoveryAsync(),
+            finding => finding.Kind == WorkspaceRecoveryKind.VerifiedRecoveryWorktree
+                && finding.Path == restored
+        );
+
+        string foreign = Path.Combine(restored, "generated", "new.cache");
+        File.WriteAllText(foreign, "new ignored data");
+        Assert.Contains(
+            await fixture.ScanRecoveryAsync(),
+            finding => finding.Kind == WorkspaceRecoveryKind.DivergedRecoveryWorktree
+                && finding.Path == restored
+        );
+        Assert.True(File.Exists(foreign));
+        Assert.Equal("protected", File.ReadAllText(
+            Path.Combine(generated, "original.bin")
+        ));
+        Assert.Equal("protected", File.ReadAllText(
+            Path.Combine(restored, "generated", "original.bin")
+        ));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task Recovery_ChangedIgnoredBinaryIsFlaggedEvenIfGitStatusDoesNotChange()
     {
         using Fixture fixture = await Fixture.CreateAsync();
@@ -2044,6 +2171,29 @@ public sealed class GitWorkspaceE2ETests
 
         Assert.False(Directory.Exists(fixture.WorkspacePath(999)));
         Assert.Empty(fixture.Editor.OpenedPaths);
+    }
+
+    private sealed class MutateCopyOnce(
+        SnapshotCopyPhase target,
+        Action mutation
+    ) : ISnapshotCopyProgressSink
+    {
+        private bool _mutated;
+
+        public ValueTask AfterBytesWrittenAsync(
+            SnapshotCopyPhase phase,
+            long bytesWritten,
+            CancellationToken cancellationToken
+        )
+        {
+            if (!_mutated && phase == target)
+            {
+                _mutated = true;
+                mutation();
+            }
+
+            return ValueTask.CompletedTask;
+        }
     }
 
     private sealed class CancelCopyAfterBytes(

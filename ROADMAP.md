@@ -68,6 +68,7 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [x] Simulate disk-full I/O failure *after* a working-file chunk is written during both export and side-by-side restore; E2E checks source preservation, pending/orphan evidence and safe fresh retries. Actual low-space/AV race coverage remains open.
 - [x] Test cancellation after a real partial write on export and restore; retain pending/Preparing evidence and source bytes.
 - [x] Read-only recovery inventory now checks saved Git HEAD, status, index hash and captured file hashes within a bounded scan; flags modified ignored binaries, Git index drift, missing evidence and changed HEAD without mutation. This is not an automatic repair or cleanup authorization.
+- [x] Refuse an externally occupied restore target after Git checkout rather than overwriting a foreign file; use create-new for paths absent in the clean checkout. Read-only recovery checks enumerate captured ignored directory children to flag unexpected new ignored files.
 - [x] Deterministic failpoints for snapshot export and side-by-side restore; confirm no source changes, orphan retention and successful retry.
 - [x] Test parent-initiated process kills at all six snapshot/restore checkpoints in the manual slow lane; recover by retry without touching original user files.
 - [x] Require an explicit supported snapshot manifest version on restore (missing, legacy and unknown future versions fail closed before checkout); migrations remain unimplemented.

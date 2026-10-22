@@ -246,6 +246,28 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
             cancellationToken
         );
 
+        // A new Git worktree must still be a clean checkout before applying
+        // preserved user data. Editors, sync tools or other processes can add
+        // files after Git returns; never overwrite their unexpected contents.
+        WorktreeSnapshotScan checkout = await _scanner.InspectAsync(
+            target,
+            cancellationToken
+        );
+        if (
+            !string.Equals(
+                checkout.Head,
+                manifest.HeadCommitSha,
+                StringComparison.OrdinalIgnoreCase
+            )
+            || checkout.Status.Length != 0
+        )
+        {
+            throw new InvalidOperationException(
+                "Recovery checkout changed before snapshot files were applied. "
+                    + "The isolated worktree was retained for manual inspection."
+            );
+        }
+
         foreach (WorkspaceSnapshotFile file in manifest.Files.Where(item => item.IsDirectory))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -268,7 +290,8 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
                 Path.Combine(snapshot, "files"),
                 relative
             );
-            if (File.Exists(destination) || Directory.Exists(destination))
+            bool existedAtCleanCheckout = File.Exists(destination);
+            if (existedAtCleanCheckout)
             {
                 WorkspaceSnapshotPathPolicy.EnsureNotReparse(destination);
             }
@@ -277,7 +300,7 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
             await SnapshotFileCopier.CopyAsync(
                 source,
                 destination,
-                FileMode.Create,
+                existedAtCleanCheckout ? FileMode.Create : FileMode.CreateNew,
                 SnapshotCopyPhase.RestoreWorkingFile,
                 _copyProgress,
                 cancellationToken
