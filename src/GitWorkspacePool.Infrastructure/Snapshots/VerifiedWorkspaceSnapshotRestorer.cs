@@ -90,6 +90,10 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
             throw new InvalidOperationException("Snapshot manifest is incomplete.");
         }
 
+        // Validate the complete shape *before* reading payloads, recording a
+        // restore intent, or allocating a new Git worktree.
+        ValidateManifestPaths(manifest);
+
         byte[] serializedStatus;
 
         try
@@ -459,6 +463,109 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
         }
     }
 
+    private static void ValidateManifestPaths(WorkspaceSnapshotManifest manifest)
+    {
+        // Independent staged payload paths may overlap working files, but paths
+        // within one tree must never alias or put a file above another entry.
+        HashSet<string> workingNames = PathNames();
+        HashSet<string> workingFiles = PathNames();
+        HashSet<string> stagedNames = PathNames();
+        HashSet<string> missingNames = PathNames();
+
+        foreach (WorkspaceSnapshotFile item in manifest.Files)
+        {
+            if (item is null)
+            {
+                throw new InvalidOperationException("Snapshot manifest contains a null file.");
+            }
+
+            string path = WorkspaceSnapshotPathPolicy.NormalizeRelative(item.RelativePath);
+            if (!workingNames.Add(path))
+            {
+                throw new InvalidOperationException("Duplicate snapshot working path.");
+            }
+
+            if ((item.Attributes & FileAttributes.ReparsePoint) != 0)
+            {
+                throw new InvalidOperationException("Snapshot metadata contains a reparse point.");
+            }
+
+            if (item.IsDirectory)
+            {
+                if (item.Sha256 is not null || item.Length != 0)
+                {
+                    throw new InvalidOperationException("Snapshot directory metadata is invalid.");
+                }
+            }
+            else
+            {
+                if ((item.Attributes & FileAttributes.Directory) != 0 || item.Length < 0)
+                {
+                    throw new InvalidOperationException("Snapshot file metadata is invalid.");
+                }
+
+                workingFiles.Add(path);
+            }
+        }
+
+        foreach (WorkspaceSnapshotFile item in manifest.StagedFiles)
+        {
+            if (item is null)
+            {
+                throw new InvalidOperationException("Snapshot manifest contains a null staged file.");
+            }
+
+            string path = WorkspaceSnapshotPathPolicy.NormalizeRelative(item.RelativePath);
+            if (
+                !stagedNames.Add(path)
+                || item.IsDirectory
+                || item.Length < 0
+                || (item.Attributes & (FileAttributes.ReparsePoint | FileAttributes.Directory)) != 0
+            )
+            {
+                throw new InvalidOperationException("Invalid staged snapshot path or metadata.");
+            }
+        }
+
+        foreach (string path in manifest.MissingPaths)
+        {
+            string normalized = WorkspaceSnapshotPathPolicy.NormalizeRelative(path);
+            if (!missingNames.Add(normalized) || workingNames.Contains(normalized))
+            {
+                throw new InvalidOperationException("Conflicting snapshot deletion path.");
+            }
+        }
+
+        workingFiles.UnionWith(missingNames);
+        HashSet<string> allWorkingPaths = PathNames();
+        allWorkingPaths.UnionWith(workingNames);
+        allWorkingPaths.UnionWith(missingNames);
+        RejectFileAncestors(workingFiles, allWorkingPaths);
+        RejectFileAncestors(stagedNames, stagedNames);
+    }
+
+    private static void RejectFileAncestors(
+        HashSet<string> filePaths,
+        HashSet<string> allPaths
+    )
+    {
+        foreach (string path in allPaths)
+        {
+            int separator = path.IndexOf('/');
+            while (separator >= 0)
+            {
+                if (filePaths.Contains(path[..separator]))
+                {
+                    throw new InvalidOperationException(
+                        "Snapshot manifest has a file/directory ancestor collision."
+                    );
+                }
+
+                separator = path.IndexOf('/', separator + 1);
+            }
+        }
+    }
+
     private static HashSet<string> PathNames() => new(
         OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal
     );
@@ -476,6 +583,6 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
             throw new InvalidOperationException("Snapshot path must not be empty.");
         }
 
-        return value.Replace('\\', '/');
+        return WorkspaceSnapshotPathPolicy.NormalizeRelative(value);
     }
 }

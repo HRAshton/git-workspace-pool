@@ -69,6 +69,7 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [x] Test parent-initiated process kills at all six snapshot/restore checkpoints in the manual slow lane; recover by retry without touching original user files.
 - [x] Require an explicit supported snapshot manifest version on restore (missing, legacy and unknown future versions fail closed before checkout); migrations remain unimplemented.
 - [x] Refuse snapshots with unmerged index stages, Git submodules or sparse index-directory entries before allocating snapshot storage.
+- [x] Reject ambiguous Windows path aliases, reserved device names, malformed separators, reparse-point metadata and file/ancestor collisions before restore intent; detect dangling symlink ancestors using direct attribute queries.
 - [ ] Add fault injection across release, move, park and eviction when those use cases exist. See M1/M2 in the [RC plan](docs/RELEASE_CANDIDATE_PLAN.md).
 
 **Gate:** every destructive transition can recover after simulated kill; unknown/user data is never silently removed.

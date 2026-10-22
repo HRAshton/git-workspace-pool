@@ -12,19 +12,7 @@ internal static class WorkspaceSnapshotPathPolicy
             throw new InvalidOperationException("Snapshot path must be relative.");
         }
 
-        string[] segments = relative.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries);
-
-        if (
-            segments.Length == 0
-            || segments.Any(segment =>
-                segment is "." or ".."
-                || segment.Equals(".git", StringComparison.OrdinalIgnoreCase)
-                || segment.Contains(':')
-            )
-        )
-        {
-            throw new InvalidOperationException("Snapshot contains an unsafe Git path.");
-        }
+        string[] segments = ValidateSegments(relative);
 
         string fullRoot = Path.GetFullPath(root);
         string fullPath = Path.GetFullPath(Path.Combine([fullRoot, .. segments]));
@@ -40,6 +28,61 @@ internal static class WorkspaceSnapshotPathPolicy
         }
 
         return fullPath;
+    }
+
+    /// <summary>
+    /// Rejects ambiguous Windows aliases even when the path was supplied by Git or
+    /// a manifest. Multiple spellings of one on-disk path are never safe to restore.
+    /// </summary>
+    public static string NormalizeRelative(string relative)
+    {
+        return string.Join('/', ValidateSegments(relative));
+    }
+
+    private static string[] ValidateSegments(string relative)
+    {
+        if (string.IsNullOrWhiteSpace(relative) || Path.IsPathRooted(relative))
+        {
+            throw new InvalidOperationException("Snapshot path must be relative.");
+        }
+
+        string[] segments = relative.Replace('\\', '/').Split('/');
+
+        foreach (string segment in segments)
+        {
+            if (
+                string.IsNullOrEmpty(segment)
+                || segment is "." or ".."
+                || segment.Equals(".git", StringComparison.OrdinalIgnoreCase)
+                || segment.Contains(':')
+                || segment.EndsWith(' ')
+                || segment.EndsWith('.')
+                || segment.IndexOfAny(['<', '>', '"', '|', '?', '*']) >= 0
+                || segment.Any(character => character < ' ')
+                || IsWindowsDeviceName(segment)
+            )
+            {
+                throw new InvalidOperationException(
+                    "Snapshot contains an unsafe or ambiguous Windows path."
+                );
+            }
+        }
+
+        return segments;
+    }
+
+    private static bool IsWindowsDeviceName(string segment)
+    {
+        string name = segment.Split('.')[0].ToUpperInvariant();
+        if (name is "CON" or "PRN" or "AUX" or "NUL")
+        {
+            return true;
+        }
+
+        return name.Length == 4
+            && (name.StartsWith("COM", StringComparison.Ordinal)
+                || name.StartsWith("LPT", StringComparison.Ordinal))
+            && (name[3] is >= '1' and <= '9' or '¹' or '²' or '³');
     }
 
     public static void EnsureSeparated(string workspaceRoot, string snapshotRoot)
@@ -70,9 +113,19 @@ internal static class WorkspaceSnapshotPathPolicy
 
         while (true)
         {
-            if (File.Exists(current) || Directory.Exists(current))
+            // File.Exists/Directory.Exists can both be false for a dangling
+            // symlink. Query attributes directly to identify the link itself.
+            try
             {
                 EnsureNotReparse(current);
+            }
+            catch (FileNotFoundException)
+            {
+                // A nonexistent component is safe only after its parents are checked.
+            }
+            catch (DirectoryNotFoundException)
+            {
+                // Continue walking towards a potentially linked ancestor.
             }
 
             string? parent = Path.GetDirectoryName(current);

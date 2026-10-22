@@ -1107,6 +1107,134 @@ public sealed class GitWorkspaceE2ETests
 
     [Theory]
     [Trait("Category", "FastE2E")]
+    [InlineData("feature.txt.")]
+    [InlineData("feature.txt ")]
+    [InlineData("CON.txt")]
+    [InlineData("NUL")]
+    [InlineData("feature//second.txt")]
+    [InlineData("dir\\\\..\\\\feature.txt")]
+    public async Task Snapshot_UnsafeWindowsAliasInManifestIsRejectedBeforeAllocation(string unsafePath)
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string original = Path.Combine(opened.WorkspacePath, "feature.txt");
+        File.WriteAllText(original, "preserve user edits");
+
+        WorkspaceSnapshotReceipt receipt = await fixture.SnapshotAsync();
+        string manifestPath = Path.Combine(receipt.Folder, "manifest.json");
+        WorkspaceSnapshotManifest manifest = JsonSerializer.Deserialize<WorkspaceSnapshotManifest>(
+            File.ReadAllText(manifestPath)
+        )!;
+        int fileIndex = manifest.Files.FindIndex(file => !file.IsDirectory);
+        Assert.True(fileIndex >= 0);
+        manifest.Files[fileIndex] = manifest.Files[fileIndex] with { RelativePath = unsafePath };
+        File.WriteAllText(manifestPath, JsonSerializer.Serialize(manifest));
+
+        InvalidOperationException failure = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.RestoreSnapshotAsync(receipt.SnapshotId)
+        );
+
+        Assert.Contains("path", failure.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("preserve user edits", File.ReadAllText(original));
+        Assert.False(Directory.Exists(fixture.RecoveryRoot));
+        Assert.Empty(
+            await new SqliteWorkspaceSessionJournal(fixture.DatabasePath)
+                .ListRecoveryRestoresAsync(CancellationToken.None)
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task Snapshot_CaseAliasedPathsAreRejectedBeforeAllocation()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string original = Path.Combine(opened.WorkspacePath, "feature.txt");
+        File.WriteAllText(original, "preserve case-sensitive user data");
+        WorkspaceSnapshotReceipt receipt = await fixture.SnapshotAsync();
+
+        string manifestPath = Path.Combine(receipt.Folder, "manifest.json");
+        WorkspaceSnapshotManifest manifest = JsonSerializer.Deserialize<WorkspaceSnapshotManifest>(
+            File.ReadAllText(manifestPath)
+        )!;
+        WorkspaceSnapshotFile file = Assert.Single(
+            manifest.Files.Where(item => !item.IsDirectory)
+        );
+        manifest.Files.Add(file with { RelativePath = file.RelativePath.ToUpperInvariant() });
+        File.WriteAllText(manifestPath, JsonSerializer.Serialize(manifest));
+
+        InvalidOperationException failure = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.RestoreSnapshotAsync(receipt.SnapshotId)
+        );
+
+        Assert.Contains("Duplicate snapshot working path", failure.Message);
+        Assert.Equal("preserve case-sensitive user data", File.ReadAllText(original));
+        Assert.False(Directory.Exists(fixture.RecoveryRoot));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task Snapshot_ReparsePointMetadataIsRejectedBeforeAllocation()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string original = Path.Combine(opened.WorkspacePath, "feature.txt");
+        File.WriteAllText(original, "original stays");
+        WorkspaceSnapshotReceipt receipt = await fixture.SnapshotAsync();
+
+        string manifestPath = Path.Combine(receipt.Folder, "manifest.json");
+        WorkspaceSnapshotManifest manifest = JsonSerializer.Deserialize<WorkspaceSnapshotManifest>(
+            File.ReadAllText(manifestPath)
+        )!;
+        int index = manifest.Files.FindIndex(item => !item.IsDirectory);
+        Assert.True(index >= 0);
+        manifest.Files[index] = manifest.Files[index] with
+        {
+            Attributes = manifest.Files[index].Attributes | FileAttributes.ReparsePoint,
+        };
+        File.WriteAllText(manifestPath, JsonSerializer.Serialize(manifest));
+
+        InvalidOperationException failure = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.RestoreSnapshotAsync(receipt.SnapshotId)
+        );
+
+        Assert.Contains("reparse point", failure.Message);
+        Assert.Equal("original stays", File.ReadAllText(original));
+        Assert.False(Directory.Exists(fixture.RecoveryRoot));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task Snapshot_FileAncestorCollisionIsRejectedBeforeAllocation()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string sourceFile = Path.Combine(opened.WorkspacePath, "feature.txt");
+        File.WriteAllText(sourceFile, "keep me");
+
+        WorkspaceSnapshotReceipt receipt = await fixture.SnapshotAsync();
+        string manifestPath = Path.Combine(receipt.Folder, "manifest.json");
+        WorkspaceSnapshotManifest manifest = JsonSerializer.Deserialize<WorkspaceSnapshotManifest>(
+            File.ReadAllText(manifestPath)
+        )!;
+        manifest.MissingPaths.Add("feature.txt/nested.txt");
+        File.WriteAllText(manifestPath, JsonSerializer.Serialize(manifest));
+
+        InvalidOperationException failure = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.RestoreSnapshotAsync(receipt.SnapshotId)
+        );
+
+        Assert.Contains("ancestor collision", failure.Message);
+        Assert.Equal("keep me", File.ReadAllText(sourceFile));
+        Assert.False(Directory.Exists(fixture.RecoveryRoot));
+        Assert.Empty(
+            await new SqliteWorkspaceSessionJournal(fixture.DatabasePath)
+                .ListRecoveryRestoresAsync(CancellationToken.None)
+        );
+    }
+
+    [Theory]
+    [Trait("Category", "FastE2E")]
     [InlineData(null)]
     [InlineData(1)]
     [InlineData(3)]
