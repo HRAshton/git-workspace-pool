@@ -20,6 +20,7 @@ namespace GitWorkspacePool.Tests.Integration;
 public sealed class GitWorkspaceE2ETests
 {
     private const string PullRequestUrl = "https://github.com/owner/repo/pull/17";
+    private const int MaxSnapshotManifestBytes = 16 * 1024 * 1024;
 
     [Fact]
     [Trait("Category", "FastE2E")]
@@ -2858,7 +2859,7 @@ public sealed class GitWorkspaceE2ETests
                 ));
                 File.AppendAllText(
                     Path.Combine(pending, "manifest.json"),
-                    new string(' ', SnapshotManifestIO.MaxBytes)
+                    new string(' ', MaxSnapshotManifestBytes)
                 );
                 return Task.CompletedTask;
             }
@@ -2889,7 +2890,7 @@ public sealed class GitWorkspaceE2ETests
 
         File.AppendAllText(
             Path.Combine(receipt.Folder, "manifest.json"),
-            new string(' ', SnapshotManifestIO.MaxBytes)
+            new string(' ', MaxSnapshotManifestBytes)
         );
 
         InvalidOperationException failure = await Assert.ThrowsAsync<InvalidOperationException>(
