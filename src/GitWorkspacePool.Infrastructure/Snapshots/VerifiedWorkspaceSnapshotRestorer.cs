@@ -273,17 +273,20 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
         // not be overwritten by the saved index bytes.
         string cleanIndexPath = checkout.IndexPath;
         WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(cleanIndexPath);
-        await using FileStream cleanIndex = new(
+        string cleanIndexSha256;
+        await using (FileStream cleanIndex = new(
             cleanIndexPath,
             FileMode.Open,
             FileAccess.Read,
             FileShare.Read,
             bufferSize: 65536,
             FileOptions.SequentialScan
-        );
-        string cleanIndexSha256 = Convert.ToHexString(
-            await SHA256.HashDataAsync(cleanIndex, cancellationToken)
-        );
+        ))
+        {
+            cleanIndexSha256 = Convert.ToHexString(
+                await SHA256.HashDataAsync(cleanIndex, cancellationToken)
+            );
+        }
 
         // Remember the exact file occupants present at the verified clean
         // checkout. Testing File.Exists only at copy time is unsafe: a foreign
