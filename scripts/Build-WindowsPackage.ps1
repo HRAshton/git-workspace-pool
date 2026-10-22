@@ -5,7 +5,10 @@ param(
     [ValidatePattern('^GitWorkspacePool-win-x64-[A-Za-z0-9.-]+$')]
     [string] $PackageBaseName = 'GitWorkspacePool-win-x64-preview',
 
-    [string] $PackageVersion = ''
+    [string] $PackageVersion = '',
+
+    [ValidateSet('RC1', 'RC2')]
+    [string] $ReleaseDocsPrefix = 'RC1'
 )
 
 Set-StrictMode -Version Latest
@@ -48,11 +51,12 @@ if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
 
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Install-PerUser.ps1') -Destination $package
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Unregister-PerUser.ps1') -Destination $package
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Backup-PerUserState.ps1') -Destination $package
 Copy-Item -LiteralPath (Join-Path $projectRoot 'userscript/git-workspace-pool.user.js') -Destination $package
 
 if ($PackageVersion) {
-    Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/RC1_RELEASE_NOTES.md') -Destination $package
-    Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/RC1_ACCEPTANCE.md') -Destination $package
+    Copy-Item -LiteralPath (Join-Path $projectRoot ("docs/" + $ReleaseDocsPrefix + "_RELEASE_NOTES.md")) -Destination $package
+    Copy-Item -LiteralPath (Join-Path $projectRoot ("docs/" + $ReleaseDocsPrefix + "_ACCEPTANCE.md")) -Destination $package
 }
 
 $zipName = "$PackageBaseName.zip"

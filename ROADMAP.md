@@ -126,6 +126,7 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [ ] GitLab, Bitbucket, Azure DevOps PR URL adapters.
 - [ ] Provider-specific fetch/head resolution; support fork PRs without assuming `origin`.
 - [x] Add an unsigned, self-contained Windows x64 preview ZIP with versioned per-user installation, HKCU protocol registration, conservative unregistration, SHA-256 checksum, an included userscript, and a no-UI launch / idempotent-upgrade smoke in PR CI. Existing settings, snapshots, worktrees, and prior versions remain untouched.
+- [x] Ship an RC2 verified backup-first helper for closed SQLite journal/sidecars and settings: refuse overlapping/occupied destinations and reparse points, record SHA-256 evidence, and exercise an isolated older-profile fixture in Windows packaging smoke. **Manual full-profile migration/rollback remains outstanding.**
 - [ ] Provide signed MSI/MSIX or equivalent distribution, real Windows tray/browser/VS Code installed smoke, and supported upgrade/rollback from existing preview builds.
 - [ ] Multi-repository settings UI and user-friendly setup beyond JSON configuration.
 - [ ] Diagnostics, opt-in performance traces, reproducible benchmark suite.

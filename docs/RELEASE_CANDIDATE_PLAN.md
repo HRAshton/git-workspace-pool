@@ -106,6 +106,11 @@
 - [ ] User-facing session list, status, progress, disk usage, pin/release/park/recover and diagnostics.
 - [ ] Clear consent around external protocol invocations; no commands/paths embedded in untrusted browser input.
 
+### RC2 — verified backup-first migration (incremental gate)
+
+- [x] Package a manual backup helper for a stopped user profile, preserving SQLite journal/WAL/SHM and settings with SHA-256 manifest; reject overwrite, linked or overlapping paths and running tray. RC2 Windows candidate CI checks a disposable previous-profile fixture, package install smoke and extended crash E2E.
+- [ ] Demonstrate real pre-RC user-data upgrade, full worktree/snapshot backup, restored matching older SQLite DB rollback, actual browser/tray/VS Code integration and signed distribution before release approval. Refer to [RC2 acceptance](RC2_ACCEPTANCE.md).
+
 ### M6 — release engineering
 
 - [ ] .NET SDK, dependencies and Git minimum version pinned and reproducible.
