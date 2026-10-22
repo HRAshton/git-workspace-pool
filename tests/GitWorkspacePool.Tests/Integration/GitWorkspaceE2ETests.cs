@@ -2238,6 +2238,47 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task Restore_RejectsNewFileHiddenInsideAlreadyIgnoredDirectory()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string source = opened.WorkspacePath;
+        File.WriteAllText(Path.Combine(source, ".gitignore"), "generated/\n");
+        Directory.CreateDirectory(Path.Combine(source, "generated"));
+        string original = Path.Combine(source, "generated", "saved.bin");
+        File.WriteAllText(original, "saved ignored data");
+        WorkspaceSnapshotReceipt snapshot = await fixture.SnapshotAsync();
+
+        string? foreign = null;
+        ISnapshotCheckpointSink addForeignIgnoredFile = new MutateAtCheckpoint(
+            SnapshotCheckpoint.RestoreIndexApplied,
+            () =>
+            {
+                string recovery = Assert.Single(Directory.GetDirectories(fixture.RecoveryRoot));
+                foreign = Path.Combine(recovery, "generated", "outside-editor.bin");
+                File.WriteAllText(foreign, "separately created user data");
+                return Task.CompletedTask;
+            }
+        );
+
+        InvalidOperationException failure = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.RestoreSnapshotAsync(snapshot.SnapshotId, addForeignIgnoredFile)
+        );
+
+        Assert.Contains("unexpected filesystem occupant", failure.Message);
+        Assert.NotNull(foreign);
+        Assert.Equal("separately created user data", File.ReadAllText(foreign));
+        Assert.Equal("saved ignored data", File.ReadAllText(original));
+        Assert.Equal(WorkspaceSessionState.Active, (await fixture.OwnedSessionAsync()).State);
+        WorkspaceRestoreOperation pending = Assert.Single(
+            await new SqliteWorkspaceSessionJournal(fixture.DatabasePath)
+                .ListRecoveryRestoresAsync(CancellationToken.None)
+        );
+        Assert.Equal(WorkspaceRestoreState.Preparing, pending.State);
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task Restore_PreservesIgnoredEmptyDirectoryMetadata()
     {
         using Fixture fixture = await Fixture.CreateAsync();
