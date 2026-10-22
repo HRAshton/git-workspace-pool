@@ -42,7 +42,8 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [x] Test SQLite v3 → v4 schema upgrade preserving existing session, snapshot and restore foreign-key references.
 - [x] Forbid automatic reactivation of quarantined `RecoveryRequired` sessions.
 - [ ] Extend state machine to released / warm / parked with safe ownership transfers.
-- [ ] Explicit release only. No release inferred from editor lifecycle.
+- [x] Explicit parking/unparking through Git-aware worktree moves, preserving staged/ignored/untracked files and journal ownership; no release inferred from editor lifecycle.
+- [ ] Safe release and recycling after relocation safety gates.
 - [x] Implement explicit non-destructive snapshot export for staged/unstaged, untracked, ignored and binary files, with independent staged blobs and a Git index.
 - [x] Restore a journalled snapshot into a separate Git worktree on the saved commit; verify index, working tree files and exact Git status.
 - [x] Reject corrupted payloads and manifest path traversal before allocating a recovery worktree.

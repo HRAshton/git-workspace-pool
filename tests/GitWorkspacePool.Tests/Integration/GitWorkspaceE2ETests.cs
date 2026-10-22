@@ -264,6 +264,134 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task Parking_RoundTripPreservesStagedUnstagedIgnoredAndUntrackedFiles()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        WorkspaceSession session = await fixture.OwnedSessionAsync();
+        string changed = Path.Combine(opened.WorkspacePath, "feature.txt");
+        File.WriteAllText(changed, "stage one");
+        await fixture.GitInWorkspaceAsync("add", "feature.txt");
+        File.WriteAllText(changed, "working two");
+        File.WriteAllText(Path.Combine(opened.WorkspacePath, ".gitignore"), "generated/\n");
+        Directory.CreateDirectory(Path.Combine(opened.WorkspacePath, "generated"));
+        File.WriteAllBytes(Path.Combine(opened.WorkspacePath, "generated", "ignored.bin"), [0, 255, 19]);
+        File.WriteAllText(Path.Combine(opened.WorkspacePath, "notes.local"), "keep this too");
+
+        string parked = await fixture.ParkAsync(session.OperationId);
+
+        Assert.False(Directory.Exists(opened.WorkspacePath));
+        Assert.True(await fixture.IsRegisteredWorktreeAsync(parked));
+        Assert.False(await fixture.IsRegisteredWorktreeAsync(opened.WorkspacePath));
+        Assert.Equal(WorkspaceSessionState.Parked, (await fixture.SessionAsync(session.OperationId))!.State);
+        Assert.Equal("working two", File.ReadAllText(Path.Combine(parked, "feature.txt")));
+        Assert.Equal("keep this too", File.ReadAllText(Path.Combine(parked, "notes.local")));
+        Assert.Equal(new byte[] { 0, 255, 19 },
+            File.ReadAllBytes(Path.Combine(parked, "generated", "ignored.bin")));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.OpenWithFreshHandlerAsync(PullRequestUrl)
+        );
+
+        string restored = await fixture.UnparkAsync(session.OperationId);
+        Assert.Equal(opened.WorkspacePath, restored);
+        Assert.False(Directory.Exists(parked));
+        Assert.True(await fixture.IsRegisteredWorktreeAsync(restored));
+        Assert.Equal(WorkspaceSessionState.Active, (await fixture.SessionAsync(session.OperationId))!.State);
+        Assert.Equal("stage one", await fixture.ReadStagedFeatureAsync());
+        Assert.Equal("working two", File.ReadAllText(changed));
+        Assert.Equal("keep this too", File.ReadAllText(Path.Combine(restored, "notes.local")));
+        Assert.Equal(new byte[] { 0, 255, 19 },
+            File.ReadAllBytes(Path.Combine(restored, "generated", "ignored.bin")));
+        Assert.True((await fixture.OpenWithFreshHandlerAsync(PullRequestUrl)).Reused);
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task Parking_InterruptedJournalAndMoveCanBeSafelyRetried()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        WorkspaceSession session = await fixture.OwnedSessionAsync();
+        File.WriteAllText(Path.Combine(opened.WorkspacePath, "notes.local"), "do not lose");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.ParkAsync(
+                session.OperationId,
+                new ThrowAtParkingCheckpoint(WorkspaceParkingCheckpoint.ParkingIntentRecorded)
+            )
+        );
+        Assert.Equal(WorkspaceSessionState.Parking, (await fixture.SessionAsync(session.OperationId))!.State);
+        Assert.True(Directory.Exists(opened.WorkspacePath));
+
+        string parked = await fixture.ParkAsync(session.OperationId);
+        Assert.Equal("do not lose", File.ReadAllText(Path.Combine(parked, "notes.local")));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.UnparkAsync(
+                session.OperationId,
+                new ThrowAtParkingCheckpoint(WorkspaceParkingCheckpoint.UnparkedWorktreeMoved)
+            )
+        );
+        Assert.Equal(WorkspaceSessionState.Unparking, (await fixture.SessionAsync(session.OperationId))!.State);
+        Assert.True(Directory.Exists(opened.WorkspacePath));
+        Assert.False(Directory.Exists(parked));
+
+        string returned = await fixture.UnparkAsync(session.OperationId);
+        Assert.Equal(opened.WorkspacePath, returned);
+        Assert.Equal(WorkspaceSessionState.Active, (await fixture.SessionAsync(session.OperationId))!.State);
+        Assert.Equal("do not lose", File.ReadAllText(Path.Combine(returned, "notes.local")));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.ParkAsync(
+                session.OperationId,
+                new ThrowAtParkingCheckpoint(WorkspaceParkingCheckpoint.ParkedWorktreeMoved)
+            )
+        );
+        Assert.Equal(WorkspaceSessionState.Parking, (await fixture.SessionAsync(session.OperationId))!.State);
+        Assert.False(Directory.Exists(returned));
+        Assert.Equal("do not lose",
+            File.ReadAllText(Path.Combine((await fixture.SessionAsync(session.OperationId))!.ParkingPath!, "notes.local")));
+        await fixture.ParkAsync(session.OperationId);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.UnparkAsync(
+                session.OperationId,
+                new ThrowAtParkingCheckpoint(WorkspaceParkingCheckpoint.UnparkingIntentRecorded)
+            )
+        );
+        Assert.Equal(WorkspaceSessionState.Unparking, (await fixture.SessionAsync(session.OperationId))!.State);
+        Assert.True(Directory.Exists(parked));
+        Assert.Equal(returned, await fixture.UnparkAsync(session.OperationId));
+        Assert.Equal("do not lose", File.ReadAllText(Path.Combine(returned, "notes.local")));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task Parking_UnparkRefusesOccupiedDestinationWithoutChangingEitherTree()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        WorkspaceSession session = await fixture.OwnedSessionAsync();
+        File.WriteAllText(Path.Combine(opened.WorkspacePath, "notes.local"), "parked data");
+        string parked = await fixture.ParkAsync(session.OperationId);
+
+        Directory.CreateDirectory(opened.WorkspacePath);
+        File.WriteAllText(Path.Combine(opened.WorkspacePath, "other-user.txt"), "foreign data");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.UnparkAsync(session.OperationId)
+        );
+
+        Assert.Equal("foreign data", File.ReadAllText(
+            Path.Combine(opened.WorkspacePath, "other-user.txt")));
+        Assert.Equal("parked data", File.ReadAllText(Path.Combine(parked, "notes.local")));
+        Assert.Equal(WorkspaceSessionState.Parked, (await fixture.SessionAsync(session.OperationId))!.State);
+        Assert.True(await fixture.IsRegisteredWorktreeAsync(parked));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task OpenPullRequest_RefusesForeignDirectoryWithoutDeletingFiles()
     {
         using Fixture fixture = await Fixture.CreateAsync();
@@ -990,6 +1118,24 @@ public sealed class GitWorkspaceE2ETests
         }
     }
 
+    private sealed class ThrowAtParkingCheckpoint(
+        WorkspaceParkingCheckpoint expected
+    ) : IWorkspaceParkingCheckpointSink
+    {
+        public ValueTask AfterAsync(
+            WorkspaceParkingCheckpoint checkpoint,
+            CancellationToken cancellationToken
+        )
+        {
+            if (checkpoint == expected)
+            {
+                throw new InvalidOperationException("Injected parking failure at " + checkpoint);
+            }
+
+            return ValueTask.CompletedTask;
+        }
+    }
+
     private sealed class ThrowAtCheckpoint(SnapshotCheckpoint expected) : ISnapshotCheckpointSink
     {
         public ValueTask OnCheckpointAsync(
@@ -1182,6 +1328,38 @@ public sealed class GitWorkspaceE2ETests
                 new WorkspaceDirectories()
             );
             return await service.SuspendAsync(operationId, CancellationToken.None);
+        }
+
+        public Task<string> ParkAsync(
+            Guid operationId,
+            IWorkspaceParkingCheckpointSink? checkpoint = null
+        )
+        {
+            SqliteWorkspaceSessionJournal journal = new(DatabasePath);
+            ParkWorkspaceSessionService service = new(
+                journal,
+                journal,
+                new FileWorkspaceOperationLock(Path.Combine(_root, "state", "locks")),
+                new GitWorkspaceParkingOperations(new GitCliWorkspaceGit()),
+                checkpoint
+            );
+            return service.ParkAsync(operationId, CancellationToken.None);
+        }
+
+        public Task<string> UnparkAsync(
+            Guid operationId,
+            IWorkspaceParkingCheckpointSink? checkpoint = null
+        )
+        {
+            SqliteWorkspaceSessionJournal journal = new(DatabasePath);
+            ParkWorkspaceSessionService service = new(
+                journal,
+                journal,
+                new FileWorkspaceOperationLock(Path.Combine(_root, "state", "locks")),
+                new GitWorkspaceParkingOperations(new GitCliWorkspaceGit()),
+                checkpoint
+            );
+            return service.UnparkAsync(operationId, CancellationToken.None);
         }
 
         public Task<IReadOnlyList<WorkspaceSnapshotRecord>> ListPublishedSnapshotsAsync()

@@ -8,12 +8,12 @@ namespace GitWorkspacePool.Infrastructure;
 /// <summary>
 /// Durable, transactional workspace ownership and append-only operation events.
 /// </summary>
-public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IWorkspaceSnapshotSessionStore, IWorkspaceRecoveryJournal, IWorkspaceRestoreJournal
+public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IWorkspaceSnapshotSessionStore, IWorkspaceRecoveryJournal, IWorkspaceRestoreJournal, IWorkspaceParkingJournal
 {
     private readonly string _connectionString;
 
     /// <summary>
-    /// Initializes or upgrades the local SQLite journal to schema version four.
+    /// Initializes or upgrades the local SQLite journal to schema version five.
     /// </summary>
     public SqliteWorkspaceSessionJournal(string databasePath)
     {
@@ -35,12 +35,12 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
         version.CommandText = "PRAGMA user_version";
         long currentVersion = (long)version.ExecuteScalar()!;
 
-        if (currentVersion > 4)
+        if (currentVersion > 5)
         {
             throw new InvalidOperationException("Session journal schema is newer than this application.");
         }
 
-        if (currentVersion is > 0 and < 4)
+        if (currentVersion is > 0 and < 5)
         {
             UpgradeSessionStateConstraint(connection);
         }
@@ -53,8 +53,10 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
                 pr_number INTEGER NOT NULL CHECK (pr_number > 0),
                 source_path TEXT NOT NULL COLLATE NOCASE,
                 workspace_path TEXT NOT NULL COLLATE NOCASE UNIQUE,
-                state TEXT NOT NULL CHECK (state IN ('Preparing', 'Active', 'Suspended', 'RecoveryRequired')),
+                state TEXT NOT NULL CHECK (state IN ('Preparing', 'Active', 'Suspended', 'Parking', 'Parked', 'Unparking', 'RecoveryRequired')),
                 pinned_commit TEXT,
+                parking_path TEXT COLLATE NOCASE UNIQUE,
+                parking_head TEXT,
                 updated_utc TEXT NOT NULL,
                 UNIQUE (repository_key, pr_number)
             );
@@ -85,7 +87,7 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
                 updated_utc TEXT NOT NULL
             );
 
-            PRAGMA user_version = 4;
+            PRAGMA user_version = 5;
             """;
         schema.ExecuteNonQuery();
     }
@@ -115,7 +117,7 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
         get.Transaction = transaction;
         get.CommandText = """
             SELECT operation_id, repository_key, pr_number, source_path,
-                   workspace_path, state, pinned_commit
+                   workspace_path, state, pinned_commit, parking_path, parking_head
               FROM sessions
              WHERE repository_key = $repository_key AND pr_number = $pr_number
             """;
@@ -187,7 +189,7 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = """
             SELECT operation_id, repository_key, pr_number, source_path,
-                   workspace_path, state, pinned_commit
+                   workspace_path, state, pinned_commit, parking_path, parking_head
               FROM sessions
              WHERE operation_id = $id
             """;
@@ -207,7 +209,7 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = """
             SELECT operation_id, repository_key, pr_number, source_path,
-                   workspace_path, state, pinned_commit
+                   workspace_path, state, pinned_commit, parking_path, parking_head
               FROM sessions
              WHERE state = 'Active'
              ORDER BY updated_utc DESC
@@ -389,7 +391,8 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
     private const string SnapshotSelect = """
         SELECT sessions.operation_id, sessions.repository_key, sessions.pr_number,
                sessions.source_path, sessions.workspace_path, sessions.state,
-               sessions.pinned_commit, snapshots.snapshot_id, snapshots.folder,
+               sessions.pinned_commit, sessions.parking_path, sessions.parking_head,
+               snapshots.snapshot_id, snapshots.folder,
                snapshots.file_count, snapshots.copied_bytes
           FROM snapshots
           JOIN sessions ON sessions.operation_id = snapshots.operation_id
@@ -399,11 +402,11 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
     {
         WorkspaceSession session = Map(reader);
         WorkspaceSnapshotReceipt receipt = new(
-            Guid.Parse(reader.GetString(7)),
+            Guid.Parse(reader.GetString(9)),
             session.OperationId,
-            reader.GetString(8),
-            reader.GetInt32(9),
-            reader.GetInt64(10)
+            reader.GetString(10),
+            reader.GetInt32(11),
+            reader.GetInt64(12)
         );
         return new WorkspaceSnapshotRecord(session, receipt);
     }
@@ -520,13 +523,124 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
     }
 
     /// <inheritdoc/>
+    public Task<IReadOnlyList<WorkspaceSession>> ListParkCandidatesAsync(
+        CancellationToken cancellationToken
+    ) => ListByParkingStatesAsync(
+        "WHERE state IN ('Active', 'Suspended', 'Parking')", cancellationToken
+    );
+
+    /// <inheritdoc/>
+    public Task<IReadOnlyList<WorkspaceSession>> ListUnparkCandidatesAsync(
+        CancellationToken cancellationToken
+    ) => ListByParkingStatesAsync(
+        "WHERE state IN ('Parked', 'Unparking')", cancellationToken
+    );
+
+    private Task<IReadOnlyList<WorkspaceSession>> ListByParkingStatesAsync(
+        string restriction,
+        CancellationToken cancellationToken
+    )
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using SqliteConnection connection = Open();
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT operation_id, repository_key, pr_number, source_path,
+                   workspace_path, state, pinned_commit, parking_path, parking_head
+              FROM sessions
+            """ + " " + restriction + " ORDER BY updated_utc DESC LIMIT 1000";
+        List<WorkspaceSession> sessions = [];
+        using SqliteDataReader reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            sessions.Add(Map(reader));
+        }
+
+        return Task.FromResult<IReadOnlyList<WorkspaceSession>>(sessions);
+    }
+
+    /// <inheritdoc/>
+    public Task BeginParkingAsync(
+        Guid id,
+        string parkingPath,
+        string headCommit,
+        CancellationToken cancellationToken
+    )
+    {
+        if (headCommit.Length is not (40 or 64) || !headCommit.All(Uri.IsHexDigit))
+        {
+            throw new ArgumentException("A full commit SHA is required.", nameof(headCommit));
+        }
+
+        Transition(
+            id,
+            "ParkingIntent",
+            "UPDATE sessions SET state = 'Parking', parking_path = $parking, "
+                + "parking_head = $head, updated_utc = $utc "
+                + "WHERE operation_id = $id AND state IN ('Active', 'Suspended') "
+                + "AND parking_path IS NULL",
+            command =>
+            {
+                command.Parameters.AddWithValue("$parking", Path.GetFullPath(parkingPath));
+                command.Parameters.AddWithValue("$head", headCommit);
+            },
+            cancellationToken
+        );
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc/>
+    public Task CompleteParkingAsync(Guid id, CancellationToken cancellationToken)
+    {
+        Transition(
+            id,
+            "Parked",
+            "UPDATE sessions SET state = 'Parked', updated_utc = $utc "
+                + "WHERE operation_id = $id AND state = 'Parking' "
+                + "AND parking_path IS NOT NULL AND parking_head IS NOT NULL",
+            null,
+            cancellationToken
+        );
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc/>
+    public Task BeginUnparkingAsync(Guid id, CancellationToken cancellationToken)
+    {
+        Transition(
+            id,
+            "UnparkingIntent",
+            "UPDATE sessions SET state = 'Unparking', updated_utc = $utc "
+                + "WHERE operation_id = $id AND state = 'Parked'",
+            null,
+            cancellationToken
+        );
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc/>
+    public Task CompleteUnparkingAsync(Guid id, CancellationToken cancellationToken)
+    {
+        Transition(
+            id,
+            "Unparked",
+            "UPDATE sessions SET state = 'Active', parking_path = NULL, "
+                + "parking_head = NULL, updated_utc = $utc "
+                + "WHERE operation_id = $id AND state = 'Unparking'",
+            null,
+            cancellationToken
+        );
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc/>
     public Task RequireRecoveryAsync(Guid operationId, CancellationToken cancellationToken)
     {
         Transition(
             operationId,
             "RecoveryRequired",
             "UPDATE sessions SET state = 'RecoveryRequired', updated_utc = $utc "
-                + "WHERE operation_id = $id AND state IN ('Preparing', 'Active', 'RecoveryRequired')",
+                + "WHERE operation_id = $id AND state IN ('Preparing', 'Active', 'Suspended', 'Parking', 'Parked', 'Unparking', 'RecoveryRequired')",
             null,
             cancellationToken
         );
@@ -550,21 +664,24 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
             using SqliteCommand rebuild = connection.CreateCommand();
             rebuild.Transaction = transaction;
             rebuild.CommandText = """
-                CREATE TABLE sessions_v4 (
+                CREATE TABLE sessions_v5 (
                     operation_id TEXT PRIMARY KEY,
                     repository_key TEXT NOT NULL COLLATE NOCASE,
                     pr_number INTEGER NOT NULL CHECK (pr_number > 0),
                     source_path TEXT NOT NULL COLLATE NOCASE,
                     workspace_path TEXT NOT NULL COLLATE NOCASE UNIQUE,
                     state TEXT NOT NULL CHECK (state IN (
-                        'Preparing', 'Active', 'Suspended', 'RecoveryRequired'
+                        'Preparing', 'Active', 'Suspended', 'Parking', 'Parked',
+                        'Unparking', 'RecoveryRequired'
                     )),
                     pinned_commit TEXT,
+                    parking_path TEXT COLLATE NOCASE UNIQUE,
+                    parking_head TEXT,
                     updated_utc TEXT NOT NULL,
                     UNIQUE (repository_key, pr_number)
                 );
 
-                INSERT INTO sessions_v4(
+                INSERT INTO sessions_v5(
                     operation_id, repository_key, pr_number, source_path,
                     workspace_path, state, pinned_commit, updated_utc
                 )
@@ -573,7 +690,7 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
                   FROM sessions;
 
                 DROP TABLE sessions;
-                ALTER TABLE sessions_v4 RENAME TO sessions;
+                ALTER TABLE sessions_v5 RENAME TO sessions;
                 """;
             rebuild.ExecuteNonQuery();
             transaction.Commit();
@@ -606,7 +723,9 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
             reader.GetString(3),
             reader.GetString(4),
             Enum.Parse<WorkspaceSessionState>(reader.GetString(5), ignoreCase: false),
-            reader.IsDBNull(6) ? null : reader.GetString(6)
+            reader.IsDBNull(6) ? null : reader.GetString(6),
+            reader.IsDBNull(7) ? null : reader.GetString(7),
+            reader.IsDBNull(8) ? null : reader.GetString(8)
         );
     }
 

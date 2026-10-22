@@ -204,7 +204,7 @@ public sealed class SqliteWorkspaceSessionJournalTests
     }
 
     [Fact]
-    public async Task SchemaV3Upgrade_PreservesSessionsSnapshotsAndRestoreReferences()
+    public async Task SchemaV3Upgrade_PreservesSessionsSnapshotsAndRestoreReferencesInV5()
     {
         using Fixture fixture = new();
         Directory.CreateDirectory(Path.GetDirectoryName(fixture.DatabasePath)!);
@@ -318,7 +318,52 @@ public sealed class SqliteWorkspaceSessionJournalTests
         check.CommandText = "PRAGMA foreign_key_check";
         Assert.Null(check.ExecuteScalar());
         check.CommandText = "PRAGMA user_version";
-        Assert.Equal(4L, check.ExecuteScalar());
+        Assert.Equal(5L, check.ExecuteScalar());
+    }
+
+    [Fact]
+    public async Task Journal_ParkingIntentsSurviveRestartAndRejectIllegalTransitions()
+    {
+        using Fixture fixture = new();
+        SqliteWorkspaceSessionJournal journal = fixture.CreateJournal();
+        WorkspaceSession session = await fixture.ReserveAsync(journal);
+        await journal.PinCommitAsync(session.OperationId, new string('a', 40), CancellationToken.None);
+        await journal.ActivateAsync(session.OperationId, CancellationToken.None);
+        string destination = Path.Combine(fixture.LockRoot, "parked");
+
+        await journal.BeginParkingAsync(
+            session.OperationId,
+            destination,
+            new string('b', 40),
+            CancellationToken.None
+        );
+
+        SqliteWorkspaceSessionJournal reopened = fixture.CreateJournal();
+        WorkspaceSession preparing = Assert.Single(
+            await reopened.ListParkCandidatesAsync(CancellationToken.None)
+        );
+        Assert.Equal(WorkspaceSessionState.Parking, preparing.State);
+        Assert.Equal(destination, preparing.ParkingPath);
+        Assert.Equal(new string('b', 40), preparing.ParkingCommitSha);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => reopened.ResumeAsync(session.OperationId, CancellationToken.None)
+        );
+        await reopened.CompleteParkingAsync(session.OperationId, CancellationToken.None);
+        Assert.Equal(WorkspaceSessionState.Parked,
+            Assert.Single(await reopened.ListUnparkCandidatesAsync(CancellationToken.None)).State);
+
+        await reopened.BeginUnparkingAsync(session.OperationId, CancellationToken.None);
+        Assert.Equal(WorkspaceSessionState.Unparking,
+            (await reopened.FindAsync(session.OperationId, CancellationToken.None))!.State);
+        await reopened.CompleteUnparkingAsync(session.OperationId, CancellationToken.None);
+
+        WorkspaceSession resumed = (await reopened.FindAsync(
+            session.OperationId, CancellationToken.None
+        ))!;
+        Assert.Equal(WorkspaceSessionState.Active, resumed.State);
+        Assert.Null(resumed.ParkingPath);
+        Assert.Null(resumed.ParkingCommitSha);
     }
 
     [Fact]

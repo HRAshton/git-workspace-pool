@@ -76,6 +76,15 @@ The journal is an ownership protocol, not a transactional filesystem. No automat
 - SQLite v4 expands the session state constraint through a transactional table rebuild while retaining session, snapshot, restore and audit foreign keys. Explicit version migration is tested from a v3 database.
 - Suspension is not parking or release: disk usage remains unchanged and no worktree is eligible for reuse.
 
+## Durable non-destructive parking
+
+- `ParkWorkspaceSessionService` owns the explicit Park/Unpark state machine; `IWorkspaceParkingJournal` owns SQLite state, while `IWorkspaceParkingOperations` wraps Git/Windows filesystem operations. No coupling to tray UI.
+- `Active/Suspended → Parking → Parked → Unparking → Active` transitions are journalled with deterministic reserved paths and pinned pre-move HEAD. `RecoveryRequired` blocks reopening.
+- Both moves use `git worktree move` (not raw `Directory.Move`) to preserve Git administrative registration and all working files. Parking remains on the same volume beneath a dedicated directory.
+- An interrupted operation reconciles original vs parked Git registrations before retry/commit. Occupied paths, symlinks/junctions, conflicting registrations and failed verification never trigger deletion.
+- SQLite schema v5 adds owner-bound parking path and move identity; v3/v4 upgrade retains snapshot and restore foreign-key references.
+- **This is not a release or pool eviction.** Automatic reuse is disabled until stronger process-kill, concurrency, submodule and Windows sharing-violation coverage passes.
+
 ## Subsequent slices
 
 - Durable session journal and safe parking/snapshot protocol.

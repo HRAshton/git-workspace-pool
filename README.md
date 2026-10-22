@@ -35,6 +35,10 @@ These tests run on every PR in Windows CI. [Roadmap and acceptance gates](ROADMA
 
 The tray menu provides **Suspend active PR (keep worktree)...**. This only changes the durable activity state: the original Git worktree, all local modifications and exclusive PR ownership stay untouched. Opening the same PR resumes it. **Suspension does not free disk space, release a warm slot or enable recycling.** A worktree in `RecoveryRequired` can no longer be reactivated by normal PR opening.
 
+## Initial non-destructive worktree parking
+
+The tray offers **Park PR worktree (move, no deletion)...** and **Unpark PR worktree...**. Parking uses `git worktree move` to relocate the complete linked worktree to `<workspace-root>/.gwp-parked/<session-id>`, preserving staged, unstaged, untracked and ignored files. A durable SQLite intent precedes every move and interrupted moves are retried only after checking source/destination registration. Unparking rejects an occupied original path. This is not automatic release, eviction or warm-pool reuse.
+
 ## Experimental workspace snapshots
 
 The tray menu provides **Snapshot active PR...** for an explicit, non-destructive snapshot. Captures include the Git index, staged blobs independently from unstaged working files, tracked changes, untracked and ignored files (including binary data), deletions and a SHA-256 manifest. Snapshots are stored under `%LOCALAPPDATA%\\GitWorkspacePool\\snapshots`. Only explicitly selected active sessions are eligible.

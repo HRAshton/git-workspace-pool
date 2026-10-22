@@ -55,7 +55,9 @@
 - [x] Prevent automatic reactivation of `RecoveryRequired` sessions; only an explicitly audited recovery may clear quarantine.
 - [ ] Model explicit release/park transitions and generation IDs (the pool never infers ownership from folder names).
 - [ ] `ReleaseSession` use case: confirm → lock → inspect → snapshot and round-trip verify (where required) → journal intent → prepare disposition → verify → commit; otherwise `RecoveryRequired`.
-- [ ] `ParkSession` use case: retain identity, staged/untracked/ignored, editor-associated context where safely possible; ensure enough disk space for snapshot.
+- [x] Add explicit whole-worktree parking using `git worktree move`, a private destination on the same root, durable SQLite intent before move, and no file deletion.
+- [x] Add explicit unparking, including recorded return intent, occupied-destination refusal, and recovery after interrupted moves.
+- [ ] Harden submodules, locked paths, external editor races, actual process kills and relocation recovery before allowing automatic slot reuse.
 - [ ] `RestoreParkedSession` with safe location allocation, exact content validation and explicit activation.
 - [ ] Ensure moving worktrees updates Git metadata, with hard stop on unsupported submodules and Windows sharing violations.
 - [ ] Reconcile all unfinished operations on restart; never auto-`git clean -fdx` or delete unknown paths.

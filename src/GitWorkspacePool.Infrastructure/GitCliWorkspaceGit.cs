@@ -126,6 +126,23 @@ public sealed class GitCliWorkspaceGit : IWorkspaceGit, IGitRemoteReader
         );
     }
 
+    /// <summary>
+    /// Moves a registered worktree through Git so its administrative metadata stays valid.
+    /// </summary>
+    public static async Task MoveWorktreeAsync(
+        string repository,
+        string source,
+        string destination,
+        CancellationToken cancellationToken
+    )
+    {
+        await RunAsync(
+            repository,
+            ["worktree", "move", source, destination],
+            cancellationToken
+        );
+    }
+
     private static async Task<string> RunAsync(
         string repositoryPath,
         IReadOnlyList<string> arguments,

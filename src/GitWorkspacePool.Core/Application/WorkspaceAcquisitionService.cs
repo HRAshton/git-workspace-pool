@@ -61,6 +61,15 @@ public sealed class WorkspaceAcquisitionService
         );
         bool reused;
 
+        if (session.State is WorkspaceSessionState.Parking or WorkspaceSessionState.Parked
+            or WorkspaceSessionState.Unparking)
+        {
+            throw new InvalidOperationException(
+                "This PR has a parked or interrupted worktree. "
+                    + "Use the tray's explicit Park/Unpark command before opening it."
+            );
+        }
+
         if (session.State == WorkspaceSessionState.RecoveryRequired)
         {
             throw new InvalidOperationException(

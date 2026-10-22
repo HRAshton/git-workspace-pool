@@ -20,6 +20,8 @@ internal sealed class TrayContext : ApplicationContext
     private readonly RestoreWorkspaceSnapshotService _restore;
     private readonly IWorkspaceRecoveryInspector _recoveryInspector;
     private readonly SuspendWorkspaceSessionService _suspend;
+    private readonly ParkWorkspaceSessionService _parking;
+    private readonly IWorkspaceParkingJournal _parkingJournal;
 
     public TrayContext(string? initialRequest)
     {
@@ -46,6 +48,13 @@ internal sealed class TrayContext : ApplicationContext
         SqliteWorkspaceSessionJournal journal = new(Path.Combine(stateRoot, "sessions.db"));
         FileWorkspaceOperationLock locks = new(Path.Combine(stateRoot, "locks"));
         _sessions = journal;
+        _parkingJournal = journal;
+        _parking = new ParkWorkspaceSessionService(
+            journal,
+            journal,
+            locks,
+            new GitWorkspaceParkingOperations(git)
+        );
         _suspend = new SuspendWorkspaceSessionService(
             journal,
             journal,
@@ -105,6 +114,14 @@ internal sealed class TrayContext : ApplicationContext
         ToolStripMenuItem suspendMenu = new("Suspend active PR (keep worktree)...");
         suspendMenu.DropDownOpening += async (_, _) => await PopulateSuspensionsAsync(suspendMenu);
         menu.Items.Insert(4, suspendMenu);
+
+        ToolStripMenuItem parkMenu = new("Park PR worktree (move, no deletion)...");
+        parkMenu.DropDownOpening += async (_, _) => await PopulateParkingAsync(parkMenu, false);
+        menu.Items.Insert(5, parkMenu);
+
+        ToolStripMenuItem unparkMenu = new("Unpark PR worktree...");
+        unparkMenu.DropDownOpening += async (_, _) => await PopulateParkingAsync(unparkMenu, true);
+        menu.Items.Insert(6, unparkMenu);
 
         _ = ListenAsync(_shutdown.Token);
 
@@ -369,6 +386,81 @@ internal sealed class TrayContext : ApplicationContext
         catch (Exception exception)
         {
             Notify("Could not suspend PR", exception.Message);
+        }
+    }
+
+    private async Task PopulateParkingAsync(ToolStripMenuItem menu, bool unpark)
+    {
+        menu.DropDownItems.Clear();
+
+        try
+        {
+            IReadOnlyList<WorkspaceSession> sessions = unpark
+                ? await _parkingJournal.ListUnparkCandidatesAsync(_shutdown.Token)
+                : await _parkingJournal.ListParkCandidatesAsync(_shutdown.Token);
+
+            if (sessions.Count == 0)
+            {
+                menu.DropDownItems.Add(new ToolStripMenuItem("No eligible PR sessions")
+                {
+                    Enabled = false,
+                });
+                return;
+            }
+
+            foreach (WorkspaceSession session in sessions)
+            {
+                Guid id = session.OperationId;
+                ToolStripMenuItem item = new(
+                    $"{session.RepositoryKey} PR #{session.PullRequestNumber} ({session.State})"
+                );
+                item.Click += (_, _) => _ = MoveParkingFromMenuAsync(id, unpark);
+                menu.DropDownItems.Add(item);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Application is exiting.
+        }
+        catch (Exception exception)
+        {
+            Notify("Could not list parked sessions", exception.Message);
+        }
+    }
+
+    private async Task MoveParkingFromMenuAsync(Guid id, bool unpark)
+    {
+        DialogResult choice = MessageBox.Show(
+            unpark
+                ? "Return the parked Git worktree to its original path? "
+                    + "Occupied destinations will never be overwritten."
+                : "Move the complete PR worktree into private parking under the "
+                    + "same workspace root? All changes are preserved in the moved "
+                    + "directory. Nothing is deleted.",
+            unpark ? "Unpark PR worktree" : "Park PR worktree",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Question
+        );
+
+        if (choice != DialogResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            string path = unpark
+                ? await _parking.UnparkAsync(id, _shutdown.Token)
+                : await _parking.ParkAsync(id, _shutdown.Token);
+            Notify(unpark ? "Worktree returned" : "Worktree parked", path);
+        }
+        catch (OperationCanceledException)
+        {
+            // Application shutdown.
+        }
+        catch (Exception exception)
+        {
+            Notify("Worktree relocation was not verified", exception.Message);
         }
     }
 

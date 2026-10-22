@@ -21,6 +21,15 @@ public enum WorkspaceSessionState
     /// </summary>
     Suspended,
 
+    /// <summary>A durable move-to-parking intent is pending reconciliation.</summary>
+    Parking,
+
+    /// <summary>A complete Git worktree is held at its separate reserved parking path.</summary>
+    Parked,
+
+    /// <summary>A durable move-back intent is pending reconciliation.</summary>
+    Unparking,
+
     /// <summary>
     /// Filesystem and journal state disagree and require explicit inspection.
     /// </summary>
@@ -44,5 +53,7 @@ public sealed record WorkspaceSession(
     string SourcePath,
     string WorkspacePath,
     WorkspaceSessionState State,
-    string? PinnedCommitSha
+    string? PinnedCommitSha,
+    string? ParkingPath = null,
+    string? ParkingCommitSha = null
 );
