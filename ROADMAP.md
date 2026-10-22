@@ -85,6 +85,7 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [x] Restore snapshot directory attributes and timestamps after materializing child files.
 - [x] Verify existing clean recovery files by SHA-256 using the same exclusive handle for comparison and overwrite; recheck clean Git status after baseline capture. Fast real-Git E2E protects competing editor changes between restored files.
 - [x] Verify the recovery checkout Git index's clean SHA-256 on an exclusive handle before restoring the saved index; reject intervening `git add` changes without discarding staged user work. Real-Git E2E exercises the race after files are applied.
+- [x] Reject unexpected filesystem occupants in isolated recovery worktrees even when Git status summarizes an already-ignored directory. Bound a non-following inventory before restoration and verify its permitted descendants before marking a restore Verified; offline real-Git E2E preserves foreign ignored files and the interrupted journal intent.
 - [ ] Complete file identity/reparse-point races, deletion-path replacement, actual disk-full and safe restore-reconciliation tests before enabling automatic release or recycling.
 - [ ] Configurable artifact retention and cleanup policies.
 - [x] Tests for interrupted worktree creation (before journal commit) and cross-handler allocation.

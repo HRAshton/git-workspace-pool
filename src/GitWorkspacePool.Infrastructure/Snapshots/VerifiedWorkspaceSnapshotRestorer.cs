@@ -340,6 +340,22 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
             );
         }
 
+        // Git may summarize an ignored directory in one porcelain status
+        // record. Capture the fresh checkout occupants and explicitly allow
+        // only snapshot-declared descendants and their parent directories.
+        HashSet<string> allowedOccupants = RecoveryWorktreeOccupants.Capture(
+            target, cancellationToken
+        );
+        foreach (WorkspaceSnapshotFile file in manifest.Files)
+        {
+            string relative = NormalizeFilePath(file.RelativePath);
+            string[] segments = relative.Split('/');
+            for (int length = 1; length <= segments.Length; length++)
+            {
+                allowedOccupants.Add(string.Join('/', segments.Take(length)));
+            }
+        }
+
         foreach (WorkspaceSnapshotFile file in manifest.Files.Where(item => item.IsDirectory))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -512,6 +528,13 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
             );
             await VerifyFileAsync(targetFile, file.Sha256, file.Length, cancellationToken);
         }
+
+        // Status equality alone cannot prove that an ignored directory
+        // contains only the files captured in the snapshot. Fail closed on
+        // any undeclared occupant without removing the foreign user data.
+        RecoveryWorktreeOccupants.RejectUnexpected(
+            target, allowedOccupants, cancellationToken
+        );
 
         await _restoreJournal.VerifyRestoreAsync(restoreId, cancellationToken);
         return target;
