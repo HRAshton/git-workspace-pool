@@ -29,6 +29,7 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [x] **Single-instance process E2E:** launch two isolated real tray processes; verify the OS mutex, user-scoped pipe forwarding and failure when the primary owns the mutex without a listener. No registry, settings or UI writes in the fixture.
 - [x] Recover a pinned checkout after interruption; quarantine mismatching/unknown paths without cleanup.
 - [x] Verify the configured GitHub clone's resolved `origin` (HTTPS or SSH) before allocating; reject lookalike hosts and mismatching repositories.
+- [x] Reject effective Git URL rewrite and custom SSH/remote transport command settings before origin inspection and again before fetch. Do not inherit caller-provided Git SSH/askpass command overrides. Offline Git E2E covers these refusals; custom credential helpers and configuration races still need review.
 - [ ] Extend remote identity validation to each newly supported Git provider.
 - [x] Prevent concurrent or cross-process duplicate allocations via SQLite unique ownership and OS file locks.
 
