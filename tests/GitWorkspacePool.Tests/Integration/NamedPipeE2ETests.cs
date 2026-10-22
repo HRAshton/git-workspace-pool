@@ -150,6 +150,56 @@ public sealed class NamedPipeE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task NamedPipe_IdlePeerTimesOutWithoutStarvingNextProtocolRequest()
+    {
+        string name = "GitWorkspacePool.E2E." + Guid.NewGuid().ToString("N");
+        using CancellationTokenSource shutdown = new(TimeSpan.FromSeconds(10));
+        TaskCompletionSource<string> accepted = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        int dispatched = 0;
+        Task listener = new NamedPipeRequestServer(
+            name, TimeSpan.FromMilliseconds(250)
+        ).ListenAsync(
+            payload =>
+            {
+                Interlocked.Increment(ref dispatched);
+                accepted.TrySetResult(payload);
+            },
+            shutdown.Token
+        );
+
+        try
+        {
+            using NamedPipeClientStream idle = new(
+                ".", name, PipeDirection.Out,
+                PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly
+            );
+            await idle.ConnectAsync(5000, shutdown.Token);
+            byte[] fragment = Encoding.UTF8.GetBytes("prworkspace://open?url=unfinished");
+            await idle.WriteAsync(fragment, shutdown.Token);
+            await idle.FlushAsync(shutdown.Token);
+
+            // Keep the first connection open, deliberately omitting newline.
+            // A second launcher must be able to reach the listener after the
+            // frame deadline, without waiting for the idle peer to disconnect.
+            string valid = "prworkspace://open?url="
+                + Uri.EscapeDataString("https://github.com/owner/repo/pull/17")
+                + "&v=1";
+            await new NamedPipeRequestClient().SendAsync(name, valid, shutdown.Token);
+
+            Assert.Equal(valid, await accepted.Task.WaitAsync(shutdown.Token));
+            Assert.Equal(1, Volatile.Read(ref dispatched));
+        }
+        finally
+        {
+            await shutdown.CancelAsync();
+            await listener;
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task NamedPipe_RejectsUnframedNewlines()
     {
         NamedPipeRequestClient client = new();

@@ -9,14 +9,20 @@ namespace GitWorkspacePool.Infrastructure.Transport;
 public sealed class NamedPipeRequestServer
 {
     private readonly string _pipeName;
+    private readonly TimeSpan _frameReadTimeout;
 
     /// <summary>
     /// Initializes a named-pipe request listener.
     /// </summary>
-    public NamedPipeRequestServer(string pipeName)
+    public NamedPipeRequestServer(string pipeName, TimeSpan? frameReadTimeout = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pipeName);
         _pipeName = pipeName;
+        _frameReadTimeout = frameReadTimeout ?? TimeSpan.FromSeconds(5);
+        if (_frameReadTimeout <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(frameReadTimeout));
+        }
     }
 
     /// <summary>
@@ -50,7 +56,12 @@ public sealed class NamedPipeRequestServer
                 // current user session can connect without using our client.
                 try
                 {
-                    string? message = await ReadBoundedLineAsync(reader, cancellationToken);
+                    // The listener accepts one peer at a time. Without a
+                    // deadline an idle client could block all later launches.
+                    using CancellationTokenSource frameDeadline =
+                        CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    frameDeadline.CancelAfter(_frameReadTimeout);
+                    string? message = await ReadBoundedLineAsync(reader, frameDeadline.Token);
                     if (message is { Length: > 0 })
                     {
                         onRequest(message);
@@ -58,8 +69,12 @@ public sealed class NamedPipeRequestServer
                 }
                 catch (IOException) when (!cancellationToken.IsCancellationRequested)
                 {
-                    // A peer may disconnect during a frame. Drop only that
-                    // request and continue serving later protocol launches.
+                    // A peer disconnected mid-frame. Continue serving.
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    // The per-connection read deadline elapsed. Drop this
+                    // incomplete frame without stopping the pipe listener.
                 }
             }
         }
