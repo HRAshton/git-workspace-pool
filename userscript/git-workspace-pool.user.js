@@ -13,16 +13,23 @@
 
     const buttonId = 'git-workspace-pool-open-pr';
 
-    function isPullRequestPage() {
-        return /^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]*(?:\/|$)/.test(
+    function currentPullRequestUrl() {
+        const match = /^\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/pull\/([1-9][0-9]*)(?:\/|$)/.exec(
             window.location.pathname
         );
+        if (!match) {
+            return null;
+        }
+
+        // Do not pass GitHub UI state, fragment text, or tracking parameters
+        // across the local protocol boundary. The backend validates this URL.
+        return 'https://github.com/' + match[1] + '/' + match[2] + '/pull/' + match[3];
     }
 
     function updateButton() {
         let button = document.getElementById(buttonId);
 
-        if (!isPullRequestPage()) {
+        if (!currentPullRequestUrl()) {
             button?.remove();
             return;
         }
@@ -52,8 +59,13 @@
         ].join(';');
 
         button.addEventListener('click', () => {
+            const prUrl = currentPullRequestUrl();
+            if (!prUrl) {
+                return;
+            }
+
             const url = 'prworkspace://open?url=' +
-                encodeURIComponent(window.location.href) + '&v=1';
+                encodeURIComponent(prUrl) + '&v=1';
             window.location.assign(url);
         });
 
@@ -77,5 +89,6 @@
     observer.observe(document.documentElement, { childList: true, subtree: true });
     window.addEventListener('popstate', updateButton);
     document.addEventListener('turbo:load', updateButton);
+    document.addEventListener('turbo:render', updateButton);
     updateButton();
 })();
