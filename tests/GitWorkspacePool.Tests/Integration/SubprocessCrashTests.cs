@@ -92,7 +92,12 @@ public sealed class SubprocessCrashTests
         {
             using CancellationTokenSource deadline = new(TimeSpan.FromSeconds(20));
 
-            while (!File.Exists(signal))
+            // File.Exists can become true while the child is still writing.
+            // Open with FileShare.None and retry sharing violations so the
+            // checkpoint is only observed after the complete signal is flushed.
+            string? content = null;
+
+            while (content is null)
             {
                 if (child.HasExited)
                 {
@@ -102,10 +107,37 @@ public sealed class SubprocessCrashTests
                     );
                 }
 
-                await Task.Delay(35, deadline.Token);
+                if (File.Exists(signal))
+                {
+                    try
+                    {
+                        await using FileStream stream = new(
+                            signal,
+                            FileMode.Open,
+                            FileAccess.Read,
+                            FileShare.None
+                        );
+                        using StreamReader reader = new(stream);
+                        string candidate = await reader.ReadToEndAsync(deadline.Token);
+                        int separator = candidate.IndexOf('\n');
+
+                        if (separator >= 0 && separator + 1 < candidate.Length)
+                        {
+                            content = candidate;
+                        }
+                    }
+                    catch (IOException)
+                    {
+                        // The child still owns the signal file; retry until it closes.
+                    }
+                }
+
+                if (content is null)
+                {
+                    await Task.Delay(35, deadline.Token);
+                }
             }
 
-            string content = await File.ReadAllTextAsync(signal, deadline.Token);
             string[] lines = content.Split('\n', 2);
             Assert.Equal(checkpoint, lines[0]);
             Assert.Equal(2, lines.Length);

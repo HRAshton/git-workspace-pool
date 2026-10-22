@@ -367,7 +367,7 @@ public sealed class GitWorkspaceE2ETests
     }
 
     [Fact]
-    [Trait("Category", "FastE2E")]
+    [Trait("Category", "SlowE2E")]
     public async Task Parking_RealProcessKillAtAllMoveBoundariesRetainsUserData()
     {
         using Fixture fixture = await Fixture.CreateAsync();
@@ -934,7 +934,7 @@ public sealed class GitWorkspaceE2ETests
     }
 
     [Fact]
-    [Trait("Category", "FastE2E")]
+    [Trait("Category", "SlowE2E")]
     public async Task Snapshot_RealProcessKillPreservesSourceAndCanRetry()
     {
         using Fixture fixture = await Fixture.CreateAsync();
@@ -973,7 +973,7 @@ public sealed class GitWorkspaceE2ETests
     }
 
     [Fact]
-    [Trait("Category", "FastE2E")]
+    [Trait("Category", "SlowE2E")]
     public async Task Snapshot_RealProcessKillLeavesRecoverableIsolatedWorktree()
     {
         using Fixture fixture = await Fixture.CreateAsync();

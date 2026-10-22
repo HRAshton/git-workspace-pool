@@ -85,6 +85,8 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 
 - GitHub Actions runs use concurrency grouping by workflow and branch, cancelling superseded runs.
 - Markdown-only pushes and PR changes skip the expensive Windows test workflow.
+- Real subprocess-kill crash E2E run only on manual `workflow_dispatch` (and release validation), not on every push; the fast lane retains local Git/session/recovery tests.
+- The subprocess checkpoint signal reader retries Windows sharing violations, eliminating a race when the signal filename appears before its writer closes.
 - Prefer complete, meaningful code batches over many tiny `main` pushes.
 
 ## Test pyramid and time budgets (targets, not measured results)

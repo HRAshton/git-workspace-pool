@@ -9,6 +9,7 @@ on:
     branches: [main]
     paths-ignore:
       - '**/*.md'
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -34,6 +35,9 @@ jobs:
       - name: Build
         run: dotnet build GitWorkspacePool.slnx --configuration Release --no-restore -p:ContinuousIntegrationBuild=true
       - name: Unit tests
-        run: dotnet test tests/GitWorkspacePool.Tests/GitWorkspacePool.Tests.csproj --configuration Release --no-build --no-restore --filter "Category!=FastE2E"
+        run: dotnet test tests/GitWorkspacePool.Tests/GitWorkspacePool.Tests.csproj --configuration Release --no-build --no-restore --filter "Category!=FastE2E&Category!=SlowE2E"
       - name: Fast offline Git E2E
         run: dotnet test tests/GitWorkspacePool.Tests/GitWorkspacePool.Tests.csproj --configuration Release --no-build --no-restore --filter "Category=FastE2E"
+      - name: Crash-resilience E2E (manual)
+        if: github.event_name == 'workflow_dispatch'
+        run: dotnet test tests/GitWorkspacePool.Tests/GitWorkspacePool.Tests.csproj --configuration Release --no-build --no-restore --filter "Category=SlowE2E"
