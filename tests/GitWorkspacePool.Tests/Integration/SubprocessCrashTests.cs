@@ -15,12 +15,35 @@ public sealed class SubprocessCrashTests
     /// Executes a disposable subprocess, waits until it reaches a durable
     /// checkpoint, then kills it. Never kills an unrelated process.
     /// </summary>
-    public static async Task<string> KillAtCheckpointAsync(
+    public static Task<string> KillAtCheckpointAsync(
         string operation,
         string database,
         Guid id,
         string storageRoot,
         SnapshotCheckpoint checkpoint,
+        string signalRoot
+    ) => KillAtNamedCheckpointAsync(
+        operation, database, id, storageRoot, checkpoint.ToString(), signalRoot
+    );
+
+    /// <summary>Terminates an isolated parking subprocess after a durable Git or SQLite step.</summary>
+    public static Task<string> KillAtParkingCheckpointAsync(
+        string operation,
+        string database,
+        Guid id,
+        string storageRoot,
+        WorkspaceParkingCheckpoint checkpoint,
+        string signalRoot
+    ) => KillAtNamedCheckpointAsync(
+        operation, database, id, storageRoot, checkpoint.ToString(), signalRoot
+    );
+
+    private static async Task<string> KillAtNamedCheckpointAsync(
+        string operation,
+        string database,
+        Guid id,
+        string storageRoot,
+        string checkpoint,
         string signalRoot
     )
     {
@@ -84,7 +107,7 @@ public sealed class SubprocessCrashTests
 
             string content = await File.ReadAllTextAsync(signal, deadline.Token);
             string[] lines = content.Split('\n', 2);
-            Assert.Equal(checkpoint.ToString(), lines[0]);
+            Assert.Equal(checkpoint, lines[0]);
             Assert.Equal(2, lines.Length);
 
             Assert.False(child.HasExited);

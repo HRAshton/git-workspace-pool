@@ -57,7 +57,8 @@
 - [ ] `ReleaseSession` use case: confirm → lock → inspect → snapshot and round-trip verify (where required) → journal intent → prepare disposition → verify → commit; otherwise `RecoveryRequired`.
 - [x] Add explicit whole-worktree parking using `git worktree move`, a private destination on the same root, durable SQLite intent before move, and no file deletion.
 - [x] Add explicit unparking, including recorded return intent, occupied-destination refusal, and recovery after interrupted moves.
-- [ ] Harden submodules, locked paths, external editor races, actual process kills and relocation recovery before allowing automatic slot reuse.
+- [x] Add real OS subprocess-kill tests for all four move boundaries, checking durable intent, unchanged user data, and safe retry under new lock ownership.
+- [ ] Harden submodules, locked paths, external editor races, cross-process moves and other relocation failures before automatic slot reuse.
 - [ ] `RestoreParkedSession` with safe location allocation, exact content validation and explicit activation.
 - [ ] Ensure moving worktrees updates Git metadata, with hard stop on unsupported submodules and Windows sharing violations.
 - [ ] Reconcile all unfinished operations on restart; never auto-`git clean -fdx` or delete unknown paths.

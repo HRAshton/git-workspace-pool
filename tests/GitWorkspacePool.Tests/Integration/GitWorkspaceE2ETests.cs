@@ -368,6 +368,87 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task Parking_RealProcessKillAtAllMoveBoundariesRetainsUserData()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        WorkspaceSession owner = await fixture.OwnedSessionAsync();
+        string userFile = Path.Combine(opened.WorkspacePath, "notes.local");
+        File.WriteAllText(userFile, "must survive real crashes");
+
+        // Crash after SQLite intent but before Git has touched either worktree.
+        _ = await SubprocessCrashTests.KillAtParkingCheckpointAsync(
+            "park",
+            fixture.DatabasePath,
+            owner.OperationId,
+            fixture.SignalRoot,
+            WorkspaceParkingCheckpoint.ParkingIntentRecorded,
+            fixture.SignalRoot
+        );
+        Assert.Equal(
+            WorkspaceSessionState.Parking,
+            (await fixture.SessionAsync(owner.OperationId))!.State
+        );
+        Assert.Equal("must survive real crashes", File.ReadAllText(userFile));
+
+        string parked = await fixture.ParkAsync(owner.OperationId);
+        Assert.Equal("must survive real crashes", File.ReadAllText(Path.Combine(parked, "notes.local")));
+
+        // Crash after returning the worktree but before the journal's Active transition.
+        _ = await SubprocessCrashTests.KillAtParkingCheckpointAsync(
+            "unpark",
+            fixture.DatabasePath,
+            owner.OperationId,
+            fixture.SignalRoot,
+            WorkspaceParkingCheckpoint.UnparkedWorktreeMoved,
+            fixture.SignalRoot
+        );
+        Assert.Equal(
+            WorkspaceSessionState.Unparking,
+            (await fixture.SessionAsync(owner.OperationId))!.State
+        );
+        Assert.True(Directory.Exists(opened.WorkspacePath));
+        Assert.Equal("must survive real crashes", File.ReadAllText(userFile));
+        Assert.Equal(opened.WorkspacePath, await fixture.UnparkAsync(owner.OperationId));
+
+        // Crash after Git moved the worktree into parking but before DB commit.
+        _ = await SubprocessCrashTests.KillAtParkingCheckpointAsync(
+            "park",
+            fixture.DatabasePath,
+            owner.OperationId,
+            fixture.SignalRoot,
+            WorkspaceParkingCheckpoint.ParkedWorktreeMoved,
+            fixture.SignalRoot
+        );
+        Assert.Equal(
+            WorkspaceSessionState.Parking,
+            (await fixture.SessionAsync(owner.OperationId))!.State
+        );
+        Assert.False(Directory.Exists(opened.WorkspacePath));
+        Assert.Equal("must survive real crashes", File.ReadAllText(Path.Combine(parked, "notes.local")));
+        Assert.Equal(parked, await fixture.ParkAsync(owner.OperationId));
+
+        // Crash after the reverse intent but before Git moved anything.
+        _ = await SubprocessCrashTests.KillAtParkingCheckpointAsync(
+            "unpark",
+            fixture.DatabasePath,
+            owner.OperationId,
+            fixture.SignalRoot,
+            WorkspaceParkingCheckpoint.UnparkingIntentRecorded,
+            fixture.SignalRoot
+        );
+        Assert.Equal(
+            WorkspaceSessionState.Unparking,
+            (await fixture.SessionAsync(owner.OperationId))!.State
+        );
+        Assert.Equal("must survive real crashes", File.ReadAllText(Path.Combine(parked, "notes.local")));
+        Assert.Equal(opened.WorkspacePath, await fixture.UnparkAsync(owner.OperationId));
+        Assert.Equal("must survive real crashes", File.ReadAllText(userFile));
+        Assert.True(await fixture.IsRegisteredWorktreeAsync(opened.WorkspacePath));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task Parking_UnparkRefusesOccupiedDestinationWithoutChangingEitherTree()
     {
         using Fixture fixture = await Fixture.CreateAsync();
