@@ -845,6 +845,145 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task ReadySlot_InterruptedVerifiedCheckoutCanActivateAfterRestart()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult first = await fixture.OpenAsync(PullRequestUrl);
+        WorkspaceSession owner = await fixture.OwnedSessionAsync();
+        File.WriteAllText(Path.Combine(first.WorkspacePath, "private.local"), "important old data");
+        string parked = await fixture.ParkAsync(owner.OperationId);
+        WorkspaceSlotReleasePreparation prepared = await fixture.PrepareReleaseAsync(owner.OperationId);
+        _ = await fixture.FinalizeReleaseAsync(prepared.PreparationId);
+        await fixture.CreatePullRequestAsync(18);
+
+        SqliteWorkspaceSlotRegistry registry = new(fixture.DatabasePath);
+        WorkspaceReadySlotReservation reservation = Assert.IsType<WorkspaceReadySlotReservation>(
+            await registry.TryReserveAsync(
+                prepared.SlotId, prepared.Generation, "github:owner/repo",
+                18, fixture.SourcePath, CancellationToken.None
+            )
+        );
+        GitCliWorkspaceGit git = new();
+        await git.FetchPullRequestAsync(fixture.SourcePath, 18, CancellationToken.None);
+        string commit = await git.GetPullRequestCommitAsync(
+            fixture.SourcePath, 18, CancellationToken.None
+        );
+        await new SqliteWorkspaceSessionJournal(fixture.DatabasePath).PinCommitAsync(
+            reservation.Session.OperationId, commit, CancellationToken.None
+        );
+        await git.CreateWorktreeAsync(
+            fixture.SourcePath, reservation.Session.WorkspacePath, commit, CancellationToken.None
+        );
+
+        // Simulate app restart after Git checkout but before the Active/Protected CAS.
+        WorkspaceSlot pending = Assert.IsType<WorkspaceSlot>(
+            await new SqliteWorkspaceSlotRegistry(fixture.DatabasePath)
+                .FindSlotAsync(prepared.SlotId, CancellationToken.None)
+        );
+        Assert.Equal(WorkspaceSlotState.Reserved, pending.State);
+        Assert.Equal(WorkspaceSessionState.Preparing,
+            (await fixture.SessionAsync(reservation.Session.OperationId))!.State);
+
+        WorkspaceSession recovered = await fixture.ReconcileReadySlotAsync(prepared.SlotId);
+        Assert.Equal(reservation.Session.OperationId, recovered.OperationId);
+        Assert.Equal(WorkspaceSessionState.Active, recovered.State);
+        Assert.Equal(WorkspaceSlotState.Protected,
+            (await new SqliteWorkspaceSlotRegistry(fixture.DatabasePath)
+                .FindSlotAsync(prepared.SlotId, CancellationToken.None))!.State);
+        Assert.Equal("feature for pr 18", File.ReadAllText(
+            Path.Combine(recovered.WorkspacePath, "feature.txt")
+        ));
+        OpenPullRequestResult reopened = await fixture.OpenWithFreshHandlerAsync(
+            "https://github.com/owner/repo/pull/18"
+        );
+        Assert.True(reopened.Reused);
+        Assert.Equal(recovered.WorkspacePath, reopened.WorkspacePath);
+        Assert.Equal("important old data", File.ReadAllText(
+            Path.Combine(parked, "private.local")
+        ));
+        Assert.Empty(await registry.AuditAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task ReadySlot_InterruptedDirtyCheckoutRemainsReservedWithUserData()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        _ = await fixture.OpenAsync(PullRequestUrl);
+        WorkspaceSession owner = await fixture.OwnedSessionAsync();
+        string parked = await fixture.ParkAsync(owner.OperationId);
+        WorkspaceSlotReleasePreparation prepared = await fixture.PrepareReleaseAsync(owner.OperationId);
+        _ = await fixture.FinalizeReleaseAsync(prepared.PreparationId);
+        await fixture.CreatePullRequestAsync(18);
+
+        SqliteWorkspaceSlotRegistry registry = new(fixture.DatabasePath);
+        WorkspaceReadySlotReservation reservation = Assert.IsType<WorkspaceReadySlotReservation>(
+            await registry.TryReserveAsync(
+                prepared.SlotId, prepared.Generation, "github:owner/repo",
+                18, fixture.SourcePath, CancellationToken.None
+            )
+        );
+        GitCliWorkspaceGit git = new();
+        await git.FetchPullRequestAsync(fixture.SourcePath, 18, CancellationToken.None);
+        string commit = await git.GetPullRequestCommitAsync(
+            fixture.SourcePath, 18, CancellationToken.None
+        );
+        await new SqliteWorkspaceSessionJournal(fixture.DatabasePath).PinCommitAsync(
+            reservation.Session.OperationId, commit, CancellationToken.None
+        );
+        await git.CreateWorktreeAsync(
+            fixture.SourcePath, reservation.Session.WorkspacePath, commit, CancellationToken.None
+        );
+        string privateFile = Path.Combine(reservation.Session.WorkspacePath, "important.local");
+        File.WriteAllText(privateFile, "do not erase");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.ReconcileReadySlotAsync(prepared.SlotId)
+        );
+        Assert.Equal(WorkspaceSlotState.Reserved,
+            (await registry.FindSlotAsync(prepared.SlotId, CancellationToken.None))!.State);
+        Assert.Equal(WorkspaceSessionState.Preparing,
+            (await fixture.SessionAsync(reservation.Session.OperationId))!.State);
+        Assert.Equal("do not erase", File.ReadAllText(privateFile));
+        Assert.True(await fixture.IsRegisteredWorktreeAsync(parked));
+        Assert.False(File.Exists(Path.Combine(parked, "important.local")));
+        Assert.Null(await registry.TryReserveAsync(
+            prepared.SlotId, prepared.Generation, "github:owner/repo",
+            19, fixture.SourcePath, CancellationToken.None
+        ));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task ReadySlot_InterruptedMissingCheckoutCannotActivate()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        _ = await fixture.OpenAsync(PullRequestUrl);
+        WorkspaceSession owner = await fixture.OwnedSessionAsync();
+        string parked = await fixture.ParkAsync(owner.OperationId);
+        WorkspaceSlotReleasePreparation prepared = await fixture.PrepareReleaseAsync(owner.OperationId);
+        _ = await fixture.FinalizeReleaseAsync(prepared.PreparationId);
+
+        SqliteWorkspaceSlotRegistry registry = new(fixture.DatabasePath);
+        WorkspaceReadySlotReservation reservation = Assert.IsType<WorkspaceReadySlotReservation>(
+            await registry.TryReserveAsync(
+                prepared.SlotId, prepared.Generation, "github:owner/repo",
+                18, fixture.SourcePath, CancellationToken.None
+            )
+        );
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.ReconcileReadySlotAsync(prepared.SlotId)
+        );
+        Assert.Equal(WorkspaceSlotState.Reserved,
+            (await registry.FindSlotAsync(prepared.SlotId, CancellationToken.None))!.State);
+        Assert.Equal(WorkspaceSessionState.Preparing,
+            (await fixture.SessionAsync(reservation.Session.OperationId))!.State);
+        Assert.False(Directory.Exists(reservation.Session.WorkspacePath));
+        Assert.True(await fixture.IsRegisteredWorktreeAsync(parked));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task ReleaseCommit_RejectsOccupiedOriginalAndAllowsCancel()
     {
         using Fixture fixture = await Fixture.CreateAsync();
@@ -3147,6 +3286,24 @@ public sealed class GitWorkspaceE2ETests
                 new RepositoryRegistration("owner/repo", _source, _workspaces),
                 slotId,
                 generation,
+                CancellationToken.None
+            );
+        }
+
+        public Task<WorkspaceSession> ReconcileReadySlotAsync(Guid slotId)
+        {
+            SqliteWorkspaceSlotRegistry slots = new(DatabasePath);
+            ReconcileExplicitReadySlotService recovery = new(
+                slots,
+                slots,
+                new WorkspaceReadySlotSafety(),
+                new VerifiedReadySlotCheckout(),
+                new GitCliWorkspaceGit(),
+                new FileWorkspaceOperationLock(Path.Combine(_root, "state", "locks"))
+            );
+            return recovery.ReconcileAsync(
+                slotId,
+                new RepositoryRegistration("owner/repo", _source, _workspaces),
                 CancellationToken.None
             );
         }

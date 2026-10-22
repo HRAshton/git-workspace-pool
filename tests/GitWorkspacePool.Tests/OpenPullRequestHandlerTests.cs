@@ -234,6 +234,17 @@ public sealed class OpenPullRequestHandlerTests
             return Task.FromResult(_session);
         }
 
+        public Task<WorkspaceSession?> FindByPullRequestAsync(
+            string repositoryKey,
+            int pullRequestNumber,
+            CancellationToken cancellationToken
+        ) => Task.FromResult(
+            _session is not null
+                && _session.RepositoryKey.Equals(repositoryKey, StringComparison.OrdinalIgnoreCase)
+                && _session.PullRequestNumber == pullRequestNumber
+                ? _session : null
+        );
+
         public Task PinCommitAsync(
             Guid operationId,
             string commitSha,

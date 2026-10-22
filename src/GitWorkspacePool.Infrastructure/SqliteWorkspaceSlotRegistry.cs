@@ -154,6 +154,62 @@ public sealed class SqliteWorkspaceSlotRegistry : IWorkspaceSlotRegistry, IWorks
     }
 
     /// <inheritdoc/>
+    public Task<WorkspaceReadySlotReservation?> FindReservedAsync(
+        Guid slotId,
+        CancellationToken cancellationToken
+    )
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using SqliteConnection connection = Open();
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT owner.operation_id, owner.repository_key, owner.pr_number,
+                   owner.source_path, owner.workspace_path, owner.state,
+                   owner.pinned_commit, owner.parking_path, owner.parking_head,
+                   lease.lease_id, lease.generation
+              FROM workspace_slots AS slot
+              JOIN workspace_slot_leases AS lease
+                ON lease.slot_id = slot.slot_id AND lease.state = 'Held'
+               AND lease.generation = slot.generation
+              JOIN sessions AS owner
+                ON owner.operation_id = lease.session_id
+             WHERE slot.slot_id = $slot
+               AND slot.state = 'Reserved'
+               AND owner.state = 'Preparing'
+               AND owner.workspace_path = slot.workspace_path
+               AND owner.source_path = slot.source_path
+               AND owner.repository_key = slot.repository_key
+            """;
+        command.Parameters.AddWithValue("$slot", slotId.ToString("N"));
+        using SqliteDataReader reader = command.ExecuteReader();
+        if (!reader.Read())
+        {
+            return Task.FromResult<WorkspaceReadySlotReservation?>(null);
+        }
+
+        WorkspaceSession session = new(
+            Guid.Parse(reader.GetString(0)),
+            reader.GetString(1),
+            reader.GetInt32(2),
+            reader.GetString(3),
+            reader.GetString(4),
+            WorkspaceSessionState.Preparing,
+            reader.IsDBNull(6) ? null : reader.GetString(6),
+            reader.IsDBNull(7) ? null : reader.GetString(7),
+            reader.IsDBNull(8) ? null : reader.GetString(8)
+        );
+        WorkspaceSlotLease lease = new(
+            Guid.Parse(reader.GetString(9)),
+            slotId,
+            session.OperationId,
+            reader.GetInt64(10)
+        );
+        return Task.FromResult<WorkspaceReadySlotReservation?>(
+            new WorkspaceReadySlotReservation(session, lease)
+        );
+    }
+
+    /// <inheritdoc/>
     public Task<WorkspaceReadySlotReservation?> TryReserveAsync(
         Guid slotId,
         long expectedGeneration,

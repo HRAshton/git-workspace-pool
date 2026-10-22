@@ -107,6 +107,28 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
     }
 
     /// <inheritdoc/>
+    public Task<WorkspaceSession?> FindByPullRequestAsync(
+        string repositoryKey,
+        int pullRequestNumber,
+        CancellationToken cancellationToken
+    )
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using SqliteConnection connection = Open();
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT operation_id, repository_key, pr_number, source_path,
+                   workspace_path, state, pinned_commit, parking_path, parking_head
+              FROM sessions
+             WHERE repository_key = $repository AND pr_number = $pr
+            """;
+        command.Parameters.AddWithValue("$repository", repositoryKey);
+        command.Parameters.AddWithValue("$pr", pullRequestNumber);
+        using SqliteDataReader reader = command.ExecuteReader();
+        return Task.FromResult(reader.Read() ? Map(reader) : null);
+    }
+
+    /// <inheritdoc/>
     public Task<WorkspaceSession> GetOrCreateAsync(
         string repositoryKey,
         int pullRequestNumber,

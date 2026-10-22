@@ -38,7 +38,37 @@ public sealed class WorkspaceAcquisitionService
     )
     {
         string folder = $"{request.Provider}-{request.Owner}-{request.Repository}-pr-{request.Number}";
-        string workspacePath = Path.GetFullPath(Path.Combine(registration.WorkspaceRoot, folder));
+        string defaultPath = Path.GetFullPath(Path.Combine(registration.WorkspaceRoot, folder));
+        string repositoryKey = $"{request.Provider}:{request.RepositoryKey}";
+        WorkspaceSession? previous = await _journal.FindByPullRequestAsync(
+            repositoryKey, request.Number, cancellationToken
+        );
+        string workspacePath = previous is null
+            ? defaultPath
+            : Path.GetFullPath(previous.WorkspacePath);
+        StringComparison comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+
+        // The explicit slot allocator can give a new PR a non-default path.
+        // Accept that path only from its durable owner, within this trusted
+        // root. Never infer ownership from filesystem contents.
+        if (
+            previous is not null
+            && (
+                !Path.GetFullPath(previous.SourcePath).Equals(
+                    Path.GetFullPath(registration.LocalPath), comparison
+                )
+                || !Path.GetDirectoryName(workspacePath)!.Equals(
+                    Path.GetFullPath(registration.WorkspaceRoot), comparison
+                )
+            )
+        )
+        {
+            throw new InvalidOperationException(
+                "Existing PR ownership does not match the trusted repository root."
+            );
+        }
 
         await using IAsyncDisposable ownership = await _locks.AcquireAsync(
             workspacePath,
@@ -46,7 +76,7 @@ public sealed class WorkspaceAcquisitionService
         );
 
         WorkspaceSession session = await _journal.GetOrCreateAsync(
-            $"{request.Provider}:{request.RepositoryKey}",
+            repositoryKey,
             request.Number,
             registration.LocalPath,
             workspacePath,

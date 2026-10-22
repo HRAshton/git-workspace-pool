@@ -8,6 +8,17 @@ namespace GitWorkspacePool.Core.Application;
 public interface IWorkspaceSessionJournal
 {
     /// <summary>
+    /// Finds the established PR owner regardless of its historical/default slot
+    /// path. Released PRs still have an immutable identity and cannot be reopened
+    /// by silently allocating their previous slot.
+    /// </summary>
+    Task<WorkspaceSession?> FindByPullRequestAsync(
+        string repositoryKey,
+        int pullRequestNumber,
+        CancellationToken cancellationToken
+    );
+
+    /// <summary>
     /// Returns the existing owner, or durably reserves an unused PR/path pair.
     /// </summary>
     /// <param name="repositoryKey">Provider-qualified repository identity.</param>

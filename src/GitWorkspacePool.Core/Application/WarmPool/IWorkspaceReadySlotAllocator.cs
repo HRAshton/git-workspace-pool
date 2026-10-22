@@ -20,6 +20,15 @@ public interface IWorkspaceReadySlotAllocator
     );
 
     /// <summary>
+    /// Reads a durable Reserved slot, its Held generation and Preparing owner,
+    /// including after a process crash. It does not claim or mutate ownership.
+    /// </summary>
+    Task<WorkspaceReadySlotReservation?> FindReservedAsync(
+        Guid slotId,
+        CancellationToken cancellationToken
+    );
+
+    /// <summary>
     /// Commits the verified Git checkout, PR activation and slot protection
     /// in one transaction. A stale lease or preparation is never activated.
     /// </summary>
