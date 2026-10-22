@@ -1890,6 +1890,95 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task Recovery_ChangedIgnoredBinaryIsFlaggedEvenIfGitStatusDoesNotChange()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string ignore = Path.Combine(opened.WorkspacePath, ".gitignore");
+        File.WriteAllText(ignore, "generated/\n");
+        string ignored = Path.Combine(opened.WorkspacePath, "generated", "cache.bin");
+        Directory.CreateDirectory(Path.GetDirectoryName(ignored)!);
+        File.WriteAllBytes(ignored, [10, 20, 30, 40]);
+
+        WorkspaceSnapshotReceipt receipt = await fixture.SnapshotAsync();
+        string restored = await fixture.RestoreSnapshotAsync(receipt.SnapshotId);
+
+        Assert.Contains(
+            await fixture.ScanRecoveryAsync(),
+            item => item.Kind == WorkspaceRecoveryKind.VerifiedRecoveryWorktree
+                && item.Path == restored
+        );
+
+        string restoredIgnored = Path.Combine(restored, "generated", "cache.bin");
+        File.WriteAllBytes(restoredIgnored, [10, 21, 30, 40]);
+        Assert.Contains(
+            await fixture.ScanRecoveryAsync(),
+            item => item.Kind == WorkspaceRecoveryKind.DivergedRecoveryWorktree
+                && item.Path == restored
+        );
+        Assert.Equal(new byte[] { 10, 20, 30, 40 }, File.ReadAllBytes(ignored));
+        Assert.Equal(new byte[] { 10, 21, 30, 40 }, File.ReadAllBytes(restoredIgnored));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task Recovery_ChangedGitIndexIsFlaggedWithoutChangingOriginal()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string original = Path.Combine(opened.WorkspacePath, "feature.txt");
+        File.WriteAllText(original, "local edits");
+        WorkspaceSnapshotReceipt receipt = await fixture.SnapshotAsync();
+        string restored = await fixture.RestoreSnapshotAsync(receipt.SnapshotId);
+
+        File.WriteAllText(Path.Combine(restored, "feature.txt"), "different staged value");
+        await fixture.GitInDirectoryAsync(restored, "add", "feature.txt");
+
+        Assert.Contains(
+            await fixture.ScanRecoveryAsync(),
+            item => item.Kind == WorkspaceRecoveryKind.DivergedRecoveryWorktree
+                && item.Path == restored
+        );
+        Assert.Equal("local edits", File.ReadAllText(original));
+        Assert.Equal(WorkspaceSessionState.Active, (await fixture.OwnedSessionAsync()).State);
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task Recovery_ReducedManifestFileListIsUnverifiableWithoutChangingFiles()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string original = Path.Combine(opened.WorkspacePath, "notes.local");
+        File.WriteAllText(original, "keep original");
+        WorkspaceSnapshotReceipt receipt = await fixture.SnapshotAsync();
+        string restored = await fixture.RestoreSnapshotAsync(receipt.SnapshotId);
+
+        string manifestPath = Path.Combine(receipt.Folder, "manifest.json");
+        WorkspaceSnapshotManifest manifest = JsonSerializer.Deserialize<WorkspaceSnapshotManifest>(
+            File.ReadAllText(manifestPath)
+        )!;
+        Assert.NotEmpty(manifest.Files);
+        manifest.Files.Clear();
+        File.WriteAllText(manifestPath, JsonSerializer.Serialize(manifest));
+
+        IReadOnlyList<WorkspaceRecoveryFinding> findings = await fixture.ScanRecoveryAsync();
+        Assert.Contains(
+            findings,
+            finding => finding.Kind == WorkspaceRecoveryKind.UnverifiableRecoveryDirectory
+                && finding.Path == restored
+        );
+        Assert.DoesNotContain(
+            findings,
+            finding => finding.Kind == WorkspaceRecoveryKind.VerifiedRecoveryWorktree
+                && finding.Path == restored
+        );
+        Assert.Equal("keep original", File.ReadAllText(original));
+        Assert.Equal("keep original", File.ReadAllText(Path.Combine(restored, "notes.local")));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task Recovery_MissingManifestMakesVerifiedRestoreUnverifiableWithoutDeletion()
     {
         using Fixture fixture = await Fixture.CreateAsync();

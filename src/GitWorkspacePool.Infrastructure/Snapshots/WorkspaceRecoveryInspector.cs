@@ -255,18 +255,14 @@ public sealed class WorkspaceRecoveryInspector : IWorkspaceRecoveryInspector
                         WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(
                             Path.Combine(path, ".git")
                         );
-                        string expectedHead = await ReadSnapshotHeadAsync(
+                        WorkspaceSnapshotManifest manifest = await ReadSnapshotManifestAsync(
                             record,
                             cancellationToken
                         );
-                        string actualHead = await _git.GetWorktreeCommitAsync(
+                        kind = await WorkspaceRecoveryVerifier.MatchesAsync(
                             path,
+                            manifest,
                             cancellationToken
-                        );
-                        kind = string.Equals(
-                            actualHead,
-                            expectedHead,
-                            StringComparison.OrdinalIgnoreCase
                         )
                             ? WorkspaceRecoveryKind.VerifiedRecoveryWorktree
                             : WorkspaceRecoveryKind.DivergedRecoveryWorktree;
@@ -279,7 +275,11 @@ public sealed class WorkspaceRecoveryInspector : IWorkspaceRecoveryInspector
                     throw;
                 }
                 catch (Exception exception) when (
-                    exception is IOException or InvalidOperationException or UnauthorizedAccessException
+                    exception is IOException
+                        or InvalidOperationException
+                        or UnauthorizedAccessException
+                        or ArgumentException
+                        or NotSupportedException
                 )
                 {
                     Add(
@@ -396,13 +396,19 @@ public sealed class WorkspaceRecoveryInspector : IWorkspaceRecoveryInspector
         return findings;
     }
 
-    private static async Task<string> ReadSnapshotHeadAsync(
+    private static async Task<WorkspaceSnapshotManifest> ReadSnapshotManifestAsync(
         WorkspaceSnapshotRecord record,
         CancellationToken cancellationToken
     )
     {
         string manifestPath = Path.Combine(record.Receipt.Folder, "manifest.json");
         WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(manifestPath);
+        if (new FileInfo(manifestPath).Length > 16L * 1024 * 1024)
+        {
+            throw new InvalidOperationException(
+                "Snapshot manifest exceeds the recovery inventory size limit."
+            );
+        }
 
         WorkspaceSnapshotManifest manifest;
         try
@@ -423,9 +429,21 @@ public sealed class WorkspaceRecoveryInspector : IWorkspaceRecoveryInspector
             manifest.Version != WorkspaceSnapshotManifest.CurrentVersion
             || manifest.SnapshotId != record.Receipt.SnapshotId
             || manifest.OperationId != record.Session.OperationId
+            || string.IsNullOrWhiteSpace(manifest.WorkspacePath)
+            || !Path.GetFullPath(manifest.WorkspacePath).Equals(
+                Path.GetFullPath(record.Session.WorkspacePath),
+                OperatingSystem.IsWindows()
+                    ? StringComparison.OrdinalIgnoreCase
+                    : StringComparison.Ordinal
+            )
             || string.IsNullOrWhiteSpace(manifest.HeadCommitSha)
             || (manifest.HeadCommitSha.Length is not (40 or 64))
             || !manifest.HeadCommitSha.All(Uri.IsHexDigit)
+            || manifest.Files is null
+            || manifest.StagedFiles is null
+            || manifest.MissingPaths is null
+            || manifest.Files.Any(file => file is null)
+            || manifest.StagedFiles.Any(file => file is null)
         )
         {
             throw new InvalidOperationException(
@@ -433,7 +451,20 @@ public sealed class WorkspaceRecoveryInspector : IWorkspaceRecoveryInspector
             );
         }
 
-        return manifest.HeadCommitSha;
+        // A record published with N payloads must not silently become a smaller
+        // manifest on a later read-only inventory pass.
+        int count = checked(
+            1 + manifest.Files.Count(file => !file.IsDirectory)
+                + manifest.StagedFiles.Count
+        );
+        if (count != record.Receipt.FileCount)
+        {
+            throw new InvalidOperationException(
+                "Snapshot manifest no longer matches its journalled file count."
+            );
+        }
+
+        return manifest;
     }
 
     private static void Add(
@@ -457,8 +488,8 @@ public sealed class WorkspaceRecoveryInspector : IWorkspaceRecoveryInspector
                 WorkspaceRecoveryKind.UnsafeReparsePoint => "Symlink or junction; not traversed.",
                 WorkspaceRecoveryKind.UnverifiableRecoveryDirectory => "Git identity or snapshot evidence cannot be confirmed; inspect manually.",
                 WorkspaceRecoveryKind.InterruptedRestore => "Restore was interrupted before complete verification.",
-                WorkspaceRecoveryKind.VerifiedRecoveryWorktree => "Previously verified isolated recovery worktree; Git HEAD matches (payloads were not rehashed during inventory).",
-                WorkspaceRecoveryKind.DivergedRecoveryWorktree => "Previously verified recovery worktree has a different Git HEAD; preserve it for manual inspection.",
+                WorkspaceRecoveryKind.VerifiedRecoveryWorktree => "Previously verified isolated worktree; HEAD, status, index and captured payloads match within bounded read-only checks.",
+                WorkspaceRecoveryKind.DivergedRecoveryWorktree => "Previously verified recovery worktree no longer matches Git or captured file evidence; preserve it for manual inspection.",
                 WorkspaceRecoveryKind.MissingRecoveryWorktree => "Restore intent exists but the target directory is missing.",
                 WorkspaceRecoveryKind.InterruptedParking => "A parking intent was not committed; retry Park for safe reconciliation.",
                 WorkspaceRecoveryKind.InterruptedUnparking => "A return-move intent was not committed; retry Unpark for safe reconciliation.",
