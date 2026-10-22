@@ -2743,9 +2743,27 @@ public sealed class GitWorkspaceE2ETests
             () =>
             {
                 string recovery = Assert.Single(Directory.GetDirectories(fixture.RecoveryRoot));
-                competingFile = Path.Combine(recovery, "feature.txt");
-                // README.md precedes feature.txt in the verified payload order.
-                File.WriteAllText(competingFile, "another editor updated this file");
+                // The current restore destination is opened exclusively and
+                // intentionally cannot be edited. The two changed tracked
+                // files may be enumerated in either order, so modify the
+                // other clean checkout file before its restore starts.
+                foreach (string name in new[] { "feature.txt", "README.md" })
+                {
+                    string candidate = Path.Combine(recovery, name);
+                    try
+                    {
+                        File.WriteAllText(candidate, "another editor updated this file");
+                        competingFile = candidate;
+                        break;
+                    }
+                    catch (IOException)
+                    {
+                        // The current file is protected by the exclusive
+                        // handle. Try the other not-yet-restored tracked file.
+                    }
+                }
+
+                Assert.NotNull(competingFile);
             }
         );
 
