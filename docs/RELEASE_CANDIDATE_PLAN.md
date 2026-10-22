@@ -56,7 +56,7 @@
 - [x] Reject unsafe Git credential.helper shell snippets, paths and arguments (including per-URL settings), plus nonempty core.askPass; allow bare named helpers and disable inherited SSH_ASKPASS. Validate effective configuration before origin resolution and fetch with real offline Git E2E.
 - [ ] Complete Git authentication trust policy for executable named credential helpers, configuration mutation races and conditional include edge cases. Current preflight is not an atomic guarantee against concurrent config changes.
 - [ ] Migrate old manifest versions explicitly, never reinterpret unknown versions. Current v2 restore now requires an explicit version and refuses missing/v1/future versions before Git or journal allocation; legacy migration is not yet supported.
-- [ ] Establish configurable snapshot budgets/settings and retention policy; preserve originals until verified recovery. Current fixed conservative 2 GiB snapshot cap now applies during working/index and staged-blob stream writes; staged exporters terminate Git subprocesses on failure.
+- [ ] Establish configurable snapshot budgets/settings and retention policy; preserve originals until verified recovery. Configurable per-export byte/entry limits may reduce the conservative 2 GiB / 50,000 ceilings; retention remains unimplemented. The byte cap applies during working/index and staged-blob stream writes; staged exporters terminate Git subprocesses on failure.
 
 ### M2 — ownership and parking
 

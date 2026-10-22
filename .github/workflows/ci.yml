@@ -26,24 +26,15 @@ jobs:
       - name: Set up .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
-          dotnet-version: 10.0.x
-      - name: Restore
-        run: dotnet restore GitWorkspacePool.slnx
-      - name: Build
-        run: dotnet build GitWorkspacePool.slnx --configuration Release --no-restore -p:ContinuousIntegrationBuild=true
-      - name: Parse-check manual benchmark harness (no benchmarks run)
+          global-json-file: global.json
+      - name: Build and validate milestone (same entry point as local pre-push)
         shell: pwsh
-        run: ./scripts/Benchmark-WarmReuse.ps1 -ValidateOnly
-      - name: Unit tests
-        run: dotnet test tests/GitWorkspacePool.Tests/GitWorkspacePool.Tests.csproj --configuration Release --no-build --no-restore --filter "Category!=FastE2E&Category!=SlowE2E"
-      - name: Fast offline Git E2E
-        run: dotnet test tests/GitWorkspacePool.Tests/GitWorkspacePool.Tests.csproj --configuration Release --no-build --no-restore --filter "Category=FastE2E"
-      - name: Slot handoff real-process crash E2E
-        if: github.event_name == 'pull_request'
-        run: dotnet test tests/GitWorkspacePool.Tests/GitWorkspacePool.Tests.csproj --configuration Release --no-build --no-restore --filter "FullyQualifiedName~Release_RealProcessKillAtBothDurableBoundariesNeverLosesParkedUserWork|FullyQualifiedName~ReadySlot_RealProcessKillAtEachBoundaryPreservesBothOwners"
-      - name: Crash-resilience E2E (manual)
-        if: github.event_name == 'workflow_dispatch'
-        run: dotnet test tests/GitWorkspacePool.Tests/GitWorkspacePool.Tests.csproj --configuration Release --no-build --no-restore --filter "Category=SlowE2E"
+        run: |
+          if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
+            & ./scripts/Test-Changes.ps1 -IncludeSlow
+          } else {
+            & ./scripts/Test-Changes.ps1
+          }
       - name: Publish and smoke Windows preview ZIP
         if: github.event_name == 'pull_request'
         run: |
