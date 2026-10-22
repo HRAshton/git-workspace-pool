@@ -36,8 +36,44 @@ internal static class GitProcessSafety
         startInfo.ArgumentList.Add("-c");
         startInfo.ArgumentList.Add("filter.lfs.required=false");
 
+        // A protocol launcher must not inherit shell-command overrides from
+        // the browser/parent process. Standard SSH agent auth still works.
+        startInfo.Environment.Remove("GIT_SSH_COMMAND");
+        startInfo.Environment.Remove("GIT_SSH");
+        startInfo.Environment.Remove("GIT_PROXY_COMMAND");
+        startInfo.Environment.Remove("GIT_ASKPASS");
         startInfo.Environment["GIT_TERMINAL_PROMPT"] = "0";
         startInfo.Environment["GIT_LFS_SKIP_SMUDGE"] = "1";
+    }
+
+    /// <summary>
+    /// Refuses Git configuration that can redirect a trusted origin or select
+    /// an arbitrary external command during fetch. Effective key names must
+    /// include global, local and conditional Git configuration.
+    /// </summary>
+    public static void RejectUnsafeFetchConfiguration(string nullDelimitedNames)
+    {
+        foreach (string key in nullDelimitedNames.Split(
+            '\0', StringSplitOptions.RemoveEmptyEntries
+        ))
+        {
+            bool urlRewrite = key.StartsWith("url.", StringComparison.OrdinalIgnoreCase)
+                && (key.EndsWith(".insteadof", StringComparison.OrdinalIgnoreCase)
+                    || key.EndsWith(".pushinsteadof", StringComparison.OrdinalIgnoreCase));
+            bool externalTransport = key.Equals("core.sshcommand", StringComparison.OrdinalIgnoreCase)
+                || key.Equals("core.gitproxy", StringComparison.OrdinalIgnoreCase)
+                || key.Equals("remote.origin.vcs", StringComparison.OrdinalIgnoreCase)
+                || key.Equals("remote.origin.uploadpack", StringComparison.OrdinalIgnoreCase)
+                || key.Equals("remote.origin.receivepack", StringComparison.OrdinalIgnoreCase);
+
+            if (urlRewrite || externalTransport)
+            {
+                throw new InvalidOperationException(
+                    "The Git clone configures an unsafe URL rewrite or external Git transport command. "
+                    + "Remove the override before opening a PR; no fetch was performed."
+                );
+            }
+        }
     }
 
     /// <summary>

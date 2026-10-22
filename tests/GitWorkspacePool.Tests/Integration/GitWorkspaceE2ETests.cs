@@ -128,6 +128,62 @@ public sealed class GitWorkspaceE2ETests
         );
     }
 
+    [Theory]
+    [InlineData("core.sshCommand", "never-run")]
+    [InlineData("core.gitProxy", "never-run")]
+    [InlineData("remote.origin.vcs", "never-run")]
+    [InlineData("remote.origin.uploadpack", "never-run")]
+    [InlineData("remote.origin.receivepack", "never-run")]
+    [InlineData("url.https://mirror.example/repo/.insteadOf", "https://github.com/")]
+    public async Task GitCli_RejectsUnsafeFetchConfigBeforeCheckout(
+        string key,
+        string value
+    )
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        await fixture.GitInDirectoryAsync(
+            fixture.SourcePath, "config", "--local", key, value
+        );
+
+        InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.OpenAsync(PullRequestUrl)
+        );
+
+        Assert.Contains("unsafe URL rewrite or external Git transport", error.Message);
+        Assert.False(Directory.Exists(fixture.WorkspacePath(17)));
+        Assert.False(await fixture.IsRegisteredWorktreeAsync(fixture.WorkspacePath(17)));
+        Assert.Empty(fixture.Editor.OpenedPaths);
+
+        // The same effective-configuration preflight protects origin resolution
+        // in non-fixture GitHub origin verification.
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => new GitCliWorkspaceGit().GetOriginUrlAsync(
+                fixture.SourcePath, CancellationToken.None
+            )
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task GitCli_RejectsConfigIntroducedAfterOriginPreflight()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        GitCliWorkspaceGit git = new();
+        await git.GetOriginUrlAsync(fixture.SourcePath, CancellationToken.None);
+        await fixture.GitInDirectoryAsync(
+            fixture.SourcePath, "config", "--local",
+            "url.https://mirror.example/.insteadOf", "https://github.com/"
+        );
+
+        InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => git.FetchPullRequestAsync(
+                fixture.SourcePath, 17, CancellationToken.None
+            )
+        );
+        Assert.Contains("unsafe URL rewrite or external Git transport", error.Message);
+        Assert.False(Directory.Exists(fixture.WorkspacePath(17)));
+    }
+
     [Fact]
     [Trait("Category", "FastE2E")]
     public async Task GitCli_RefusesCustomSmudgeDriverBeforeCheckout()

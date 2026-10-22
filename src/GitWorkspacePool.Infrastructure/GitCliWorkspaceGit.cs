@@ -42,6 +42,7 @@ public sealed class GitCliWorkspaceGit : IWorkspaceGit, IGitRemoteReader
         CancellationToken cancellationToken
     )
     {
+        await EnsureSafeFetchConfigurationAsync(repositoryPath, cancellationToken);
         string output = await RunAsync(
             repositoryPath,
             ["remote", "get-url", "origin"],
@@ -57,6 +58,9 @@ public sealed class GitCliWorkspaceGit : IWorkspaceGit, IGitRemoteReader
         CancellationToken cancellationToken
     )
     {
+        // Recheck immediately before fetch even if the caller validated origin
+        // earlier. A changed local/conditional Git config must fail closed.
+        await EnsureSafeFetchConfigurationAsync(repositoryPath, cancellationToken);
         await RunAsync(
             repositoryPath,
             [
@@ -141,6 +145,19 @@ public sealed class GitCliWorkspaceGit : IWorkspaceGit, IGitRemoteReader
             ["worktree", "move", source, destination],
             cancellationToken
         );
+    }
+
+    private static async Task EnsureSafeFetchConfigurationAsync(
+        string repositoryPath,
+        CancellationToken cancellationToken
+    )
+    {
+        string names = await RunAsync(
+            repositoryPath,
+            ["config", "--list", "--name-only", "--null"],
+            cancellationToken
+        );
+        GitProcessSafety.RejectUnsafeFetchConfiguration(names);
     }
 
     private static async Task<string> RunAsync(
