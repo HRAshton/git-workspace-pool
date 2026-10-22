@@ -81,7 +81,8 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [x] Reject snapshot/restore before allocation when the target disk fails a conservative free-space preflight.
 - [x] Reject executable Git filter drivers before worktree checkout; disable Git LFS smudge/process as a safe identity fallback.
 - [x] Restore snapshot directory attributes and timestamps after materializing child files.
-- [ ] Complete reparse-point race, actual disk-full and safe restore-reconciliation tests before enabling release.
+- [x] Verify existing clean recovery files by SHA-256 using the same exclusive handle for comparison and overwrite; recheck clean Git status after baseline capture. Fast real-Git E2E protects competing editor changes between restored files.
+- [ ] Complete file identity/reparse-point races, deletion/index replacement, actual disk-full and safe restore-reconciliation tests before enabling automatic release or recycling.
 - [ ] Configurable artifact retention and cleanup policies.
 - [x] Tests for interrupted worktree creation (before journal commit) and cross-handler allocation.
 - [x] Refuse snapshots of locked files without modifying the source or publishing a partial copy.

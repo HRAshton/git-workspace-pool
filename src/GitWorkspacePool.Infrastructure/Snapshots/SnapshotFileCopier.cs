@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+
 namespace GitWorkspacePool.Infrastructure.Snapshots;
 
 /// <summary>
@@ -13,12 +15,21 @@ internal static class SnapshotFileCopier
         SnapshotCopyPhase phase,
         ISnapshotCopyProgressSink? progress,
         CancellationToken cancellationToken,
-        long maxBytes = long.MaxValue
+        long maxBytes = long.MaxValue,
+        string? expectedDestinationSha256 = null
     )
     {
         if (maxBytes < 0)
         {
             throw new InvalidOperationException("Snapshot file byte budget is exhausted.");
+        }
+
+        if (expectedDestinationSha256 is not null && destinationMode != FileMode.Open)
+        {
+            throw new ArgumentException(
+                "Verified existing files must be opened without truncation.",
+                nameof(destinationMode)
+            );
         }
 
         WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(source);
@@ -35,11 +46,30 @@ internal static class SnapshotFileCopier
         await using FileStream output = new(
             destination,
             destinationMode,
-            FileAccess.Write,
+            expectedDestinationSha256 is null ? FileAccess.Write : FileAccess.ReadWrite,
             FileShare.None,
             bufferSize: 65536,
             FileOptions.WriteThrough
         );
+
+        if (expectedDestinationSha256 is not null)
+        {
+            // Keep the same exclusive Windows file handle across verification
+            // and truncation, so a competing editor cannot replace its bytes.
+            string actual = Convert.ToHexString(
+                await SHA256.HashDataAsync(output, cancellationToken)
+            );
+            if (!actual.Equals(expectedDestinationSha256, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    "Recovery checkout file changed since clean validation; "
+                        + "intervening user data was not overwritten."
+                );
+            }
+
+            output.Position = 0;
+            output.SetLength(0);
+        }
 
         byte[] buffer = new byte[65536];
         long bytesWritten = 0;

@@ -272,7 +272,11 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
         // checkout. Testing File.Exists only at copy time is unsafe: a foreign
         // file created after checkout could otherwise be mistaken for a
         // tracked checkout file and overwritten by FileMode.Create.
-        HashSet<string> filesAtCleanCheckout = PathNames();
+        Dictionary<string, string> cleanCheckoutHashes = new(
+            OperatingSystem.IsWindows()
+                ? StringComparer.OrdinalIgnoreCase
+                : StringComparer.Ordinal
+        );
         foreach (WorkspaceSnapshotFile file in manifest.Files.Where(item => !item.IsDirectory))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -288,8 +292,32 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
 
             if (File.Exists(destination))
             {
-                filesAtCleanCheckout.Add(relative);
+                await using FileStream checkoutFile = new(
+                    destination,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.Read,
+                    bufferSize: 65536,
+                    FileOptions.SequentialScan
+                );
+                cleanCheckoutHashes.Add(
+                    relative,
+                    Convert.ToHexString(
+                        await SHA256.HashDataAsync(checkoutFile, cancellationToken)
+                    )
+                );
             }
+        }
+
+        // A concurrent editor can modify the checkout while hashes are being
+        // collected. Require that the entire checkout remain clean.
+        WorktreeSnapshotScan baseline = await _scanner.InspectAsync(target, cancellationToken);
+        if (baseline.Head != manifest.HeadCommitSha || baseline.Status.Length != 0)
+        {
+            throw new InvalidOperationException(
+                "Recovery checkout changed during clean validation; "
+                    + "the isolated worktree was retained for inspection."
+            );
         }
 
         foreach (WorkspaceSnapshotFile file in manifest.Files.Where(item => item.IsDirectory))
@@ -314,7 +342,9 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
                 Path.Combine(snapshot, "files"),
                 relative
             );
-            bool existedAtCleanCheckout = filesAtCleanCheckout.Contains(relative);
+            bool existedAtCleanCheckout = cleanCheckoutHashes.TryGetValue(
+                relative, out string? expectedCheckoutHash
+            );
             if (existedAtCleanCheckout)
             {
                 WorkspaceSnapshotPathPolicy.EnsureNotReparse(destination);
@@ -330,10 +360,11 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
             await SnapshotFileCopier.CopyAsync(
                 source,
                 destination,
-                existedAtCleanCheckout ? FileMode.Create : FileMode.CreateNew,
+                existedAtCleanCheckout ? FileMode.Open : FileMode.CreateNew,
                 SnapshotCopyPhase.RestoreWorkingFile,
                 _copyProgress,
-                cancellationToken
+                cancellationToken,
+                expectedDestinationSha256: expectedCheckoutHash
             );
             File.SetAttributes(destination, file.Attributes);
             File.SetLastWriteTimeUtc(destination, file.LastWriteUtc);
