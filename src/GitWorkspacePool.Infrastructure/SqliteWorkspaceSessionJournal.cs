@@ -349,6 +349,54 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
     }
 
     /// <inheritdoc/>
+    public Task<IReadOnlyList<WorkspacePreparedRelease>> ListPendingReleasePreparationsAsync(
+        CancellationToken cancellationToken
+    )
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using SqliteConnection connection = Open();
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT preparations.preparation_id, preparations.session_id,
+                   preparations.slot_id, sessions.workspace_path,
+                   preparations.generation
+              FROM workspace_slot_release_preparations AS preparations
+              LEFT JOIN sessions ON sessions.operation_id = preparations.session_id
+             WHERE preparations.state = 'Prepared'
+             ORDER BY preparations.rowid LIMIT 10001
+            """;
+
+        List<WorkspacePreparedRelease> preparations = [];
+        using SqliteDataReader reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            if (preparations.Count >= 10000)
+            {
+                throw new InvalidOperationException(
+                    "Release preparation recovery inventory exceeds the safety limit."
+                );
+            }
+
+            if (reader.IsDBNull(3))
+            {
+                throw new InvalidOperationException(
+                    "A release preparation refers to an unknown session; recovery is required."
+                );
+            }
+
+            preparations.Add(new WorkspacePreparedRelease(
+                Guid.Parse(reader.GetString(0)),
+                Guid.Parse(reader.GetString(1)),
+                Guid.Parse(reader.GetString(2)),
+                reader.GetString(3),
+                reader.GetInt64(4)
+            ));
+        }
+
+        return Task.FromResult<IReadOnlyList<WorkspacePreparedRelease>>(preparations);
+    }
+
+    /// <inheritdoc/>
     public Task ReserveRestoreAsync(
         Guid restoreId,
         Guid snapshotId,

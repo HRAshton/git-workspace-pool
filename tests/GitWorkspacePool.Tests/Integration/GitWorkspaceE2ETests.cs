@@ -591,6 +591,12 @@ public sealed class GitWorkspaceE2ETests
             preparation,
             Assert.Single(await reopened.ListPreparedAsync(CancellationToken.None))
         );
+        Assert.Contains(
+            await fixture.ScanRecoveryAsync(),
+            finding => finding.Kind == WorkspaceRecoveryKind.PendingSlotReleasePreparation
+                && finding.Path == opened.WorkspacePath
+                && finding.Description.Contains(preparation.PreparationId.ToString("N"))
+        );
 
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => fixture.UnparkAsync(owner.OperationId)
@@ -611,6 +617,10 @@ public sealed class GitWorkspaceE2ETests
 
         Assert.True(await reopened.CancelAsync(preparation.PreparationId, CancellationToken.None));
         Assert.Empty(await reopened.ListPreparedAsync(CancellationToken.None));
+        Assert.DoesNotContain(
+            await fixture.ScanRecoveryAsync(),
+            finding => finding.Kind == WorkspaceRecoveryKind.PendingSlotReleasePreparation
+        );
         Assert.Equal(opened.WorkspacePath, await fixture.UnparkAsync(owner.OperationId));
         Assert.Equal(
             "unique local data",

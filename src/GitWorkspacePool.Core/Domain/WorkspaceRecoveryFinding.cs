@@ -52,6 +52,9 @@ public enum WorkspaceRecoveryKind
 
     /// <summary>SQLite slot/lease ownership contradicts itself; no reuse is permitted.</summary>
     SlotOwnershipInconsistent,
+
+    /// <summary>A prepared release still retains the protected slot and Held lease.</summary>
+    PendingSlotReleasePreparation,
 }
 
 /// <summary>

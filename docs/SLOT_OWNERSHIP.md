@@ -95,7 +95,9 @@ cross-process worktree lock, reruns the complete Git/filesystem release
 preflight under that lock, and atomically compares the protected slot,
 held lease, parked session identity and generation **before** journalling.
 Retries return the same durable preparation; a stale generation or
-unverified path refuses the request.
+unverified path refuses the request. Recovery diagnostics now lists all bounded
+Prepared records using a read-only SQLite join to their original reserved
+session paths; cancellation makes the preparation finding disappear.
 
 While an intent is Prepared, `BeginUnparkingAsync` fails closed. An
 explicit cancellation permits unparking again. This preserves the parked

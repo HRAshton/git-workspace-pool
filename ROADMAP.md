@@ -50,6 +50,7 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [x] Implement read-only, lock-scoped release eligibility assessment: require Parked state, Protected Held lease, exact Git registration and safe path ancestry; validate on real local Git.
 - [x] Add bounded, read-only audit of protected/ready/reserved slot leases, owner identity and generation mismatches; expose conflicts through tray recovery diagnostics.
 - [x] Journal version-7 release preparations under an OS lock and Git preflight; atomic slot/generation CAS, durable idempotent retry, and explicit cancellation. Block unparking while a preparation remains active.
+- [x] Include all pending release preparations in read-only recovery diagnostics, with original owned paths and explicit cancellation instructions.
 - [ ] Complete real release/handoff and recycling only after detaching immutable session history from reserved slot paths and passing all recovery gates.
 - [x] Implement explicit non-destructive snapshot export for staged/unstaged, untracked, ignored and binary files, with independent staged blobs and a Git index.
 - [x] Restore a journalled snapshot into a separate Git worktree on the saved commit; verify index, working tree files and exact Git status.

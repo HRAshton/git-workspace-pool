@@ -329,6 +329,23 @@ public sealed class WorkspaceRecoveryInspector : IWorkspaceRecoveryInspector
             }
         }
 
+        IReadOnlyList<WorkspacePreparedRelease> releasePreparations =
+            await _journal.ListPendingReleasePreparationsAsync(cancellationToken);
+
+        foreach (WorkspacePreparedRelease preparation in releasePreparations)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            findings.Add(new WorkspaceRecoveryFinding(
+                WorkspaceRecoveryKind.PendingSlotReleasePreparation,
+                preparation.WorkspacePath,
+                null,
+                "Release preparation " + preparation.PreparationId.ToString("N")
+                    + " holds slot " + preparation.SlotId.ToString("N")
+                    + " generation " + preparation.Generation
+                    + ". Cancel explicitly before unparking; do not delete files."
+            ));
+        }
+
         if (_slotAudit is not null)
         {
             IReadOnlyList<WorkspaceSlotIntegrityFinding> slotIssues =
@@ -375,6 +392,7 @@ public sealed class WorkspaceRecoveryInspector : IWorkspaceRecoveryInspector
                 WorkspaceRecoveryKind.InterruptedUnparking => "A return-move intent was not committed; retry Unpark for safe reconciliation.",
                 WorkspaceRecoveryKind.MissingParkedWorktree => "The parked path is missing, unregistered or points to a reparse location.",
                 WorkspaceRecoveryKind.UnverifiableParkedWorktree => "Git registration for the parked tree could not be verified.",
+                WorkspaceRecoveryKind.PendingSlotReleasePreparation => "A prepared release retains exclusive slot ownership.",
                 _ => "Unknown entry in app-owned recovery storage.",
             }
         ));

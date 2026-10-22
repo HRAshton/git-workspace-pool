@@ -29,4 +29,11 @@ public interface IWorkspaceRecoveryJournal
     Task<IReadOnlyList<WorkspaceSession>> ListRecoveryParkingSessionsAsync(
         CancellationToken cancellationToken
     );
+
+    /// <summary>
+    /// Lists the entire bounded set of release preparations that retain exclusive leases.
+    /// </summary>
+    Task<IReadOnlyList<WorkspacePreparedRelease>> ListPendingReleasePreparationsAsync(
+        CancellationToken cancellationToken
+    );
 }
