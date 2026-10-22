@@ -33,6 +33,10 @@ RC2 includes `RECOVERY.md` directly in the extracted ZIP. It explains the suppor
 
 RC2 includes a tray **Local disk usage (read-only)...** menu. It scans only app-owned snapshots and isolated recovered worktrees with entry/depth limits, reports logical file sizes and file counts, and refuses symlinks or unknown roots without modifying any file. This is a diagnostics tool, not a disk budget, a cleanup policy, or authorization to delete evidence; NTFS allocated physical bytes and clone/workspace contents are not included.
 
+## Advisory storage thresholds (no reclamation)
+
+RC2 settings now accept an optional `StorageWarningLimits` object with `MaxSnapshotBytes`, `MaxRecoveredBytes`, and `MaxCombinedBytes` (positive byte counts, at most 16 TiB). The tray's **Local disk usage (read-only)...** menu displays advisory over/within-threshold statuses for a completed safe logical-byte inventory. Omitted/null limits disable warnings. Settings are validated at startup. Warnings **do not** delete files, free worktrees, evict user sessions, or grant permission for automatic cleanup. Physical disk allocation and unrelated clone/worktree trees are not measured.
+
 ## Windows installer sharing-lock hardening
 
 RC2 installer publication allows a bounded retry window after its startup smoke test for transient Windows Defender/AV/indexing sharing violations, while refusing occupied/tampered version directories without overwrite; interrupted or inaccessible staging data is retained for investigation. Windows package smoke verifies collision refusal. This does not certify all real-world AV or ACL behavior.
