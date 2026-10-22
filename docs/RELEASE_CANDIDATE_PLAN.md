@@ -1,5 +1,7 @@
 # Release Candidate Plan (RC1)
 
+**RC1 build versus release approval:** The scope-limited Windows GitHub PR → VS Code `0.1.0-rc.1` engineering candidate and its explicit remaining manual release gates are tracked in [RC1 release notes](RC1_RELEASE_NOTES.md) and [RC1 acceptance](RC1_ACCEPTANCE.md). A passing candidate workflow is not a signed or publicly approved release, and does not imply later automatic warm-pool, eviction or provider milestones have been completed.
+
 > Planning baseline: 2026-10-21. This is an implementation sequence, **not** a schedule for unattended/background execution. Every milestone must pass its exit gate before dependent, potentially destructive capabilities are enabled.
 
 ## Release objective and non-goals
