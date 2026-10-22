@@ -29,6 +29,10 @@ Run the bundled `Test-RC2Prerequisites.ps1` before relying on browser-to-editor 
 
 RC2 includes `RECOVERY.md` directly in the extracted ZIP. It explains the supported recovery finding types, backup-first triage, read-only Git worktree inspection and what evidence may be shared safely without leaking credentials or user code. RC2 ZIP smoke refuses packages missing this runbook or the matching RC2 acceptance/release notes.
 
+## Snapshot and recovery disk observations
+
+RC2 includes a tray **Local disk usage (read-only)...** menu. It scans only app-owned snapshots and isolated recovered worktrees with entry/depth limits, reports logical file sizes and file counts, and refuses symlinks or unknown roots without modifying any file. This is a diagnostics tool, not a disk budget, a cleanup policy, or authorization to delete evidence; NTFS allocated physical bytes and clone/workspace contents are not included.
+
 ## Windows installer sharing-lock hardening
 
 RC2 installer publication allows a bounded retry window after its startup smoke test for transient Windows Defender/AV/indexing sharing violations, while refusing occupied/tampered version directories without overwrite; interrupted or inaccessible staging data is retained for investigation. Windows package smoke verifies collision refusal. This does not certify all real-world AV or ACL behavior.

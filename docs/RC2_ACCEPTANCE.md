@@ -20,6 +20,12 @@
 - [ ] Inject interruption, conflicting file occupant, link/junction, read-only file, locked file, low disk and unsafe Git config. Check recovery diagnostics while requiring no original user-file overwrites, resets, cleanup or arbitrary execution.
 - [ ] Confirm quit/restart never triggers eviction/recycling, automatic worktree cleanup, background install, user project build or PR speculation. Advanced manual released-slot handoff and `node_modules` copying are not certified beyond their isolated tests.
 
+## Read-only storage diagnostics
+
+- [ ] Inspect the RC2 tray's **Local disk usage (read-only)...** against a disposable snapshot and side-by-side restore; confirm counts are plausible and clicking it never touches snapshot, recovery or active workspace contents.
+- [ ] Under inaccessible/reparse-point or over-budget app-owned evidence, confirm it fails visibly rather than reporting zero freeable bytes or deleting files.
+- [ ] Confirm logical-byte counts are not represented as physical disk savings or as permission to evict user data.
+
 ## Git and editor prerequisite inspection
 
 - [ ] Run the packaged `Test-RC2Prerequisites.ps1` on the target Windows machine before installing production browser integration. Verify Git is at least 2.40.0, the exact configured VS Code `Code.exe` path exists, and missing Git/editor is reported clearly.
