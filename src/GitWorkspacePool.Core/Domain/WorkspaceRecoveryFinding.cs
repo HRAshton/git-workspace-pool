@@ -35,6 +35,9 @@ public enum WorkspaceRecoveryKind
     /// <summary>A fully verified isolated recovery worktree remains outside the PR pool.</summary>
     VerifiedRecoveryWorktree,
 
+    /// <summary>A journal-verified restore now points to a different Git commit.</summary>
+    DivergedRecoveryWorktree,
+
     /// <summary>A restore has a journal intent but its directory is missing.</summary>
     MissingRecoveryWorktree,
 

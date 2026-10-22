@@ -1782,6 +1782,145 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task Snapshot_CancellationDuringCopyPreservesOriginalAndPendingEvidence()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        byte[] userBytes = Enumerable.Repeat((byte)0x35, 256 * 1024).ToArray();
+        string source = Path.Combine(opened.WorkspacePath, "cancel.bin");
+        File.WriteAllBytes(source, userBytes);
+        using CancellationTokenSource cancellation = new();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => fixture.SnapshotAsync(
+                copyProgress: new CancelCopyAfterBytes(
+                    cancellation,
+                    SnapshotCopyPhase.ExportWorkingFile,
+                    65536
+                ),
+                cancellationToken: cancellation.Token
+            )
+        );
+
+        Assert.Equal(userBytes, File.ReadAllBytes(source));
+        Assert.Empty(await fixture.ListPublishedSnapshotsAsync());
+        Assert.Contains(
+            await fixture.ScanRecoveryAsync(),
+            finding => finding.Kind == WorkspaceRecoveryKind.IncompleteSnapshot
+        );
+        Assert.Equal(WorkspaceSessionState.Active, (await fixture.OwnedSessionAsync()).State);
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task Restore_CancellationDuringCopyRetainsUnverifiedRestore()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        byte[] userBytes = Enumerable.Repeat((byte)0x76, 256 * 1024).ToArray();
+        string source = Path.Combine(opened.WorkspacePath, "cancel.bin");
+        File.WriteAllBytes(source, userBytes);
+        WorkspaceSnapshotReceipt saved = await fixture.SnapshotAsync();
+        using CancellationTokenSource cancellation = new();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => fixture.RestoreSnapshotAsync(
+                saved.SnapshotId,
+                copyProgress: new CancelCopyAfterBytes(
+                    cancellation,
+                    SnapshotCopyPhase.RestoreWorkingFile,
+                    65536
+                ),
+                cancellationToken: cancellation.Token
+            )
+        );
+
+        SqliteWorkspaceSessionJournal journal = new(fixture.DatabasePath);
+        WorkspaceRestoreOperation interrupted = Assert.Single(
+            await journal.ListRecoveryRestoresAsync(CancellationToken.None)
+        );
+        Assert.Equal(WorkspaceRestoreState.Preparing, interrupted.State);
+        Assert.True(await fixture.IsRegisteredWorktreeAsync(interrupted.Path));
+        Assert.Equal(userBytes, File.ReadAllBytes(source));
+        Assert.Contains(
+            await fixture.ScanRecoveryAsync(),
+            finding => finding.Kind == WorkspaceRecoveryKind.InterruptedRestore
+                && finding.Path == interrupted.Path
+        );
+        string retry = await fixture.RestoreSnapshotAsync(saved.SnapshotId);
+        Assert.Equal(userBytes, File.ReadAllBytes(Path.Combine(retry, "cancel.bin")));
+        Assert.Equal(userBytes, File.ReadAllBytes(source));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task Recovery_VerifiedRestoreGitHeadDriftIsFlaggedWithoutMutation()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string source = Path.Combine(opened.WorkspacePath, "notes.local");
+        File.WriteAllText(source, "never remove this");
+        WorkspaceSnapshotReceipt snapshot = await fixture.SnapshotAsync();
+        string recovered = await fixture.RestoreSnapshotAsync(snapshot.SnapshotId);
+
+        Assert.Contains(
+            await fixture.ScanRecoveryAsync(),
+            finding => finding.Kind == WorkspaceRecoveryKind.VerifiedRecoveryWorktree
+                && finding.Path == recovered
+        );
+
+        await fixture.GitInDirectoryAsync(recovered, "checkout", "--detach", "HEAD~1");
+
+        IReadOnlyList<WorkspaceRecoveryFinding> findings = await fixture.ScanRecoveryAsync();
+        Assert.Contains(
+            findings,
+            finding => finding.Kind == WorkspaceRecoveryKind.DivergedRecoveryWorktree
+                && finding.Path == recovered
+                && finding.SnapshotId == snapshot.SnapshotId
+        );
+        Assert.DoesNotContain(
+            findings,
+            finding => finding.Kind == WorkspaceRecoveryKind.VerifiedRecoveryWorktree
+                && finding.Path == recovered
+        );
+        Assert.Equal("never remove this", File.ReadAllText(source));
+        Assert.Equal("never remove this", File.ReadAllText(Path.Combine(recovered, "notes.local")));
+        Assert.Equal(WorkspaceSessionState.Active, (await fixture.OwnedSessionAsync()).State);
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task Recovery_MissingManifestMakesVerifiedRestoreUnverifiableWithoutDeletion()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string original = Path.Combine(opened.WorkspacePath, "notes.local");
+        File.WriteAllText(original, "keep all data");
+        WorkspaceSnapshotReceipt snapshot = await fixture.SnapshotAsync();
+        string restored = await fixture.RestoreSnapshotAsync(snapshot.SnapshotId);
+
+        string manifest = Path.Combine(snapshot.Folder, "manifest.json");
+        string savedManifest = manifest + ".moved";
+        File.Move(manifest, savedManifest);
+
+        IReadOnlyList<WorkspaceRecoveryFinding> findings = await fixture.ScanRecoveryAsync();
+        Assert.Contains(
+            findings,
+            finding => finding.Kind == WorkspaceRecoveryKind.UnverifiableRecoveryDirectory
+                && finding.Path == restored
+        );
+        Assert.DoesNotContain(
+            findings,
+            finding => finding.Kind == WorkspaceRecoveryKind.VerifiedRecoveryWorktree
+                && finding.Path == restored
+        );
+        Assert.True(File.Exists(savedManifest));
+        Assert.Equal("keep all data", File.ReadAllText(original));
+        Assert.Equal("keep all data", File.ReadAllText(Path.Combine(restored, "notes.local")));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task Snapshot_RefusesLockedUserFileWithoutPublishing()
     {
         using Fixture fixture = await Fixture.CreateAsync();
@@ -1816,6 +1955,27 @@ public sealed class GitWorkspaceE2ETests
 
         Assert.False(Directory.Exists(fixture.WorkspacePath(999)));
         Assert.Empty(fixture.Editor.OpenedPaths);
+    }
+
+    private sealed class CancelCopyAfterBytes(
+        CancellationTokenSource source,
+        SnapshotCopyPhase target,
+        long cancelAfter
+    ) : ISnapshotCopyProgressSink
+    {
+        public ValueTask AfterBytesWrittenAsync(
+            SnapshotCopyPhase phase,
+            long bytesWritten,
+            CancellationToken cancellationToken
+        )
+        {
+            if (phase == target && bytesWritten >= cancelAfter)
+            {
+                source.Cancel();
+            }
+
+            return ValueTask.CompletedTask;
+        }
     }
 
     private sealed class FailCopyAfterBytes(
@@ -2006,6 +2166,9 @@ public sealed class GitWorkspaceE2ETests
         public Task GitInWorkspaceAsync(params string[] arguments) =>
             GitAsync(WorkspacePath(17), arguments);
 
+        public Task GitInDirectoryAsync(string path, params string[] arguments) =>
+            GitAsync(path, arguments);
+
         public async Task<string> ReadStagedFeatureAsync(string? worktreePath = null)
         {
             ProcessStartInfo startInfo = new("git")
@@ -2149,7 +2312,8 @@ public sealed class GitWorkspaceE2ETests
         public async Task<WorkspaceSnapshotReceipt> SnapshotAsync(
             ISnapshotCheckpointSink? checkpoints = null,
             ISnapshotDiskSpaceProbe? diskSpace = null,
-            ISnapshotCopyProgressSink? copyProgress = null
+            ISnapshotCopyProgressSink? copyProgress = null,
+            CancellationToken cancellationToken = default
         )
         {
             WorkspaceSession session = await OwnedSessionAsync();
@@ -2166,14 +2330,15 @@ public sealed class GitWorkspaceE2ETests
                     copyProgress
                 )
             );
-            return await handler.CaptureAsync(session.OperationId, CancellationToken.None);
+            return await handler.CaptureAsync(session.OperationId, cancellationToken);
         }
 
         public async Task<string> RestoreSnapshotAsync(
             Guid snapshotId,
             ISnapshotCheckpointSink? checkpoints = null,
             ISnapshotDiskSpaceProbe? diskSpace = null,
-            ISnapshotCopyProgressSink? copyProgress = null
+            ISnapshotCopyProgressSink? copyProgress = null,
+            CancellationToken cancellationToken = default
         )
         {
             SqliteWorkspaceSessionJournal sessions = new(
@@ -2191,7 +2356,7 @@ public sealed class GitWorkspaceE2ETests
                     copyProgress
                 )
             );
-            return await service.RestoreAsync(snapshotId, CancellationToken.None);
+            return await service.RestoreAsync(snapshotId, cancellationToken);
         }
 
         public Task<OpenPullRequestResult> OpenAsync(string url) =>

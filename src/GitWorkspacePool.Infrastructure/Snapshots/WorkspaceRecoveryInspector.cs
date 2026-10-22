@@ -1,3 +1,4 @@
+using System.Text.Json;
 using GitWorkspacePool.Core.Application;
 using GitWorkspacePool.Core.Domain.WarmPool;
 using GitWorkspacePool.Core.Application.WarmPool;
@@ -233,13 +234,43 @@ public sealed class WorkspaceRecoveryInspector : IWorkspaceRecoveryInspector
                         path,
                         cancellationToken
                     );
-                    WorkspaceRecoveryKind kind = !registered
-                        ? WorkspaceRecoveryKind.UnregisteredRecoveryDirectory
-                        : journalled
-                            ? operation!.State == WorkspaceRestoreState.Preparing
-                                ? WorkspaceRecoveryKind.InterruptedRestore
-                                : WorkspaceRecoveryKind.VerifiedRecoveryWorktree
-                            : WorkspaceRecoveryKind.UnmanagedRecoveryWorktree;
+                    WorkspaceRecoveryKind kind;
+                    if (!registered)
+                    {
+                        kind = WorkspaceRecoveryKind.UnregisteredRecoveryDirectory;
+                    }
+                    else if (!journalled)
+                    {
+                        kind = WorkspaceRecoveryKind.UnmanagedRecoveryWorktree;
+                    }
+                    else if (operation!.State == WorkspaceRestoreState.Preparing)
+                    {
+                        kind = WorkspaceRecoveryKind.InterruptedRestore;
+                    }
+                    else
+                    {
+                        // Journal verification is a historical claim. A later Git
+                        // checkout in the recovery tree must not be presented as
+                        // the original verified snapshot on subsequent inspections.
+                        WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(
+                            Path.Combine(path, ".git")
+                        );
+                        string expectedHead = await ReadSnapshotHeadAsync(
+                            record,
+                            cancellationToken
+                        );
+                        string actualHead = await _git.GetWorktreeCommitAsync(
+                            path,
+                            cancellationToken
+                        );
+                        kind = string.Equals(
+                            actualHead,
+                            expectedHead,
+                            StringComparison.OrdinalIgnoreCase
+                        )
+                            ? WorkspaceRecoveryKind.VerifiedRecoveryWorktree
+                            : WorkspaceRecoveryKind.DivergedRecoveryWorktree;
+                    }
 
                     Add(findings, kind, path, snapshotId);
                 }
@@ -248,7 +279,7 @@ public sealed class WorkspaceRecoveryInspector : IWorkspaceRecoveryInspector
                     throw;
                 }
                 catch (Exception exception) when (
-                    exception is IOException or InvalidOperationException
+                    exception is IOException or InvalidOperationException or UnauthorizedAccessException
                 )
                 {
                     Add(
@@ -365,6 +396,46 @@ public sealed class WorkspaceRecoveryInspector : IWorkspaceRecoveryInspector
         return findings;
     }
 
+    private static async Task<string> ReadSnapshotHeadAsync(
+        WorkspaceSnapshotRecord record,
+        CancellationToken cancellationToken
+    )
+    {
+        string manifestPath = Path.Combine(record.Receipt.Folder, "manifest.json");
+        WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(manifestPath);
+
+        WorkspaceSnapshotManifest manifest;
+        try
+        {
+            string json = await File.ReadAllTextAsync(manifestPath, cancellationToken);
+            manifest = JsonSerializer.Deserialize<WorkspaceSnapshotManifest>(json)
+                ?? throw new InvalidOperationException("Snapshot manifest is empty.");
+        }
+        catch (JsonException exception)
+        {
+            throw new InvalidOperationException(
+                "Snapshot manifest cannot be verified during recovery inventory.",
+                exception
+            );
+        }
+
+        if (
+            manifest.Version != WorkspaceSnapshotManifest.CurrentVersion
+            || manifest.SnapshotId != record.Receipt.SnapshotId
+            || manifest.OperationId != record.Session.OperationId
+            || string.IsNullOrWhiteSpace(manifest.HeadCommitSha)
+            || (manifest.HeadCommitSha.Length is not (40 or 64))
+            || !manifest.HeadCommitSha.All(Uri.IsHexDigit)
+        )
+        {
+            throw new InvalidOperationException(
+                "Snapshot identity cannot be verified during recovery inventory."
+            );
+        }
+
+        return manifest.HeadCommitSha;
+    }
+
     private static void Add(
         List<WorkspaceRecoveryFinding> findings,
         WorkspaceRecoveryKind kind,
@@ -384,9 +455,10 @@ public sealed class WorkspaceRecoveryInspector : IWorkspaceRecoveryInspector
                 WorkspaceRecoveryKind.UnmanagedRecoveryWorktree => "An isolated Git recovery worktree exists outside managed sessions.",
                 WorkspaceRecoveryKind.UnregisteredRecoveryDirectory => "Recovery directory is not registered as a Git worktree.",
                 WorkspaceRecoveryKind.UnsafeReparsePoint => "Symlink or junction; not traversed.",
-                WorkspaceRecoveryKind.UnverifiableRecoveryDirectory => "Git registration could not be confirmed.",
+                WorkspaceRecoveryKind.UnverifiableRecoveryDirectory => "Git identity or snapshot evidence cannot be confirmed; inspect manually.",
                 WorkspaceRecoveryKind.InterruptedRestore => "Restore was interrupted before complete verification.",
-                WorkspaceRecoveryKind.VerifiedRecoveryWorktree => "Verified isolated worktree; not owned by the managed PR pool.",
+                WorkspaceRecoveryKind.VerifiedRecoveryWorktree => "Previously verified isolated recovery worktree; Git HEAD matches (payloads were not rehashed during inventory).",
+                WorkspaceRecoveryKind.DivergedRecoveryWorktree => "Previously verified recovery worktree has a different Git HEAD; preserve it for manual inspection.",
                 WorkspaceRecoveryKind.MissingRecoveryWorktree => "Restore intent exists but the target directory is missing.",
                 WorkspaceRecoveryKind.InterruptedParking => "A parking intent was not committed; retry Park for safe reconciliation.",
                 WorkspaceRecoveryKind.InterruptedUnparking => "A return-move intent was not committed; retry Unpark for safe reconciliation.",
