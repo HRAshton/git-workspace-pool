@@ -677,9 +677,9 @@ public sealed class GitWorkspaceE2ETests
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => fixture.UnparkAsync(owner.OperationId)
         );
-        await Assert.ThrowsAsync<InvalidOperationException>(
-            () => fixture.OpenWithFreshHandlerAsync(PullRequestUrl)
-        );
+        OpenPullRequestResult reopened = await fixture.OpenWithFreshHandlerAsync(PullRequestUrl);
+        Assert.True(reopened.Reused);
+        Assert.Equal(parked, reopened.WorkspacePath);
         Assert.Equal("precious data", File.ReadAllText(Path.Combine(parked, "notes.local")));
         Assert.DoesNotContain(
             await fixture.ScanRecoveryAsync(),
@@ -795,6 +795,16 @@ public sealed class GitWorkspaceE2ETests
         Assert.Equal(before + 1, fixture.Editor.OpenedPaths.Count);
         Assert.Equal(parked, fixture.Editor.OpenedPaths.Last());
 
+        // Browser URL -> trusted PR handler -> retained original PR
+        // must not touch the second PR's leased former slot.
+        OpenPullRequestResult fromBrowser = await fixture.OpenWithFreshHandlerAsync(
+            PullRequestUrl
+        );
+        Assert.True(fromBrowser.Reused);
+        Assert.Equal(parked, fromBrowser.WorkspacePath);
+        Assert.Equal(before + 2, fixture.Editor.OpenedPaths.Count);
+        Assert.Equal(parked, fixture.Editor.OpenedPaths.Last());
+
         Assert.Equal("unstaged old PR", File.ReadAllText(
             Path.Combine(parked, "feature.txt")
         ));
@@ -816,6 +826,9 @@ public sealed class GitWorkspaceE2ETests
             "commit", "--allow-empty", "-m", "more work on released PR"
         );
         Assert.Equal(parked, await fixture.OpenRetainedReleasedAsync(original.OperationId));
+        Assert.Equal(parked, (await fixture.OpenWithFreshHandlerAsync(
+            PullRequestUrl
+        )).WorkspacePath);
         Assert.Equal("unstaged old PR", File.ReadAllText(
             Path.Combine(parked, "feature.txt")
         ));
@@ -850,6 +863,9 @@ public sealed class GitWorkspaceE2ETests
         Directory.Move(parked, displaced);
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => fixture.OpenRetainedReleasedAsync(original.OperationId)
+        );
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.OpenWithFreshHandlerAsync(PullRequestUrl)
         );
 
         Assert.Equal(openedBefore, fixture.Editor.OpenedPaths.Count);
@@ -3959,17 +3975,24 @@ public sealed class GitWorkspaceE2ETests
         {
             RepositoryRegistration registration = new("owner/repo", _source, _workspaces);
             string stateDirectory = Path.Combine(_root, "state");
+            SqliteWorkspaceSessionJournal journal = new(
+                Path.Combine(stateDirectory, "sessions.db")
+            );
+            FileWorkspaceOperationLock locks = new(Path.Combine(stateDirectory, "locks"));
+            GitCliWorkspaceGit git = new();
             WorkspaceAcquisitionService acquisition = new(
-                new GitCliWorkspaceGit(),
-                new WorkspaceDirectories(),
-                new SqliteWorkspaceSessionJournal(Path.Combine(stateDirectory, "sessions.db")),
-                new FileWorkspaceOperationLock(Path.Combine(stateDirectory, "locks"))
+                git, new WorkspaceDirectories(), journal, locks
+            );
+            OpenReleasedParkedWorkspaceService retained = new(
+                journal, locks, new GitWorkspaceParkingOperations(git), Editor
             );
             return new OpenPullRequestHandler(
                 new Catalog(registration),
                 new LocalFixtureOriginVerifier(),
                 acquisition,
-                Editor
+                Editor,
+                journal,
+                retained
             );
         }
 
