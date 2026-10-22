@@ -25,6 +25,7 @@ internal sealed class TrayContext : ApplicationContext
     private readonly IWorkspaceRecoveryInspector _recoveryInspector;
     private readonly SuspendWorkspaceSessionService _suspend;
     private readonly ParkWorkspaceSessionService _parking;
+    private readonly OpenReleasedParkedWorkspaceService _openRetained;
     private readonly IWorkspaceParkingJournal _parkingJournal;
     private readonly IWorkspaceSlotReservationInventory _pendingSlotInventory;
     private readonly IWorkspaceReadySlotCatalog _readyCatalog;
@@ -125,6 +126,9 @@ internal sealed class TrayContext : ApplicationContext
         SettingsStore repositories = new();
         GitHubOriginVerifier originVerifier = new(git);
         VsCodeLauncher editor = new();
+        _openRetained = new OpenReleasedParkedWorkspaceService(
+            journal, locks, new GitWorkspaceParkingOperations(git), editor
+        );
         _open = new OpenPullRequestHandler(
             repositories, originVerifier, acquisition, editor
         );
@@ -183,6 +187,13 @@ internal sealed class TrayContext : ApplicationContext
         npmWarmMenu.DropDownOpening += async (_, _) =>
             await PopulateNpmArtifactTransfersAsync(npmWarmMenu);
         menu.Items.Insert(10, npmWarmMenu);
+
+        ToolStripMenuItem retainedMenu = new(
+            "Open retained released PR (without moving files)..."
+        );
+        retainedMenu.DropDownOpening += async (_, _) =>
+            await PopulateRetainedReleasedAsync(retainedMenu);
+        menu.Items.Insert(11, retainedMenu);
 
         _ = ListenAsync(_shutdown.Token);
         _ = AnnounceInterruptedAllocationsAsync();
@@ -624,7 +635,8 @@ internal sealed class TrayContext : ApplicationContext
                 + "remain at:\n" + session.ParkingPath + "\n\n"
                 + "Another PR may then use its FORMER workspace path. "
                 + "You cannot unpark this PR back into that slot. "
-                + "You must explicitly restore it into a separate location if needed.\n\n"
+                + "Use the Open retained released PR menu to edit its parked "
+                + "worktree in place, without reclaiming the slot.\n\n"
                 + "Continue with this irreversible ownership handoff?",
             "Release parked PR slot",
             MessageBoxButtons.YesNo,
@@ -1067,6 +1079,78 @@ internal sealed class TrayContext : ApplicationContext
             Notify(
                 "npm dependency reuse refused or interrupted",
                 exception.Message + " No automatic cleanup was attempted."
+            );
+        }
+    }
+
+    private async Task PopulateRetainedReleasedAsync(ToolStripMenuItem menu)
+    {
+        menu.DropDownItems.Clear();
+        try
+        {
+            IReadOnlyList<WorkspaceSession> sessions =
+                await _recoverySessions.ListRecoveryParkingSessionsAsync(_shutdown.Token);
+            WorkspaceSession[] retained = sessions.Where(
+                session => session.State == WorkspaceSessionState.Released
+            ).Take(101).ToArray();
+
+            if (retained.Length == 0)
+            {
+                menu.DropDownItems.Add(new ToolStripMenuItem(
+                    "No explicitly released PRs with retained worktrees."
+                ) { Enabled = false });
+                return;
+            }
+
+            foreach (WorkspaceSession session in retained.Take(100))
+            {
+                ToolStripMenuItem item = new(
+                    session.RepositoryKey + " PR #" + session.PullRequestNumber
+                )
+                {
+                    ToolTipText = session.ParkingPath ?? "Parking path missing",
+                };
+                Guid id = session.OperationId;
+                item.Click += (_, _) => _ = OpenRetainedReleasedFromMenuAsync(id);
+                menu.DropDownItems.Add(item);
+            }
+
+            if (retained.Length > 100)
+            {
+                menu.DropDownItems.Add(new ToolStripMenuItem(
+                    "Showing first 100 PRs; review additional records in diagnostics."
+                ) { Enabled = false });
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Application is exiting.
+        }
+        catch (Exception exception)
+        {
+            Notify("Could not list retained PRs", exception.Message);
+        }
+    }
+
+    private async Task OpenRetainedReleasedFromMenuAsync(Guid operationId)
+    {
+        try
+        {
+            string path = await _openRetained.OpenAsync(operationId, _shutdown.Token);
+            Notify(
+                "Released PR opened from retained parking",
+                "Opened " + path + ". Original slot ownership was not changed."
+            );
+        }
+        catch (OperationCanceledException)
+        {
+            // Application is exiting.
+        }
+        catch (Exception exception)
+        {
+            Notify(
+                "Retained PR was not opened",
+                exception.Message + " No files or slot leases were changed."
             );
         }
     }

@@ -69,6 +69,8 @@ The tray supports a **manual**, non-destructive cross-PR slot handoff:
 3. **Open PR in a released slot...** and select a listed Ready slot for a configured repository. Enter the new GitHub HTTPS pull-request URL and confirm. The app rechecks trusted Git origin, slot identity and generation, refuses occupied/unregistered/unsafe destinations, and creates a fresh Git worktree with a new exclusive PR lease. The editor opens only after successful checkout.
 4. If allocation is interrupted, use **Recovery diagnostics...**. Reserved worktrees are preserved for explicit inspection and verified recovery; the normal PR opener never silently reassigns them.
 
+The tray also provides **Open retained released PR (without moving files)...**. Select the original released PR to verify its preserved `.gwp-parked` Git worktree and open it directly in VS Code, even after another PR has taken its former slot. This does not unpark or reclaim the original path, change leases, restore snapshots, or move/delete files. You may continue editing and committing in the retained worktree; if its Git registration or path cannot be verified, the editor is not launched.
+
 This reuses the **former directory/slot**, not cached build outputs or `node_modules`. It does not automatically choose slots, reclaim disk, delete user data or predict PRs. The released PR remains parked under its original session identity. An actual speed benefit and artifact-preserving warm reuse are still separate milestones.
 
 ## Experimental npm artifact reuse (opt-in)
