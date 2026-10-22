@@ -39,13 +39,25 @@ internal static class Program
             }
         }
 
+        // Isolated process E2E: no user settings, protocol registration or UI.
+        if (args.Length > 0 && args[0].StartsWith("--ipc-e2e-", StringComparison.Ordinal))
+        {
+            try
+            {
+                return IpcProcessProbe.RunAsync(args).GetAwaiter().GetResult();
+            }
+            catch (Exception exception)
+            {
+                Console.Error.WriteLine(exception);
+                return 1;
+            }
+        }
+
         ApplicationConfiguration.Initialize();
 
         string? initialRequest = args.Length == 1 ? args[0] : null;
-        using Mutex mutex = new(
-            initiallyOwned: true,
-            name: @"Local\GitWorkspacePool.Tray.v1",
-            createdNew: out bool firstInstance
+        using Mutex mutex = SingleInstanceMutex.Acquire(
+            @"Local\GitWorkspacePool.Tray.v1", out bool firstInstance
         );
 
         if (!firstInstance)

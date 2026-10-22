@@ -24,7 +24,7 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [x] Unit tests and Windows CI.
 - [x] **Fast local Git E2E:** temporary bare remote + local clone + fake `refs/pull/N/head`; real `git fetch` and `git worktree add`; fake editor; no network, browser or UI automation.
 - [x] **Transport E2E:** versioned protocol URL validation, real user-scoped named-pipe transport, and URL → pipe → Git handler → fake editor in an offline fixture.
-- [ ] **Single-instance process E2E:** spawn second protocol launcher, verify mutex forwarding into the existing tray instance, and verify error handling.
+- [x] **Single-instance process E2E:** launch two isolated real tray processes; verify the OS mutex, user-scoped pipe forwarding and failure when the primary owns the mutex without a listener. No registry, settings or UI writes in the fixture.
 - [x] Recover a pinned checkout after interruption; quarantine mismatching/unknown paths without cleanup.
 - [x] Verify the configured GitHub clone's resolved `origin` (HTTPS or SSH) before allocating; reject lookalike hosts and mismatching repositories.
 - [ ] Extend remote identity validation to each newly supported Git provider.
@@ -36,14 +36,16 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 
 - [x] Durable operation journal for PR acquisition: reservation, immutable commit pin, verification, activation, quarantine.
 - [x] Extend the journal to record published snapshot receipts and audit events (SQLite schema v2).
-- [ ] Extend the journal to session release, moves, parking, and eviction.
+- [x] Journal explicit release preparations/commits and parking/unparking moves with generation/ownership checks.
+- [ ] Journal safe eviction only after an eviction policy and crash-consistent disposal workflow exist.
 - [x] Minimal state machine for acquisition: preparing / active / recovery-required.
 - [x] Add an explicit non-destructive suspended state; reopen resumes the exact owned worktree without deleting or moving files.
 - [x] Test SQLite v3 → v4 schema upgrade preserving existing session, snapshot and restore foreign-key references.
 - [x] Forbid automatic reactivation of quarantined `RecoveryRequired` sessions.
 - [x] Add SQLite v6 protected slots and unique Held session/slot leases, backfilled transactionally for legacy sessions including parked owners.
 - [x] Add generation-checked Ready-slot CAS reservation with concurrent SQLite tests; not yet called by the tray or allocator.
-- [ ] Extend state machine to released / warm / parked with safe ownership transfers.
+- [x] Add explicit Parked and Released states with safe generation-checked slot handoff, while retaining original parked worktrees.
+- [ ] Introduce an automatic Warm lifecycle only after measured benefit and release/eviction safety gates.
 - [x] Explicit parking/unparking through Git-aware worktree moves, preserving staged/ignored/untracked files and journal ownership; no release inferred from editor lifecycle.
 - [x] Prevent nested and cross-column SQLite path ownership conflicts between active workspaces and reserved parked trees.
 - [x] Detect Git submodule index entries before worktree relocation and refuse unsupported moves without changing session state.
@@ -89,7 +91,8 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [x] Require an explicit supported snapshot manifest version on restore (missing, legacy and unknown future versions fail closed before checkout); migrations remain unimplemented.
 - [x] Refuse snapshots with unmerged index stages, Git submodules or sparse index-directory entries before allocating snapshot storage.
 - [x] Reject ambiguous Windows path aliases, reserved device names, malformed separators, reparse-point metadata and file/ancestor collisions before restore intent; detect dangling symlink ancestors using direct attribute queries.
-- [ ] Add fault injection across release, move, park and eviction when those use cases exist. See M1/M2 in the [RC plan](docs/RELEASE_CANDIDATE_PLAN.md).
+- [x] Add real-process kill/fault coverage for release, Ready-slot handoff and park/unpark move boundaries.
+- [ ] Add equivalent eviction crash/fault coverage if a safe eviction use case is introduced. See M1/M2 in the [RC plan](docs/RELEASE_CANDIDATE_PLAN.md).
 
 **Gate:** every destructive transition can recover after simulated kill; unknown/user data is never silently removed.
 
@@ -122,6 +125,7 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 
 - GitHub Actions runs use concurrency grouping by workflow and branch, cancelling superseded runs.
 - Markdown-only pushes and PR changes skip the expensive Windows test workflow.
+- Two-real-process Windows tray mutex/IPC forwarding and missing-listener E2E run in the FastE2E suite on each PR; no registration or UI is started.
 - Focused six-boundary release/slot handoff real subprocess-kill E2E runs on each PR; the larger snapshot/parking crash suite remains manual under `workflow_dispatch` (and release validation). No duplicate CI is triggered on squash commits to `main`.
 - The subprocess checkpoint signal reader retries Windows sharing violations, eliminating a race when the signal filename appears before its writer closes.
 - PR CI also publishes a self-contained unsigned win-x64 preview ZIP, checks SHA-256 and performs isolated twice-installed startup smoke; release assets remain gated by CI and do not run on squash pushes to main.

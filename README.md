@@ -4,7 +4,7 @@ A Windows tray application that opens GitHub pull requests in local VS Code work
 
 ## Status
 
-Early MVP. The initial vertical slice uses explicitly configured local repositories and creates or reopens a dedicated worktree per PR. New workspaces are reserved in a local SQLite journal before checkout and Git commit identity is pinned for safe recovery. It does **not** compile projects, install packages, recycle occupied worktrees, or delete user files.
+Experimental Windows preview. Configured local repositories create or reopen a dedicated Git worktree per PR, backed by a durable SQLite journal and pinned commit identity. Separately confirmed parking, release, released-slot checkout, recovery and compatible npm file copying are available. **Automatic** worktree recycling, eviction, dependency installation, project builds and deleting user files remain out of scope.
 
 ## Windows preview ZIP (no .NET SDK required)
 
@@ -50,7 +50,7 @@ dotnet test tests/GitWorkspacePool.Tests/GitWorkspacePool.Tests.csproj --filter 
 dotnet test tests/GitWorkspacePool.Tests/GitWorkspacePool.Tests.csproj --filter "Category=FastE2E"
 ```
 
-These tests run on every PR in Windows CI. [Roadmap and acceptance gates](ROADMAP.md) distinguish this fast lane from the later, slower installed-browser-and-editor smoke test.
+These tests run on every PR in Windows CI. The fast suite also launches **two real tray processes** in a disposable IPC probe mode to check mutex ownership, protocol forwarding and a missing pipe listener. That mode does not start the UI, open settings or register HKCU protocols; build the full solution before running the standalone tests locally. [Roadmap and acceptance gates](ROADMAP.md) distinguish this from the later installed-browser-and-editor smoke test.
 
 ## Explicit session suspension
 

@@ -90,6 +90,7 @@
 
 ### M5 — adapters and UX
 
+- [x] Add a real two-process Windows tray mutex/pipe forwarding E2E and bounded missing-listener failure check in PR CI, without user settings, protocol registration or GUI startup. Installed UI/browser/editor smoke remains open.
 - [ ] Provider-owned parsers and fetch-ref strategies; support HTTPS/SSH enterprise remotes via explicit per-host trust and registration.
 - [ ] Browser Tampermonkey UI for supported PR pages and SPA navigation; reduce accidental permission scope.
 - [ ] User-facing session list, status, progress, disk usage, pin/release/park/recover and diagnostics.
