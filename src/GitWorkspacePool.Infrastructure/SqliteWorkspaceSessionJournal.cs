@@ -143,9 +143,19 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
                 );
             }
 
+            EnsurePathIsUnowned(
+                connection,
+                transaction,
+                workspacePath,
+                existing.OperationId
+            );
             transaction.Commit();
             return Task.FromResult(existing);
         }
+
+        // A parked session also exclusively owns its destination. The two
+        // UNIQUE columns alone cannot exclude cross-column or nested paths.
+        EnsurePathIsUnowned(connection, transaction, workspacePath, null);
 
         WorkspaceSession session = new(
             Guid.NewGuid(),
@@ -606,20 +616,40 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
             throw new ArgumentException("A full commit SHA is required.", nameof(headCommit));
         }
 
-        Transition(
-            id,
-            "ParkingIntent",
-            "UPDATE sessions SET state = 'Parking', parking_path = $parking, "
-                + "parking_head = $head, updated_utc = $utc "
-                + "WHERE operation_id = $id AND state IN ('Active', 'Suspended') "
-                + "AND parking_path IS NULL",
-            command =>
-            {
-                command.Parameters.AddWithValue("$parking", Path.GetFullPath(parkingPath));
-                command.Parameters.AddWithValue("$head", headCommit);
-            },
-            cancellationToken
-        );
+        cancellationToken.ThrowIfCancellationRequested();
+        string destination = Path.GetFullPath(parkingPath);
+
+        using SqliteConnection connection = Open();
+        using SqliteTransaction transaction = connection.BeginTransaction();
+
+        // Reserve both the original path and the parking path atomically in
+        // SQLite, so no other PR may acquire either one between checks.
+        EnsurePathIsUnowned(connection, transaction, destination, id);
+
+        using SqliteCommand command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            UPDATE sessions
+               SET state = 'Parking', parking_path = $parking,
+                   parking_head = $head, updated_utc = $utc
+             WHERE operation_id = $id
+               AND state IN ('Active', 'Suspended')
+               AND parking_path IS NULL
+            """;
+        command.Parameters.AddWithValue("$id", id.ToString("D"));
+        command.Parameters.AddWithValue("$parking", destination);
+        command.Parameters.AddWithValue("$head", headCommit);
+        command.Parameters.AddWithValue("$utc", UtcNow());
+
+        if (command.ExecuteNonQuery() != 1)
+        {
+            throw new InvalidOperationException(
+                "Parking reservation was rejected; original ownership remains unchanged."
+            );
+        }
+
+        AddEvent(connection, transaction, id, "ParkingIntent");
+        transaction.Commit();
         return Task.CompletedTask;
     }
 
@@ -746,6 +776,62 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
                 "Session journal migration did not preserve all ownership references."
             );
         }
+    }
+
+    private static void EnsurePathIsUnowned(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string requestedPath,
+        Guid? currentOwner
+    )
+    {
+        using SqliteCommand command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT operation_id, workspace_path, parking_path
+              FROM sessions
+            """;
+
+        using SqliteDataReader reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            Guid owner = Guid.Parse(reader.GetString(0));
+            if (currentOwner.HasValue && owner == currentOwner.Value)
+            {
+                continue;
+            }
+
+            if (
+                Overlaps(requestedPath, reader.GetString(1))
+                || (!reader.IsDBNull(2) && Overlaps(requestedPath, reader.GetString(2)))
+            )
+            {
+                throw new InvalidOperationException(
+                    "The requested workspace path overlaps another session's "
+                        + "reserved workspace or parking directory."
+                );
+            }
+        }
+    }
+
+    private static bool Overlaps(string first, string second)
+    {
+        string left = Path.GetFullPath(first).TrimEnd(
+            Path.DirectorySeparatorChar,
+            Path.AltDirectorySeparatorChar
+        );
+        string right = Path.GetFullPath(second).TrimEnd(
+            Path.DirectorySeparatorChar,
+            Path.AltDirectorySeparatorChar
+        );
+        StringComparison comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        string boundary = Path.DirectorySeparatorChar.ToString();
+
+        return left.Equals(right, comparison)
+            || left.StartsWith(right + boundary, comparison)
+            || right.StartsWith(left + boundary, comparison);
     }
 
     private static WorkspaceSession Map(SqliteDataReader reader)

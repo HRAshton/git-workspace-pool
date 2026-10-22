@@ -46,7 +46,7 @@ public sealed class SqliteWorkspaceSessionJournalTests
         SqliteWorkspaceSessionJournal journal = fixture.CreateJournal();
         _ = await fixture.ReserveAsync(journal);
 
-        await Assert.ThrowsAsync<SqliteException>(
+        await Assert.ThrowsAsync<InvalidOperationException>(
             () =>
                 journal.GetOrCreateAsync(
                     "github:other/repo",
@@ -56,6 +56,99 @@ public sealed class SqliteWorkspaceSessionJournalTests
                     CancellationToken.None
                 )
         );
+    }
+
+    [Theory]
+    [InlineData("child")]
+    [InlineData("parent")]
+    public async Task Journal_RejectsNestedWorkspaceReservations(string relation)
+    {
+        using Fixture fixture = new();
+        SqliteWorkspaceSessionJournal journal = fixture.CreateJournal();
+        WorkspaceSession first = await fixture.ReserveAsync(journal);
+
+        string other = relation == "child"
+            ? Path.Combine(first.WorkspacePath, "nested")
+            : Path.GetDirectoryName(first.WorkspacePath)!;
+
+        InvalidOperationException failure = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => journal.GetOrCreateAsync(
+                "github:owner/repo",
+                18,
+                fixture.SourcePath,
+                other,
+                CancellationToken.None
+            )
+        );
+
+        Assert.Contains("overlaps", failure.Message);
+        Assert.Equal(first.OperationId, (await fixture.ReserveAsync(journal)).OperationId);
+    }
+
+    [Fact]
+    public async Task Journal_RejectsNewSessionInsideOwnedParkedTree()
+    {
+        using Fixture fixture = new();
+        SqliteWorkspaceSessionJournal journal = fixture.CreateJournal();
+        WorkspaceSession owner = await fixture.ReserveAsync(journal);
+        await journal.PinCommitAsync(owner.OperationId, new string('a', 40), CancellationToken.None);
+        await journal.ActivateAsync(owner.OperationId, CancellationToken.None);
+
+        string parked = Path.Combine(fixture.LockRoot, "parked", owner.OperationId.ToString("N"));
+        await journal.BeginParkingAsync(
+            owner.OperationId, parked, new string('a', 40), CancellationToken.None
+        );
+        await journal.CompleteParkingAsync(owner.OperationId, CancellationToken.None);
+
+        foreach (string candidate in new[] { parked, Path.Combine(parked, "child") })
+        {
+            InvalidOperationException failure = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => journal.GetOrCreateAsync(
+                    "github:owner/repo",
+                    18,
+                    fixture.SourcePath,
+                    candidate,
+                    CancellationToken.None
+                )
+            );
+            Assert.Contains("overlaps", failure.Message);
+        }
+
+        Assert.Equal(
+            WorkspaceSessionState.Parked,
+            (await journal.FindAsync(owner.OperationId, CancellationToken.None))!.State
+        );
+    }
+
+    [Fact]
+    public async Task Journal_RejectsParkingInsideAnotherSessionsReservedPath()
+    {
+        using Fixture fixture = new();
+        SqliteWorkspaceSessionJournal journal = fixture.CreateJournal();
+        WorkspaceSession first = await fixture.ReserveAsync(journal);
+        await journal.PinCommitAsync(first.OperationId, new string('a', 40), CancellationToken.None);
+        await journal.ActivateAsync(first.OperationId, CancellationToken.None);
+
+        WorkspaceSession second = await journal.GetOrCreateAsync(
+            "github:owner/repo", 18, fixture.SourcePath,
+            Path.Combine(fixture.LockRoot, "other-pr"), CancellationToken.None
+        );
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => journal.BeginParkingAsync(
+                first.OperationId,
+                Path.Combine(second.WorkspacePath, "hidden"),
+                new string('a', 40),
+                CancellationToken.None
+            )
+        );
+
+        WorkspaceSession unchanged = (await journal.FindAsync(
+            first.OperationId, CancellationToken.None
+        ))!;
+        Assert.Equal(WorkspaceSessionState.Active, unchanged.State);
+        Assert.Null(unchanged.ParkingPath);
+        Assert.Equal(WorkspaceSessionState.Preparing, second.State);
     }
 
     [Fact]

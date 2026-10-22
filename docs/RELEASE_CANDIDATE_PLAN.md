@@ -59,6 +59,7 @@
 - [x] Add explicit unparking, including recorded return intent, occupied-destination refusal, and recovery after interrupted moves.
 - [x] Add real OS subprocess-kill tests for all four move boundaries, checking durable intent, unchanged user data, and safe retry under new lock ownership.
 - [x] Read-only diagnostics now identify interrupted parking/unparking and missing or unverifiable parked trees without changing the working files.
+- [x] Guard reservation and parking transactions against nested and cross-column path overlaps; test that other PR sessions cannot claim existing parked directories.
 - [ ] Harden submodules, locked paths, external editor races, cross-process moves and other relocation failures before automatic slot reuse.
 - [ ] `RestoreParkedSession` with safe location allocation, exact content validation and explicit activation.
 - [ ] Ensure moving worktrees updates Git metadata, with hard stop on unsupported submodules and Windows sharing violations.
@@ -66,7 +67,8 @@
 
 ### M3/M4 — reuse and disk
 
-- [ ] Warm candidate estimator with cheap metadata first; bound expensive comparisons and learn from timing samples.
+- [x] Implement a bounded and deterministic, side-effect-free candidate-ranking policy that never mutates worktrees or decides ownership; prefer exact commit, then estimated artifact invalidation, tracked paths and optional observed duration.
+- [ ] Collect trusted Git/disk candidate observations and connect the policy to a transactional allocator only after M2 slot-release gates are complete. Benchmark transition time and re-rank using measured costs.
 - [ ] Explicit artifact glob policies, with safe defaults for ignored files; `node_modules`, `bin/obj` remain **best-effort** reuse only.
 - [ ] Optional ReFS clone or copy fallback; never hardlink mutable artifacts across sessions.
 - [ ] Policy-scoped cleanup, eviction transaction journal and dry-run disk estimate; protected active/parked/recovery state.
