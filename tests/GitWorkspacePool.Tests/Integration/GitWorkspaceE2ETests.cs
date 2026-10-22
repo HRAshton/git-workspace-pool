@@ -883,6 +883,19 @@ public sealed class GitWorkspaceE2ETests
         Assert.Equal(WorkspaceSlotState.Reserved, pending.State);
         Assert.Equal(WorkspaceSessionState.Preparing,
             (await fixture.SessionAsync(reservation.Session.OperationId))!.State);
+        Assert.Contains(
+            await fixture.ScanRecoveryAsync(),
+            finding => finding.Kind == WorkspaceRecoveryKind.PendingSlotCheckout
+                && finding.Path == reservation.Session.WorkspacePath
+                && finding.Description.Contains("PR #18")
+                && finding.Description.Contains(prepared.SlotId.ToString("N"))
+        );
+        // The ordinary PR opener must never silently activate a Reserved slot.
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.OpenWithFreshHandlerAsync("https://github.com/owner/repo/pull/18")
+        );
+        Assert.Equal(WorkspaceSlotState.Reserved,
+            (await registry.FindSlotAsync(prepared.SlotId, CancellationToken.None))!.State);
 
         WorkspaceSession recovered = await fixture.ReconcileReadySlotAsync(prepared.SlotId);
         Assert.Equal(reservation.Session.OperationId, recovered.OperationId);
@@ -902,6 +915,12 @@ public sealed class GitWorkspaceE2ETests
             Path.Combine(parked, "private.local")
         ));
         Assert.Empty(await registry.AuditAsync(CancellationToken.None));
+        Assert.DoesNotContain(
+            await fixture.ScanRecoveryAsync(),
+            finding => finding.Kind == WorkspaceRecoveryKind.PendingSlotCheckout
+                && finding.Path == recovered.WorkspacePath
+        );
+        Assert.Empty(await registry.ListReservedAsync(CancellationToken.None));
     }
 
     [Fact]
@@ -945,6 +964,15 @@ public sealed class GitWorkspaceE2ETests
         Assert.Equal(WorkspaceSessionState.Preparing,
             (await fixture.SessionAsync(reservation.Session.OperationId))!.State);
         Assert.Equal("do not erase", File.ReadAllText(privateFile));
+        Assert.Contains(
+            await fixture.ScanRecoveryAsync(),
+            finding => finding.Kind == WorkspaceRecoveryKind.PendingSlotCheckout
+                && finding.Path == reservation.Session.WorkspacePath
+        );
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.OpenWithFreshHandlerAsync("https://github.com/owner/repo/pull/18")
+        );
+        Assert.Equal("do not erase", File.ReadAllText(privateFile));
         Assert.True(await fixture.IsRegisteredWorktreeAsync(parked));
         Assert.False(File.Exists(Path.Combine(parked, "important.local")));
         Assert.Null(await registry.TryReserveAsync(
@@ -973,6 +1001,22 @@ public sealed class GitWorkspaceE2ETests
         );
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => fixture.ReconcileReadySlotAsync(prepared.SlotId)
+        );
+        // Even direct legacy activation cannot bypass the Protected-slot CAS.
+        await new SqliteWorkspaceSessionJournal(fixture.DatabasePath)
+            .PinCommitAsync(reservation.Session.OperationId,
+                new string('a', 40), CancellationToken.None);
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => new SqliteWorkspaceSessionJournal(fixture.DatabasePath)
+                .ActivateAsync(reservation.Session.OperationId, CancellationToken.None)
+        );
+        Assert.Contains(
+            await fixture.ScanRecoveryAsync(),
+            finding => finding.Kind == WorkspaceRecoveryKind.PendingSlotCheckout
+                && finding.Path == reservation.Session.WorkspacePath
+        );
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.OpenWithFreshHandlerAsync("https://github.com/owner/repo/pull/18")
         );
         Assert.Equal(WorkspaceSlotState.Reserved,
             (await registry.FindSlotAsync(prepared.SlotId, CancellationToken.None))!.State);

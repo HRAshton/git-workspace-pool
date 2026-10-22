@@ -176,6 +176,29 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
                 );
             }
 
+            // A previously Reserved slot can only become Active through the
+            // verified generation-CAS recovery service. Ordinary reopening
+            // must never perform a second checkout or adopt a partial tree.
+            using (SqliteCommand reserved = connection.CreateCommand())
+            {
+                reserved.Transaction = transaction;
+                reserved.CommandText = """
+                    SELECT 1 FROM workspace_slot_leases AS lease
+                    JOIN workspace_slots AS slot ON slot.slot_id = lease.slot_id
+                    WHERE lease.session_id = $session AND lease.state = 'Held'
+                      AND slot.state = 'Reserved'
+                    LIMIT 1
+                    """;
+                reserved.Parameters.AddWithValue("$session", existing.OperationId.ToString("D"));
+                if (reserved.ExecuteScalar() is not null)
+                {
+                    throw new InvalidOperationException(
+                        "The PR has an interrupted Reserved slot; use explicit verified recovery. "
+                            + "No Git files were changed."
+                    );
+                }
+            }
+
             if (
                 !existing.SourcePath.Equals(sourcePath, StringComparison.OrdinalIgnoreCase)
                 || !existing.WorkspacePath.Equals(workspacePath, StringComparison.OrdinalIgnoreCase)
@@ -626,7 +649,12 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
             "Activated",
             "UPDATE sessions SET state = 'Active', updated_utc = $utc "
                 + "WHERE operation_id = $id AND state = 'Preparing' "
-                + "AND pinned_commit IS NOT NULL",
+                + "AND pinned_commit IS NOT NULL "
+                + "AND EXISTS (SELECT 1 FROM workspace_slot_leases AS lease "
+                + "JOIN workspace_slots AS slot ON slot.slot_id = lease.slot_id "
+                + "WHERE lease.session_id = $id AND lease.state = 'Held' "
+                + "AND slot.state = 'Protected' AND lease.generation = slot.generation "
+                + "AND slot.workspace_path = sessions.workspace_path)",
             null,
             cancellationToken
         );

@@ -1,5 +1,6 @@
 using System.Drawing;
 using GitWorkspacePool.Core.Application;
+using GitWorkspacePool.Core.Application.WarmPool;
 using GitWorkspacePool.Core.Domain;
 using GitWorkspacePool.Core.Protocol;
 using GitWorkspacePool.Infrastructure;
@@ -22,6 +23,7 @@ internal sealed class TrayContext : ApplicationContext
     private readonly SuspendWorkspaceSessionService _suspend;
     private readonly ParkWorkspaceSessionService _parking;
     private readonly IWorkspaceParkingJournal _parkingJournal;
+    private readonly IWorkspaceSlotReservationInventory _pendingSlotInventory;
 
     public TrayContext(string? initialRequest)
     {
@@ -80,12 +82,14 @@ internal sealed class TrayContext : ApplicationContext
                 journal
             )
         );
+        SqliteWorkspaceSlotRegistry slots = new(Path.Combine(stateRoot, "sessions.db"));
+        _pendingSlotInventory = slots;
         _recoveryInspector = new WorkspaceRecoveryInspector(
             Path.Combine(stateRoot, "snapshots"),
             Path.Combine(stateRoot, "recovered"),
             journal,
             git,
-            new SqliteWorkspaceSlotRegistry(Path.Combine(stateRoot, "sessions.db"))
+            slots
         );
         WorkspaceAcquisitionService acquisition = new(
             git,
@@ -125,6 +129,7 @@ internal sealed class TrayContext : ApplicationContext
         menu.Items.Insert(6, unparkMenu);
 
         _ = ListenAsync(_shutdown.Token);
+        _ = AnnounceInterruptedAllocationsAsync();
 
         if (initialRequest is not null)
         {
@@ -140,6 +145,33 @@ internal sealed class TrayContext : ApplicationContext
         _dispatcher.Dispose();
         _shutdown.Dispose();
         base.ExitThreadCore();
+    }
+
+    private async Task AnnounceInterruptedAllocationsAsync()
+    {
+        try
+        {
+            // Inform the user, but never run Git repair, checkout or cleanup
+            // automatically when a previous process left a Reserved lease.
+            IReadOnlyList<WorkspaceReadySlotReservation> pending =
+                await _pendingSlotInventory.ListReservedAsync(_shutdown.Token);
+            if (pending.Count != 0)
+            {
+                Notify(
+                    "PR slot recovery required",
+                    pending.Count + " reserved PR slot checkout(s) need inspection. "
+                        + "See Recovery diagnostics; no files were changed."
+                );
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Application is exiting.
+        }
+        catch (Exception exception)
+        {
+            Notify("Slot recovery inventory unavailable", exception.Message);
+        }
     }
 
     private async Task PopulateSnapshotsAsync(ToolStripMenuItem menu)

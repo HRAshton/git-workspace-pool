@@ -30,10 +30,13 @@ The recovery scanner does not recursively inspect arbitrary user directories. It
 | `UnverifiableParkedWorktree` | Git registration for a parked worktree could not be confirmed. | Leave all paths intact and check source clone availability. |
 | `SlotOwnershipInconsistent` | Protected/Ready/Reserved slot state disagrees with its exclusive lease, generation or PR owner. | Stop release/recycling attempts; preserve SQLite and all worktree files for inspection. |
 | `PendingSlotReleasePreparation` | A release preparation was journalled and continues to protect a slot; it does not mean release is complete. | Preserve the parked tree and lease. Cancel the preparation explicitly before Unpark; never infer slot availability. |
+| `PendingSlotCheckout` | A released slot was exclusively reserved for a different PR but its checkout was not committed as Active/Protected; the reservation may be unfinished, dirty or missing. | Preserve the original PR's parked work and this Reserved path. Never reopen the PR normally to finish it. The explicit reconciliation service can only commit a fully clean, pinned and Git-registered checkout after rechecking the exact lease and generation; no automatic cleanup or checkout occurs. |
 | `UnregisteredRecoveryDirectory` | A recovery directory exists without a corresponding Git worktree registration. | Inspect manually. Do not assume partial checkout means it is safe to delete. |
 | `UnverifiableRecoveryDirectory` | Git could not establish registration. | Check the original clone is accessible and retry diagnostics; preserve data. |
 | `UnknownEntry` | Unexpected name/file or a directory whose owner cannot be proven. | Do not delete; inspect ownership. |
 | `UnsafeReparsePoint` | A junction or symlink was found. | The scanner does not follow it. Resolve the path/security concern manually. |
+
+On startup the tray checks the bounded SQLite Reserved/Preparing allocation inventory without modifying files. A notification directs the user to **Recovery diagnostics...** if interrupted checkout reservations remain. This notification does not certify that a checkout is clean or safe to activate.
 
 Only the most recent 25 findings are shown in the tray menu; scanning still examines all entries under a protective count limit. The path and description appear in the item tooltip. A scanner error indicates **unknown safety**, not a clean state.
 

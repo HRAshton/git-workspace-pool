@@ -9,7 +9,7 @@ namespace GitWorkspacePool.Infrastructure;
 /// Transactional slot compare-and-swap. Slot readiness must be established by a
 /// separate, not-yet-enabled verified release workflow.
 /// </summary>
-public sealed class SqliteWorkspaceSlotRegistry : IWorkspaceSlotRegistry, IWorkspaceSlotOwnershipAuditor, IWorkspaceSlotReleasePreparationJournal, IWorkspaceSlotReleaseCommitJournal, IWorkspaceReadySlotAllocator
+public sealed class SqliteWorkspaceSlotRegistry : IWorkspaceSlotRegistry, IWorkspaceSlotOwnershipAuditor, IWorkspaceSlotReleasePreparationJournal, IWorkspaceSlotReleaseCommitJournal, IWorkspaceReadySlotAllocator, IWorkspaceSlotReservationInventory
 {
     private readonly string _connectionString;
 
@@ -207,6 +207,68 @@ public sealed class SqliteWorkspaceSlotRegistry : IWorkspaceSlotRegistry, IWorks
         return Task.FromResult<WorkspaceReadySlotReservation?>(
             new WorkspaceReadySlotReservation(session, lease)
         );
+    }
+
+    /// <inheritdoc/>
+    public Task<IReadOnlyList<WorkspaceReadySlotReservation>> ListReservedAsync(
+        CancellationToken cancellationToken
+    )
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using SqliteConnection connection = Open();
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT owner.operation_id, owner.repository_key, owner.pr_number,
+                   owner.source_path, owner.workspace_path, owner.pinned_commit,
+                   owner.parking_path, owner.parking_head,
+                   lease.lease_id, lease.slot_id, lease.generation
+              FROM workspace_slots AS slot
+              JOIN workspace_slot_leases AS lease
+                ON lease.slot_id = slot.slot_id
+               AND lease.state = 'Held'
+               AND lease.generation = slot.generation
+              JOIN sessions AS owner ON owner.operation_id = lease.session_id
+             WHERE slot.state = 'Reserved'
+               AND owner.state = 'Preparing'
+               AND owner.repository_key = slot.repository_key
+               AND owner.source_path = slot.source_path
+               AND owner.workspace_path = slot.workspace_path
+             ORDER BY slot.rowid
+             LIMIT 10001
+            """;
+        List<WorkspaceReadySlotReservation> pending = [];
+        using SqliteDataReader reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (pending.Count >= 10000)
+            {
+                throw new InvalidOperationException(
+                    "Interrupted slot allocation inventory exceeds the safety limit."
+                );
+            }
+
+            WorkspaceSession session = new(
+                Guid.Parse(reader.GetString(0)),
+                reader.GetString(1),
+                reader.GetInt32(2),
+                reader.GetString(3),
+                reader.GetString(4),
+                WorkspaceSessionState.Preparing,
+                reader.IsDBNull(5) ? null : reader.GetString(5),
+                reader.IsDBNull(6) ? null : reader.GetString(6),
+                reader.IsDBNull(7) ? null : reader.GetString(7)
+            );
+            WorkspaceSlotLease lease = new(
+                Guid.Parse(reader.GetString(8)),
+                Guid.Parse(reader.GetString(9)),
+                session.OperationId,
+                reader.GetInt64(10)
+            );
+            pending.Add(new WorkspaceReadySlotReservation(session, lease));
+        }
+
+        return Task.FromResult<IReadOnlyList<WorkspaceReadySlotReservation>>(pending);
     }
 
     /// <inheritdoc/>

@@ -55,7 +55,9 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [x] Implement explicit opt-in cross-PR Ready-slot allocation: SQLite atomically creates the new PR session and generation-specific Held lease; a verified checkout atomically activates the new owner. Real offline Git E2E demonstrates PR 18 in the former PR 17 slot while preserving PR 17's parked files and snapshots.
 - [x] Reopen a PR placed in an explicitly released slot by resolving the persisted PR owner/path rather than inventing the conventional path; CI E2E exposed and drove this fix.
 - [x] Add a locked, non-destructive restart recovery service for Reserved/Preparing slots after Git checkout but before activation: require persisted generation/owner, pinned HEAD, registration, safe ancestry and clean Git status; atomically activate on proof only. Real offline Git E2E covers clean, dirty and missing targets.
-- [ ] Wire user-facing consent and candidate discovery, add automatic read-only startup inventory of Reserved allocations and broader process-kill fault testing before automatic warm reuse or artifact transfer.
+- [x] Reject ordinary PR reopen and legacy ActivateAsync for a Reserved slot: only a verified generation-CAS activation may transfer the owner from Preparing to Active. Fast E2E proves no files or leases are silently changed after interruption.
+- [x] Inventory interrupted Reserved/Preparing allocations read-only in recovery diagnostics and warn in the tray at startup; show slot/generation/owner and require explicit recovery. No auto repair or deletion.
+- [ ] Wire user-facing consent and candidate discovery, perform process-kill allocator fault tests and true artifact-preserving warm-reuse benchmarking before enabling automatic recycling.
 - [x] Implement explicit non-destructive snapshot export for staged/unstaged, untracked, ignored and binary files, with independent staged blobs and a Git index.
 - [x] Restore a journalled snapshot into a separate Git worktree on the saved commit; verify index, working tree files and exact Git status.
 - [x] Reject corrupted payloads and manifest path traversal before allocating a recovery worktree.

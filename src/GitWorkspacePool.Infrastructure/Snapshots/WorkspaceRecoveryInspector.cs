@@ -18,6 +18,7 @@ public sealed class WorkspaceRecoveryInspector : IWorkspaceRecoveryInspector
     private readonly IWorkspaceRecoveryJournal _journal;
     private readonly IWorkspaceGit _git;
     private readonly IWorkspaceSlotOwnershipAuditor? _slotAudit;
+    private readonly IWorkspaceSlotReservationInventory? _slotReservations;
     private readonly StringComparer _paths = OperatingSystem.IsWindows()
         ? StringComparer.OrdinalIgnoreCase
         : StringComparer.Ordinal;
@@ -38,6 +39,7 @@ public sealed class WorkspaceRecoveryInspector : IWorkspaceRecoveryInspector
         _journal = journal;
         _git = git;
         _slotAudit = slotAudit;
+        _slotReservations = slotAudit as IWorkspaceSlotReservationInventory;
     }
 
     /// <inheritdoc/>
@@ -376,6 +378,33 @@ public sealed class WorkspaceRecoveryInspector : IWorkspaceRecoveryInspector
                     + " generation " + preparation.Generation
                     + ". Cancel explicitly before unparking; do not delete files."
             ));
+        }
+
+        if (_slotReservations is not null)
+        {
+            IReadOnlyList<WorkspaceReadySlotReservation> reserved =
+                await _slotReservations.ListReservedAsync(cancellationToken);
+
+            foreach (WorkspaceReadySlotReservation pending in reserved)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                findings.Add(new WorkspaceRecoveryFinding(
+                    WorkspaceRecoveryKind.PendingSlotCheckout,
+                    pending.Session.WorkspacePath,
+                    null,
+                    "Slot " + pending.Lease.SlotId.ToString("N")
+                        + " generation " + pending.Lease.Generation
+                        + " is exclusively Reserved for "
+                        + pending.Session.RepositoryKey + " PR #"
+                        + pending.Session.PullRequestNumber
+                        + " (session " + pending.Session.OperationId.ToString("N") + "). "
+                        + (pending.Session.PinnedCommitSha is null
+                            ? "The Git target was not pinned before interruption. "
+                            : "A Git commit is pinned; checkout is not yet proven complete. ")
+                        + "Do not delete or automatically reopen. Explicit recovery must reverify "
+                        + "Git registration, clean status, commit and lease under lock."
+                ));
+            }
         }
 
         if (_slotAudit is not null)
