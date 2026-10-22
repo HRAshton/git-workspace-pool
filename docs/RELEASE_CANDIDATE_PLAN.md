@@ -34,6 +34,7 @@
 - [x] Revalidate clean recovery tracked files via SHA-256 on an exclusive file handle before overwrite, and recheck Git status after collecting baselines. Offline real-Git E2E leaves an intervening editor's file intact; alias/deletion races remain open.
 - [x] Retain the clean Git index SHA-256 and path; before copying the snapshot index, revalidate on the same exclusive file handle used to overwrite it. Offline real-Git E2E preserves a concurrent user's staged changes; Git admin path replacement and other races still need review.
 - [x] Restore checks checksums and validates exact Git status; corruption/path traversal tests.
+- [x] Align snapshot export, restore and diagnostics on a shared 16 MiB manifest limit; bound manifest allocation on the same read handle and refuse oversized pending/published data before user work or journal intent changes. Offline real-Git E2E covers oversized export and restore.
 - [x] Injectable exception/fault checkpoints at snapshot export, publish and restore milestones; tests assert preserved source, retained partial data, retry and ownership.
 - [x] Run real parent-initiated OS process kills at snapshot pre-publish/post-publish and restore worktree-created/index-applied boundaries; assert no original-data loss, persistent orphan state, and successful retry.
 - [x] Cover all six implemented snapshot/restore process-kill checkpoints in manual slow E2E and exercise low-space/concurrent-mutation refusal in fast E2E. **This does not cover every filesystem side effect or enable cleanup.**

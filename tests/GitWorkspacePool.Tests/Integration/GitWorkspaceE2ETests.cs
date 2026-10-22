@@ -20,6 +20,7 @@ namespace GitWorkspacePool.Tests.Integration;
 public sealed class GitWorkspaceE2ETests
 {
     private const string PullRequestUrl = "https://github.com/owner/repo/pull/17";
+    private const int MaxSnapshotManifestBytes = 16 * 1024 * 1024;
 
     [Fact]
     [Trait("Category", "FastE2E")]
@@ -2838,6 +2839,73 @@ public sealed class GitWorkspaceE2ETests
                 .ListRecoveryRestoresAsync(CancellationToken.None)
         );
         Assert.Equal(WorkspaceRestoreState.Preparing, attempt.State);
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task Snapshot_RefusesOversizedManifestBeforePublication()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string userPath = Path.Combine(opened.WorkspacePath, "feature.txt");
+        File.WriteAllText(userPath, "keep the source unchanged");
+
+        ISnapshotCheckpointSink oversized = new MutateAtCheckpoint(
+            SnapshotCheckpoint.ExportReadyToPublish,
+            () =>
+            {
+                string pending = Assert.Single(Directory.GetDirectories(
+                    fixture.SnapshotRoot, ".pending-*", SearchOption.AllDirectories
+                ));
+                File.AppendAllText(
+                    Path.Combine(pending, "manifest.json"),
+                    new string(' ', MaxSnapshotManifestBytes)
+                );
+                return Task.CompletedTask;
+            }
+        );
+
+        InvalidOperationException failure = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.SnapshotAsync(oversized)
+        );
+
+        Assert.Contains("16 MiB size limit", failure.Message);
+        Assert.Empty(await fixture.ListPublishedSnapshotsAsync());
+        Assert.Empty(Directory.GetDirectories(
+            fixture.SnapshotRoot, "snapshot-*", SearchOption.AllDirectories
+        ));
+        Assert.Equal("keep the source unchanged", File.ReadAllText(userPath));
+        Assert.Equal(WorkspaceSessionState.Active, (await fixture.OwnedSessionAsync()).State);
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task Restore_RejectsOversizedManifestBeforeRecordingIntent()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string original = Path.Combine(opened.WorkspacePath, "feature.txt");
+        File.WriteAllText(original, "preserved source data");
+        WorkspaceSnapshotReceipt receipt = await fixture.SnapshotAsync();
+
+        File.AppendAllText(
+            Path.Combine(receipt.Folder, "manifest.json"),
+            new string(' ', MaxSnapshotManifestBytes)
+        );
+
+        InvalidOperationException failure = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.RestoreSnapshotAsync(receipt.SnapshotId)
+        );
+
+        Assert.Contains("16 MiB size limit", failure.Message);
+        Assert.Empty(
+            await new SqliteWorkspaceSessionJournal(fixture.DatabasePath)
+                .ListRecoveryRestoresAsync(CancellationToken.None)
+        );
+        Assert.False(Directory.Exists(fixture.RecoveryRoot)
+            && Directory.EnumerateFileSystemEntries(fixture.RecoveryRoot).Any());
+        Assert.Equal("preserved source data", File.ReadAllText(original));
+        Assert.Equal(WorkspaceSessionState.Active, (await fixture.OwnedSessionAsync()).State);
     }
 
     [Fact]

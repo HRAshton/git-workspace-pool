@@ -253,6 +253,10 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
             stream.Flush(flushToDisk: true);
         }
 
+        // Never publish evidence that recovery diagnostics or restore cannot
+        // read. This also rejects unusually long status/path metadata.
+        SnapshotManifestIO.RequireWithinLimit(manifestPath);
+
         cancellationToken.ThrowIfCancellationRequested();
         await CheckpointAsync(
             SnapshotCheckpoint.ExportReadyToPublish,
@@ -302,6 +306,9 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
             }
         }
 
+        // Check again after all injected checkpoints and source verification.
+        // Even a late manifest replacement must not become published evidence.
+        SnapshotManifestIO.RequireWithinLimit(manifestPath);
         Directory.Move(staging, published);
         await CheckpointAsync(
             SnapshotCheckpoint.ExportPublished,
