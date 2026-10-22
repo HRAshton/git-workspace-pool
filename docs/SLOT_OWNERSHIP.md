@@ -1,6 +1,6 @@
 # Exclusive slot ownership and safe release (design gate)
 
-**Status:** architecture proposal for M2/M3, not implemented. No automatic release or reuse is enabled by this document.
+**Status:** first persistence slice implemented in SQLite v6: new and migrated sessions receive Protected slots with Held leases; an isolated generation-CAS reservation primitive exists for a future verified Ready slot. **No production workflow can mark slots Ready, release a lease, or reuse a worktree yet.** Remaining transitions below are design requirements.
 
 ## Why parking is not release
 
@@ -43,13 +43,23 @@ adapters implement Git, SQLite, locks and filesystem operations; the tray only c
 - `operations`: durable intent and verified outcome for moving the tree, releasing a slot,
   reserving a slot and transferring ownership. Store the expected generation, original Git
   registration and target paths; do not infer them from directories.
-- Migration from v5 must preserve *all* existing session, snapshot, restore and parking
-  references, and treat existing session workspace paths as leased/protected by default.
-  Never mark them automatically ready on migration.
+- Migration from v5 preserves *all* existing session, snapshot, restore and parking
+  references, and treats existing session workspace paths as leased/protected by default.
+  The v6 backfill never marks them Ready.
 
 This is a target schema contract, not a migration script. First implement and test a
 transactional path/lease registry and its upgrade before changing the current unique
 workspace-path rule.
+
+## Implemented persistence boundary (SQLite v6)
+
+- `workspace_slots` persists immutable slot identity, trusted repository/source and original path, monotonically nonnegative generation, and `Protected/Ready/Reserved/RecoveryRequired` state.
+- `workspace_slot_leases` records slot/session/generation, and partial unique indexes forbid more than one Held lease for a slot or a session. A unique slot/generation pair rejects duplicate historical issuance.
+- Upgrading an existing journal from v5 creates Protected slots and Held leases for **every existing session**, including Parked, suspended and RecoveryRequired owners; it cannot infer free slots from missing directories. A new session inserts its Protected slot and Held lease in the same SQLite transaction as the session reservation.
+- `SqliteWorkspaceSlotRegistry.TryLeaseReadyAsync` uses an atomic compare-and-swap of the expected generation and Ready state, checks session repository/source/path identity and unleased Preparing state, increments the generation, and persists a Held lease in one transaction. Stale or ineligible requests return no lease.
+- The Ready state is intentionally **not reachable through the production APIs**. Tests seed a synthetic Ready state directly into a disposable database to prove CAS semantics and concurrent exclusivity, not to authorize real worktree checkout.
+- The legacy `sessions.workspace_path` uniqueness and parked-path reservations stay in place. The transaction-based cross-session path overlap checks remain enforced by the existing session journal.
+- Neither migration nor reservation touches the filesystem, runs Git, frees disk, performs a checkout or modifies an active PR.
 
 ## Required invariants
 

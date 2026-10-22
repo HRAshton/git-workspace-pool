@@ -41,6 +41,8 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [x] Add an explicit non-destructive suspended state; reopen resumes the exact owned worktree without deleting or moving files.
 - [x] Test SQLite v3 → v4 schema upgrade preserving existing session, snapshot and restore foreign-key references.
 - [x] Forbid automatic reactivation of quarantined `RecoveryRequired` sessions.
+- [x] Add SQLite v6 protected slots and unique Held session/slot leases, backfilled transactionally for legacy sessions including parked owners.
+- [x] Add generation-checked Ready-slot CAS reservation with concurrent SQLite tests; not yet called by the tray or allocator.
 - [ ] Extend state machine to released / warm / parked with safe ownership transfers.
 - [x] Explicit parking/unparking through Git-aware worktree moves, preserving staged/ignored/untracked files and journal ownership; no release inferred from editor lifecycle.
 - [x] Prevent nested and cross-column SQLite path ownership conflicts between active workspaces and reserved parked trees.

@@ -13,7 +13,7 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
     private readonly string _connectionString;
 
     /// <summary>
-    /// Initializes or upgrades the local SQLite journal to schema version five.
+    /// Initializes or upgrades the local SQLite journal to schema version six.
     /// </summary>
     public SqliteWorkspaceSessionJournal(string databasePath)
     {
@@ -35,7 +35,7 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
         version.CommandText = "PRAGMA user_version";
         long currentVersion = (long)version.ExecuteScalar()!;
 
-        if (currentVersion > 5)
+        if (currentVersion > 6)
         {
             throw new InvalidOperationException("Session journal schema is newer than this application.");
         }
@@ -87,9 +87,13 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
                 updated_utc TEXT NOT NULL
             );
 
-            PRAGMA user_version = 5;
             """;
         schema.ExecuteNonQuery();
+
+        if (currentVersion < 6)
+        {
+            UpgradeSlotRegistry(connection);
+        }
     }
 
     /// <inheritdoc/>
@@ -183,6 +187,10 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
         insert.Parameters.AddWithValue("$utc", UtcNow());
         insert.ExecuteNonQuery();
 
+        // A newly allocated PR owns a protected slot from the same SQLite
+        // transaction as its session reservation. The initial slot is never
+        // considered available for reuse, including while the PR is parked.
+        RegisterProtectedSlot(connection, transaction, session);
         AddEvent(connection, transaction, session.OperationId, "Reserved");
         transaction.Commit();
         return Task.FromResult(session);
@@ -852,6 +860,113 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
         return left.Equals(right, comparison)
             || left.StartsWith(right + boundary, comparison)
             || right.StartsWith(left + boundary, comparison);
+    }
+
+    private static void UpgradeSlotRegistry(SqliteConnection connection)
+    {
+        // Schema v6 is additive: do not rebuild sessions or relax legacy path
+        // ownership. Backfill every existing session as a Protected slot plus
+        // a Held lease, even if its worktree was already moved into parking.
+        using SqliteTransaction transaction = connection.BeginTransaction();
+        using SqliteCommand migrate = connection.CreateCommand();
+        migrate.Transaction = transaction;
+        migrate.CommandText = """
+            CREATE TABLE IF NOT EXISTS workspace_slots (
+                slot_id TEXT PRIMARY KEY,
+                repository_key TEXT NOT NULL COLLATE NOCASE,
+                source_path TEXT NOT NULL COLLATE NOCASE,
+                workspace_path TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                generation INTEGER NOT NULL CHECK (generation >= 0),
+                state TEXT NOT NULL CHECK (
+                    state IN ('Protected', 'Ready', 'Reserved', 'RecoveryRequired')
+                ),
+                head_commit TEXT,
+                updated_utc TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS workspace_slot_leases (
+                lease_id TEXT PRIMARY KEY,
+                slot_id TEXT NOT NULL REFERENCES workspace_slots(slot_id),
+                session_id TEXT NOT NULL REFERENCES sessions(operation_id),
+                generation INTEGER NOT NULL CHECK (generation >= 0),
+                state TEXT NOT NULL CHECK (state IN ('Held', 'Released')),
+                created_utc TEXT NOT NULL,
+                UNIQUE (slot_id, generation)
+            );
+
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_held_slot_lease
+                ON workspace_slot_leases(slot_id) WHERE state = 'Held';
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_held_session_lease
+                ON workspace_slot_leases(session_id) WHERE state = 'Held';
+
+            INSERT INTO workspace_slots(
+                slot_id, repository_key, source_path, workspace_path,
+                generation, state, head_commit, updated_utc
+            )
+            SELECT lower(hex(randomblob(16))), repository_key, source_path,
+                   workspace_path, 0, 'Protected', pinned_commit, updated_utc
+              FROM sessions
+             WHERE NOT EXISTS (
+                SELECT 1 FROM workspace_slots
+                 WHERE workspace_slots.workspace_path = sessions.workspace_path
+             );
+
+            INSERT INTO workspace_slot_leases(
+                lease_id, slot_id, session_id, generation, state, created_utc
+            )
+            SELECT lower(hex(randomblob(16))), workspace_slots.slot_id,
+                   sessions.operation_id, workspace_slots.generation,
+                   'Held', sessions.updated_utc
+              FROM sessions
+              JOIN workspace_slots
+                ON workspace_slots.workspace_path = sessions.workspace_path
+             WHERE NOT EXISTS (
+                SELECT 1 FROM workspace_slot_leases
+                 WHERE slot_id = workspace_slots.slot_id AND state = 'Held'
+             );
+
+            PRAGMA user_version = 6;
+            """;
+        migrate.ExecuteNonQuery();
+        transaction.Commit();
+    }
+
+    private static void RegisterProtectedSlot(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        WorkspaceSession session
+    )
+    {
+        string slotId = Guid.NewGuid().ToString("N");
+        using (SqliteCommand slot = connection.CreateCommand())
+        {
+            slot.Transaction = transaction;
+            slot.CommandText = """
+                INSERT INTO workspace_slots(
+                    slot_id, repository_key, source_path, workspace_path,
+                    generation, state, head_commit, updated_utc
+                ) VALUES ($slot, $repository, $source, $path, 0, 'Protected', NULL, $utc)
+                """;
+            slot.Parameters.AddWithValue("$slot", slotId);
+            slot.Parameters.AddWithValue("$repository", session.RepositoryKey);
+            slot.Parameters.AddWithValue("$source", session.SourcePath);
+            slot.Parameters.AddWithValue("$path", session.WorkspacePath);
+            slot.Parameters.AddWithValue("$utc", UtcNow());
+            slot.ExecuteNonQuery();
+        }
+
+        using SqliteCommand lease = connection.CreateCommand();
+        lease.Transaction = transaction;
+        lease.CommandText = """
+            INSERT INTO workspace_slot_leases(
+                lease_id, slot_id, session_id, generation, state, created_utc
+            ) VALUES ($lease, $slot, $session, 0, 'Held', $utc)
+            """;
+        lease.Parameters.AddWithValue("$lease", Guid.NewGuid().ToString("N"));
+        lease.Parameters.AddWithValue("$slot", slotId);
+        lease.Parameters.AddWithValue("$session", session.OperationId.ToString("D"));
+        lease.Parameters.AddWithValue("$utc", UtcNow());
+        lease.ExecuteNonQuery();
     }
 
     private static WorkspaceSession Map(SqliteDataReader reader)
