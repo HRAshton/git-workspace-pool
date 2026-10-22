@@ -108,9 +108,11 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 
 - [ ] GitLab, Bitbucket, Azure DevOps PR URL adapters.
 - [ ] Provider-specific fetch/head resolution; support fork PRs without assuming `origin`.
-- [ ] Multi-repository settings UI, per-user installer, signed binaries.
+- [x] Add an unsigned, self-contained Windows x64 preview ZIP with versioned per-user installation, HKCU protocol registration, conservative unregistration, SHA-256 checksum, an included userscript, and a no-UI launch / idempotent-upgrade smoke in PR CI. Existing settings, snapshots, worktrees, and prior versions remain untouched.
+- [ ] Provide signed MSI/MSIX or equivalent distribution, real Windows tray/browser/VS Code installed smoke, and supported upgrade/rollback from existing preview builds.
+- [ ] Multi-repository settings UI and user-friendly setup beyond JSON configuration.
 - [ ] Diagnostics, opt-in performance traces, reproducible benchmark suite.
-- [ ] Full Windows smoke test: installed userscript + browser + protocol handler + actual VS Code (separate slow CI/manual lane).
+- [ ] Full Windows smoke test: installed userscript + browser + protocol handler + actual VS Code (separate slow CI/manual lane). The first preview ZIP validates only self-contained process launch and upgrade-safe staging; it is not a GUI smoke.
 
 ## CI resource usage
 
@@ -118,6 +120,7 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - Markdown-only pushes and PR changes skip the expensive Windows test workflow.
 - Focused six-boundary release/slot handoff real subprocess-kill E2E runs on each PR; the larger snapshot/parking crash suite remains manual under `workflow_dispatch` (and release validation). No duplicate CI is triggered on squash commits to `main`.
 - The subprocess checkpoint signal reader retries Windows sharing violations, eliminating a race when the signal filename appears before its writer closes.
+- PR CI also publishes a self-contained unsigned win-x64 preview ZIP, checks SHA-256 and performs isolated twice-installed startup smoke; release assets remain gated by CI and do not run on squash pushes to main.
 - Prefer complete, meaningful code batches over many tiny `main` pushes.
 
 ## Test pyramid and time budgets (targets, not measured results)

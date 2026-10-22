@@ -95,7 +95,8 @@
 ### M6 — release engineering
 
 - [ ] .NET SDK, dependencies and Git minimum version pinned and reproducible.
-- [ ] Signed per-user install, update and uninstall, URL protocol registration removal, SQLite schema upgrade/rollback.
+- [x] Build an unsigned self-contained preview ZIP in PR CI with bundled userscript, SHA-256 checksum, per-user versioned install, explicit HKCU protocol registration/unregistration, and isolated no-UI smoke including a second idempotent install that preserves unknown existing files. Existing preview binaries and all SQLite/settings/worktrees are left alone.
+- [ ] Signed per-user installer/update/uninstall, trusted release publishing, real tray/browser/editor installed smoke and safe downgrade/SQLite rollback proof.
 - [ ] Windows Defender/AV smoke, NTFS/ReFS, multiple drives, locked files, Unicode, long paths, submodules, sparse checkout and Git LFS policies.
 - [ ] Document safe recovery and support procedure before first RC.
 - [ ] Launch performance/space benchmark against cold worktree on representative large repos; report medians and p95.
@@ -115,12 +116,12 @@
 - [ ] **Data safety:** zero known reproducible loss of tracked, staged, unstaged, untracked, ignored or binary user data; `RecoveryRequired` state never auto-cleaned.
 - [ ] **Crash consistency:** kill at each documented state-changing step across checkout, snapshot, release, park, move, restore and eviction; recover or quarantine without data loss.
 - [ ] **Ownership:** simultaneous clicks and two application processes cannot double-issue, overwrite or evict an active worktree.
-- [ ] **Compatibility:** clean install and upgrade from previous preview; SQLite migrations and snapshot version handling verified; rollback/recovery documented.
+- [ ] **Compatibility:** packaged preview clean install and same-package reinstall are smoke-tested; migration of an actual older user database, moving between signed releases, and rollback/recovery still need a manual Windows acceptance test.
 - [ ] **Security:** no arbitrary code execution via protocol, Git hooks/filters or provider adapters; path traversal, reparse points and input length checked; least privileges; secrets never logged.
 - [ ] **Functionality:** configured PR providers and editors demonstrated; release/park/unpark/pool eviction all covered by acceptance tests.
 - [ ] **Speed and disk:** reference benchmarks document benefits and regressions, including cold-start fallback and a bounded disk budget. Optimize empirically; no unsupported universal speed claim.
 - [ ] **User experience:** error, cancel, restore and disk-pressure actions clear and reachable from tray; no silent destructive action.
-- [ ] **Release:** signed package, reproducible build, changelog, troubleshooting guide, upgrade/uninstall tests, test evidence, no open blocker/critical/high data-integrity issues.
+- [ ] **Release:** an unsigned PR preview ZIP and conservative installer exist, but signed release artifacts, reproducible-build attestations, manual tray/browser/VS Code smoke, upgrade from real user data, and open high-risk safety gates remain unfinished.
 
 **RC naming:** `v0.9.0-rc.1` only after all checklist items pass on the exact tagged commit. Fixes produce `rc.2`, etc.; stable `v1.0.0` is a separate decision after RC validation. Do not label an intermediate milestone an RC.
 
