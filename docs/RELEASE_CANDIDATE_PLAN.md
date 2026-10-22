@@ -89,6 +89,17 @@
 - [ ] Ensure moving worktrees updates Git metadata, with hard stop on unsupported submodules and Windows sharing violations.
 - [ ] Reconcile all unfinished operations on restart; never auto-`git clean -fdx` or delete unknown paths.
 
+### Remaining roadmap consolidation (RC2 planning; not release approval)
+
+The unchecked roadmap spans four reviewable workstreams, **not four guaranteed mergeable PRs**:
+
+1. **Safety and ownership:** close recovery file-identity/deletion/reparse races, actual disk/permission errors, orphan reconciliation, and crash-safe release/restore transitions.
+2. **Warm reuse and disk:** opt-in policy-limited artifact/candidate reuse, clean accounting and eviction journalling, observed benchmarks, and eventual guarded automation only after loss-prevention gates.
+3. **Provider adapters and UX:** configured trust/remote identity for additional providers and fork refs, accessible settings and session controls, clear protocol consent and local diagnostics.
+4. **Release engineering:** pinned toolchain/dependencies, real installed Windows browser-to-editor tests, actual profile migration and rollback, compatibility/security review, signed artifacts and release-owner acceptance.
+
+One PR may batch compatible changes in a workstream, but a failed check is repaired on the same PR and no unverified destructive feature is enabled to meet a PR-count target. **Physical Windows/manual test hardware, signing keys and release approval cannot be replaced by a green headless CI job.** Current roadmap completion percentages count checked documentation items, not estimated engineering effort.
+
 ### M3/M4 — reuse and disk
 
 - [x] Implement a bounded and deterministic, side-effect-free candidate-ranking policy that never mutates worktrees or decides ownership; prefer exact commit, then estimated artifact invalidation, tracked paths and optional observed duration.

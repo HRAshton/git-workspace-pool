@@ -76,11 +76,14 @@ if (Test-Path -LiteralPath $destination) {
 
     Remove-Item -LiteralPath $marker -Force
 
-    # Windows AV/indexing may briefly retain a handle to the executable
-    # after the probe exits. Retry only transient sharing/access errors,
-    # never replace an existing release, and retain the stage on failure.
+    # Windows AV/indexing may briefly retain a handle after the smoke probe
+    # exits. This occurred in a Windows CI preview-install run even though
+    # another packaging job passed. Allow a bounded 15-second scan window,
+    # retry only transient sharing/access errors, and never replace an
+    # occupied release or remove a pending stage on failure.
+    $maxMoveAttempts = 30
     $published = $false
-    for ($attempt = 0; $attempt -lt 6; $attempt++) {
+    for ($attempt = 0; $attempt -lt $maxMoveAttempts; $attempt++) {
         if (Test-Path -LiteralPath $destination) {
             throw "Release destination became occupied; staged files retained: $stage"
         }
@@ -95,11 +98,13 @@ if (Test-Path -LiteralPath $destination) {
             }
             if (($reason -isnot [System.IO.IOException] -and
                  $reason -isnot [System.UnauthorizedAccessException]) -or
-                $attempt -eq 5 -or
+                $attempt -eq ($maxMoveAttempts - 1) -or
                 -not (Test-Path -LiteralPath $stage -PathType Container)) {
                 throw
             }
-            Start-Sleep -Milliseconds (200 * ($attempt + 1))
+            # Fixed backoff keeps retry duration predictable for operators;
+            # abort immediately if the stage disappeared or path was claimed.
+            Start-Sleep -Milliseconds 500
         }
     }
     if (-not $published) {

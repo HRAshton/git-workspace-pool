@@ -29,6 +29,10 @@ Run the bundled `Test-RC2Prerequisites.ps1` before relying on browser-to-editor 
 
 RC2 includes `RECOVERY.md` directly in the extracted ZIP. It explains the supported recovery finding types, backup-first triage, read-only Git worktree inspection and what evidence may be shared safely without leaking credentials or user code. RC2 ZIP smoke refuses packages missing this runbook or the matching RC2 acceptance/release notes.
 
+## Windows installer sharing-lock hardening
+
+RC2 installer publication allows a bounded retry window after its startup smoke test for transient Windows Defender/AV/indexing sharing violations, while refusing occupied/tampered version directories without overwrite; interrupted or inaccessible staging data is retained for investigation. Windows package smoke verifies collision refusal. This does not certify all real-world AV or ACL behavior.
+
 ## Build and verification
 
 The RC2 Windows workflow produces `GitWorkspacePool-win-x64-0.1.0-rc.2.zip` with its adjacent `.sha256`, `RC2_BUILD_EVIDENCE.txt` recording exact source commit and hash, and this release note. It uses .NET 10, `win-x64`, self-contained single-file publish, version `0.1.0-rc.2`, and dedicated no-UI installer smoke. The workflow runs extended real-process snapshot/recovery crash E2E. These checks are **not code-signing, attestations, GUI acceptance or upgrade-from-an-older-version proof**.
