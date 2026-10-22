@@ -8,7 +8,7 @@ namespace GitWorkspacePool.Infrastructure;
 /// Transactional slot compare-and-swap. Slot readiness must be established by a
 /// separate, not-yet-enabled verified release workflow.
 /// </summary>
-public sealed class SqliteWorkspaceSlotRegistry : IWorkspaceSlotRegistry, IWorkspaceSlotOwnershipAuditor
+public sealed class SqliteWorkspaceSlotRegistry : IWorkspaceSlotRegistry, IWorkspaceSlotOwnershipAuditor, IWorkspaceSlotReleasePreparationJournal
 {
     private readonly string _connectionString;
 
@@ -247,6 +247,163 @@ public sealed class SqliteWorkspaceSlotRegistry : IWorkspaceSlotRegistry, IWorks
 
         return Task.FromResult<IReadOnlyList<WorkspaceSlotIntegrityFinding>>(findings);
     }
+
+    /// <inheritdoc/>
+    public Task<WorkspaceSlotReleasePreparation?> TryPrepareAsync(
+        Guid sessionId,
+        Guid slotId,
+        long expectedGeneration,
+        CancellationToken cancellationToken
+    )
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (sessionId == Guid.Empty || slotId == Guid.Empty || expectedGeneration < 0)
+        {
+            throw new ArgumentException("A valid owner, slot and generation are required.");
+        }
+
+        using SqliteConnection connection = Open();
+        using SqliteTransaction transaction = connection.BeginTransaction();
+        using SqliteCommand existing = connection.CreateCommand();
+        existing.Transaction = transaction;
+        existing.CommandText = """
+            SELECT preparation_id, slot_id, session_id, generation, state
+              FROM workspace_slot_release_preparations
+             WHERE session_id = $session AND state = 'Prepared'
+            """;
+        existing.Parameters.AddWithValue("$session", sessionId.ToString("D"));
+
+        using (SqliteDataReader reader = existing.ExecuteReader())
+        {
+            if (reader.Read())
+            {
+                WorkspaceSlotReleasePreparation saved = ReadPreparation(reader);
+                return Task.FromResult<WorkspaceSlotReleasePreparation?>(
+                    saved.SlotId == slotId && saved.Generation == expectedGeneration
+                        ? saved
+                        : null
+                );
+            }
+        }
+
+        Guid preparationId = Guid.NewGuid();
+        using SqliteCommand prepare = connection.CreateCommand();
+        prepare.Transaction = transaction;
+        prepare.CommandText = """
+            INSERT INTO workspace_slot_release_preparations(
+                preparation_id, slot_id, session_id, generation,
+                state, created_utc, updated_utc
+            )
+            SELECT $preparation, slots.slot_id, owners.operation_id,
+                   slots.generation, 'Prepared', $utc, $utc
+              FROM workspace_slots AS slots
+              JOIN workspace_slot_leases AS leases
+                ON leases.slot_id = slots.slot_id AND leases.state = 'Held'
+              JOIN sessions AS owners
+                ON owners.operation_id = leases.session_id
+             WHERE slots.slot_id = $slot
+               AND owners.operation_id = $session
+               AND owners.state = 'Parked'
+               AND owners.parking_path IS NOT NULL
+               AND slots.state = 'Protected'
+               AND slots.generation = $generation
+               AND leases.generation = slots.generation
+               AND owners.repository_key = slots.repository_key
+               AND owners.source_path = slots.source_path
+               AND owners.workspace_path = slots.workspace_path
+               AND NOT EXISTS (
+                   SELECT 1 FROM workspace_slot_release_preparations AS active
+                    WHERE active.slot_id = slots.slot_id AND active.state = 'Prepared'
+               )
+            """;
+        prepare.Parameters.AddWithValue("$preparation", preparationId.ToString("N"));
+        prepare.Parameters.AddWithValue("$slot", slotId.ToString("N"));
+        prepare.Parameters.AddWithValue("$session", sessionId.ToString("D"));
+        prepare.Parameters.AddWithValue("$generation", expectedGeneration);
+        prepare.Parameters.AddWithValue("$utc", DateTimeOffset.UtcNow.ToString("O"));
+
+        if (prepare.ExecuteNonQuery() != 1)
+        {
+            // Disposal rolls back any uncommitted journal changes.
+            return Task.FromResult<WorkspaceSlotReleasePreparation?>(null);
+        }
+
+        transaction.Commit();
+        return Task.FromResult<WorkspaceSlotReleasePreparation?>(
+            new WorkspaceSlotReleasePreparation(
+                preparationId,
+                slotId,
+                sessionId,
+                expectedGeneration,
+                WorkspaceSlotReleasePreparationState.Prepared
+            )
+        );
+    }
+
+    /// <inheritdoc/>
+    public Task<bool> CancelAsync(Guid preparationId, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using SqliteConnection connection = Open();
+        using SqliteTransaction transaction = connection.BeginTransaction();
+        using SqliteCommand command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            UPDATE workspace_slot_release_preparations
+               SET state = 'Cancelled', updated_utc = $utc
+             WHERE preparation_id = $id AND state = 'Prepared'
+            """;
+        command.Parameters.AddWithValue("$id", preparationId.ToString("N"));
+        command.Parameters.AddWithValue("$utc", DateTimeOffset.UtcNow.ToString("O"));
+        bool cancelled = command.ExecuteNonQuery() == 1;
+        transaction.Commit();
+        return Task.FromResult(cancelled);
+    }
+
+    /// <inheritdoc/>
+    public Task<IReadOnlyList<WorkspaceSlotReleasePreparation>> ListPreparedAsync(
+        CancellationToken cancellationToken
+    )
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using SqliteConnection connection = Open();
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT preparation_id, slot_id, session_id, generation, state
+              FROM workspace_slot_release_preparations
+             WHERE state = 'Prepared'
+             ORDER BY rowid
+             LIMIT 10001
+            """;
+        List<WorkspaceSlotReleasePreparation> result = [];
+        using SqliteDataReader reader = command.ExecuteReader();
+
+        while (reader.Read())
+        {
+            if (result.Count >= 10000)
+            {
+                throw new InvalidOperationException(
+                    "The release preparation journal exceeds the safe inventory limit."
+                );
+            }
+
+            result.Add(ReadPreparation(reader));
+        }
+
+        return Task.FromResult<IReadOnlyList<WorkspaceSlotReleasePreparation>>(result);
+    }
+
+    private static WorkspaceSlotReleasePreparation ReadPreparation(SqliteDataReader reader)
+        => new(
+            Guid.Parse(reader.GetString(0)),
+            Guid.Parse(reader.GetString(1)),
+            Guid.Parse(reader.GetString(2)),
+            reader.GetInt64(3),
+            Enum.Parse<WorkspaceSlotReleasePreparationState>(
+                reader.GetString(4),
+                ignoreCase: false
+            )
+        );
 
     private static WorkspaceSlot ReadSlot(SqliteDataReader reader) => new(
         Guid.Parse(reader.GetString(0)),

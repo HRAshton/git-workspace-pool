@@ -86,6 +86,25 @@ The audit is a diagnostic, **never** a permission to mark slots Ready, delete, o
 a worktree automatically. Deliberately corrupted SQLite test fixtures demonstrate the
 detector refuses to silently treat conflicting records as available.
 
+## Crash-safe release preparation (SQLite v7)
+
+A separate `workspace_slot_release_preparations` table stores an audited
+`Prepared` or `Cancelled` intent, with unique active preparation per
+session and slot. `PrepareWorkspaceSlotReleaseService` acquires the existing
+cross-process worktree lock, reruns the complete Git/filesystem release
+preflight under that lock, and atomically compares the protected slot,
+held lease, parked session identity and generation **before** journalling.
+Retries return the same durable preparation; a stale generation or
+unverified path refuses the request.
+
+While an intent is Prepared, `BeginUnparkingAsync` fails closed. An
+explicit cancellation permits unparking again. This preserves the parked
+files and avoids silently invalidating a pending operation. Neither
+preparation nor cancellation moves Git files, releases a lease or sets a
+slot Ready. The future actual release must first separate immutable
+session history from exclusive slot-path reservations and then commit
+the lease handoff in a single audited transition.
+
 ## Required invariants
 
 1. **One mutator per slot:** a successful lease reservation atomically advances the slot's

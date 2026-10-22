@@ -47,7 +47,19 @@ public sealed class AssessWorkspaceReleaseService
             session.WorkspacePath,
             cancellationToken
         );
-        session = await _sessions.FindAsync(sessionId, cancellationToken);
+        return await AssessUnderLockAsync(sessionId, cancellationToken);
+    }
+
+    /// <summary>
+    /// Evaluates the same preflight while the caller already owns the per-workspace
+    /// OS lock. Internal to prevent external callers from bypassing serialization.
+    /// </summary>
+    internal async Task<WorkspaceReleaseAssessment> AssessUnderLockAsync(
+        Guid sessionId,
+        CancellationToken cancellationToken
+    )
+    {
+        WorkspaceSession? session = await _sessions.FindAsync(sessionId, cancellationToken);
         if (session is null)
         {
             return Result(sessionId, null, WorkspaceReleaseBlocker.UnknownSession);

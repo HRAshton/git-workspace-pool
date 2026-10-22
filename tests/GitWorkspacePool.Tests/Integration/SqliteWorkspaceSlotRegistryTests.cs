@@ -141,7 +141,7 @@ public sealed class SqliteWorkspaceSlotRegistryTests
         using SqliteConnection verified = fixture.Open();
         using SqliteCommand check = verified.CreateCommand();
         check.CommandText = "PRAGMA user_version";
-        Assert.Equal(6L, check.ExecuteScalar());
+        Assert.Equal(7L, check.ExecuteScalar());
         check.CommandText = "PRAGMA foreign_key_check";
         Assert.Null(check.ExecuteScalar());
     }
@@ -208,6 +208,106 @@ public sealed class SqliteWorkspaceSlotRegistryTests
             WorkspaceSlotIntegrityIssue.ProtectedLeaseMissing,
             Assert.Single(await registry.AuditAsync(CancellationToken.None)).Issue
         );
+    }
+
+    [Fact]
+    public async Task ReleasePreparation_RequiresProtectedParkedOwnerAndExpectedGeneration()
+    {
+        using Fixture fixture = new();
+        SqliteWorkspaceSessionJournal journal = new(fixture.DatabasePath);
+        WorkspaceSession session = await fixture.ReserveAsync(journal);
+        SqliteWorkspaceSlotRegistry registry = new(fixture.DatabasePath);
+        WorkspaceSlot protectedSlot = Assert.IsType<WorkspaceSlot>(
+            await registry.FindHeldSlotAsync(session.OperationId, CancellationToken.None)
+        );
+
+        Assert.Null(await registry.TryPrepareAsync(
+            session.OperationId, protectedSlot.SlotId, 0, CancellationToken.None
+        ));
+
+        await journal.PinCommitAsync(session.OperationId, new string('a', 40), CancellationToken.None);
+        await journal.ActivateAsync(session.OperationId, CancellationToken.None);
+        string destination = Path.Combine(fixture.Root, "parked");
+        await journal.BeginParkingAsync(
+            session.OperationId, destination, new string('a', 40), CancellationToken.None
+        );
+        await journal.CompleteParkingAsync(session.OperationId, CancellationToken.None);
+
+        Assert.Null(await registry.TryPrepareAsync(
+            session.OperationId, protectedSlot.SlotId, 1, CancellationToken.None
+        ));
+
+        WorkspaceSlotReleasePreparation prepared = Assert.IsType<WorkspaceSlotReleasePreparation>(
+            await registry.TryPrepareAsync(
+                session.OperationId, protectedSlot.SlotId, 0, CancellationToken.None
+            )
+        );
+        WorkspaceSlotReleasePreparation retry = Assert.IsType<WorkspaceSlotReleasePreparation>(
+            await new SqliteWorkspaceSlotRegistry(fixture.DatabasePath).TryPrepareAsync(
+                session.OperationId, protectedSlot.SlotId, 0, CancellationToken.None
+            )
+        );
+        Assert.Equal(prepared, retry);
+        Assert.Equal(
+            [prepared],
+            await registry.ListPreparedAsync(CancellationToken.None)
+        );
+
+        WorkspaceSlot held = Assert.IsType<WorkspaceSlot>(
+            await registry.FindHeldSlotAsync(session.OperationId, CancellationToken.None)
+        );
+        Assert.Equal(WorkspaceSlotState.Protected, held.State);
+        Assert.Equal(0, held.Generation);
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => journal.BeginUnparkingAsync(session.OperationId, CancellationToken.None)
+        );
+
+        Assert.True(await registry.CancelAsync(prepared.PreparationId, CancellationToken.None));
+        Assert.False(await registry.CancelAsync(prepared.PreparationId, CancellationToken.None));
+        Assert.Empty(await registry.ListPreparedAsync(CancellationToken.None));
+        await journal.BeginUnparkingAsync(session.OperationId, CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task ReleasePreparation_RacingConnectionsReturnOneDurableIntent()
+    {
+        using Fixture fixture = new();
+        SqliteWorkspaceSessionJournal journal = new(fixture.DatabasePath);
+        WorkspaceSession session = await fixture.ReserveAsync(journal);
+        await journal.PinCommitAsync(session.OperationId, new string('a', 40), CancellationToken.None);
+        await journal.ActivateAsync(session.OperationId, CancellationToken.None);
+        await journal.BeginParkingAsync(
+            session.OperationId,
+            Path.Combine(fixture.Root, "parked"),
+            new string('a', 40),
+            CancellationToken.None
+        );
+        await journal.CompleteParkingAsync(session.OperationId, CancellationToken.None);
+
+        SqliteWorkspaceSlotRegistry first = new(fixture.DatabasePath);
+        SqliteWorkspaceSlotRegistry second = new(fixture.DatabasePath);
+        WorkspaceSlot slot = Assert.IsType<WorkspaceSlot>(
+            await first.FindHeldSlotAsync(session.OperationId, CancellationToken.None)
+        );
+
+        Task<WorkspaceSlotReleasePreparation?> left = Task.Run(async () =>
+            await first.TryPrepareAsync(
+                session.OperationId, slot.SlotId, slot.Generation, CancellationToken.None
+            )
+        );
+        Task<WorkspaceSlotReleasePreparation?> right = Task.Run(async () =>
+            await second.TryPrepareAsync(
+                session.OperationId, slot.SlotId, slot.Generation, CancellationToken.None
+            )
+        );
+
+        WorkspaceSlotReleasePreparation?[] results = await Task.WhenAll(left, right);
+        Assert.Equal(
+            results[0]?.PreparationId,
+            results[1]?.PreparationId
+        );
+        Assert.NotNull(results[0]);
+        Assert.Single(await first.ListPreparedAsync(CancellationToken.None));
     }
 
     [Fact]

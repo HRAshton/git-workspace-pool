@@ -573,6 +573,75 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task ReleasePreparation_JournalSurvivesRestartAndUnparkRequiresCancellation()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        WorkspaceSession owner = await fixture.OwnedSessionAsync();
+        File.WriteAllText(Path.Combine(opened.WorkspacePath, "notes.local"), "unique local data");
+        string parked = await fixture.ParkAsync(owner.OperationId);
+
+        WorkspaceSlotReleasePreparation preparation = await fixture.PrepareReleaseAsync(
+            owner.OperationId
+        );
+        Assert.Equal(WorkspaceSlotReleasePreparationState.Prepared, preparation.State);
+
+        SqliteWorkspaceSlotRegistry reopened = new(fixture.DatabasePath);
+        Assert.Equal(
+            preparation,
+            Assert.Single(await reopened.ListPreparedAsync(CancellationToken.None))
+        );
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.UnparkAsync(owner.OperationId)
+        );
+
+        // A prepared release has no permission to reuse the original path.
+        Assert.Equal(
+            "unique local data",
+            File.ReadAllText(Path.Combine(parked, "notes.local"))
+        );
+        Assert.True(await fixture.IsRegisteredWorktreeAsync(parked));
+        Assert.Equal(WorkspaceSessionState.Parked,
+            (await fixture.SessionAsync(owner.OperationId))!.State);
+        WorkspaceSlot slot = Assert.IsType<WorkspaceSlot>(
+            await reopened.FindHeldSlotAsync(owner.OperationId, CancellationToken.None)
+        );
+        Assert.Equal(WorkspaceSlotState.Protected, slot.State);
+
+        Assert.True(await reopened.CancelAsync(preparation.PreparationId, CancellationToken.None));
+        Assert.Empty(await reopened.ListPreparedAsync(CancellationToken.None));
+        Assert.Equal(opened.WorkspacePath, await fixture.UnparkAsync(owner.OperationId));
+        Assert.Equal(
+            "unique local data",
+            File.ReadAllText(Path.Combine(opened.WorkspacePath, "notes.local"))
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task ReleasePreparation_RejectsOccupiedOriginalWithoutWritingIntent()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        _ = await fixture.OpenAsync(PullRequestUrl);
+        WorkspaceSession owner = await fixture.OwnedSessionAsync();
+        string parked = await fixture.ParkAsync(owner.OperationId);
+        Directory.CreateDirectory(owner.WorkspacePath);
+        string unknown = Path.Combine(owner.WorkspacePath, "not-owned.txt");
+        File.WriteAllText(unknown, "foreign");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.PrepareReleaseAsync(owner.OperationId)
+        );
+
+        Assert.Empty(await new SqliteWorkspaceSlotRegistry(fixture.DatabasePath)
+            .ListPreparedAsync(CancellationToken.None));
+        Assert.Equal("foreign", File.ReadAllText(unknown));
+        Assert.True(await fixture.IsRegisteredWorktreeAsync(parked));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task ReleasePreflight_FailsClosedOnOccupiedOriginalOrMissingParkedPath()
     {
         using Fixture fixture = await Fixture.CreateAsync();
@@ -1647,6 +1716,26 @@ public sealed class GitWorkspaceE2ETests
                 new WorkspaceDirectories()
             );
             return await service.SuspendAsync(operationId, CancellationToken.None);
+        }
+
+        public Task<WorkspaceSlotReleasePreparation> PrepareReleaseAsync(Guid operationId)
+        {
+            SqliteWorkspaceSessionJournal journal = new(DatabasePath);
+            FileWorkspaceOperationLock locks = new(Path.Combine(_root, "state", "locks"));
+            SqliteWorkspaceSlotRegistry slots = new(DatabasePath);
+            AssessWorkspaceReleaseService preflight = new(
+                journal,
+                slots,
+                locks,
+                new GitWorkspaceParkingOperations(new GitCliWorkspaceGit())
+            );
+            PrepareWorkspaceSlotReleaseService preparation = new(
+                journal,
+                locks,
+                preflight,
+                slots
+            );
+            return preparation.PrepareAsync(operationId, CancellationToken.None);
         }
 
         public Task<WorkspaceReleaseAssessment> AssessReleaseAsync(Guid operationId)

@@ -13,7 +13,7 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
     private readonly string _connectionString;
 
     /// <summary>
-    /// Initializes or upgrades the local SQLite journal to schema version six.
+    /// Initializes or upgrades the local SQLite journal to schema version seven.
     /// </summary>
     public SqliteWorkspaceSessionJournal(string databasePath)
     {
@@ -35,7 +35,7 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
         version.CommandText = "PRAGMA user_version";
         long currentVersion = (long)version.ExecuteScalar()!;
 
-        if (currentVersion > 6)
+        if (currentVersion > 7)
         {
             throw new InvalidOperationException("Session journal schema is newer than this application.");
         }
@@ -93,6 +93,11 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
         if (currentVersion < 6)
         {
             UpgradeSlotRegistry(connection);
+        }
+
+        if (currentVersion < 7)
+        {
+            UpgradeReleasePreparations(connection);
         }
     }
 
@@ -703,7 +708,9 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
             id,
             "UnparkingIntent",
             "UPDATE sessions SET state = 'Unparking', updated_utc = $utc "
-                + "WHERE operation_id = $id AND state = 'Parked'",
+                + "WHERE operation_id = $id AND state = 'Parked' "
+                + "AND NOT EXISTS (SELECT 1 FROM workspace_slot_release_preparations "
+                + "WHERE session_id = $id AND state = 'Prepared')",
             null,
             cancellationToken
         );
@@ -860,6 +867,36 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
         return left.Equals(right, comparison)
             || left.StartsWith(right + boundary, comparison)
             || right.StartsWith(left + boundary, comparison);
+    }
+
+    private static void UpgradeReleasePreparations(SqliteConnection connection)
+    {
+        // Additive migration: existing Protected/Held leases stay untouched.
+        using SqliteTransaction transaction = connection.BeginTransaction();
+        using SqliteCommand command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            CREATE TABLE IF NOT EXISTS workspace_slot_release_preparations (
+                preparation_id TEXT PRIMARY KEY,
+                slot_id TEXT NOT NULL REFERENCES workspace_slots(slot_id),
+                session_id TEXT NOT NULL REFERENCES sessions(operation_id),
+                generation INTEGER NOT NULL CHECK (generation >= 0),
+                state TEXT NOT NULL CHECK (state IN ('Prepared', 'Cancelled')),
+                created_utc TEXT NOT NULL,
+                updated_utc TEXT NOT NULL
+            );
+
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_prepared_slot
+                ON workspace_slot_release_preparations(slot_id)
+                WHERE state = 'Prepared';
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_prepared_session
+                ON workspace_slot_release_preparations(session_id)
+                WHERE state = 'Prepared';
+
+            PRAGMA user_version = 7;
+            """;
+        command.ExecuteNonQuery();
+        transaction.Commit();
     }
 
     private static void UpgradeSlotRegistry(SqliteConnection connection)

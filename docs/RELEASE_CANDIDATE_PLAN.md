@@ -54,7 +54,8 @@
 - [x] Add a strictly non-destructive `Suspended` session state: explicit tray command keeps the same owned worktree and resumes on opening its PR; SQLite migration v4 and E2E verify no file changes.
 - [x] Prevent automatic reactivation of `RecoveryRequired` sessions; only an explicitly audited recovery may clear quarantine.
 - [x] SQLite v6 protected slot registry and Held generation-aware leases: transactional backfill of existing sessions, atomic new session registration, unique live leases and CAS reservation with stale-generation rejection.
-- [ ] Implement release/park ownership transfer and Ready-state publication only after verified Git move and filesystem reconciliation; current public application path never emits Ready.
+- [x] Add durable, idempotent SQLite v7 release preparations after locked Git/slot preflight; pending operations block unparking, and cancellation restores the ability to unpark without changing files.
+- [ ] Implement release/park ownership transfer and Ready-state publication only after verified Git move, filesystem reconciliation, and separation of session history from exclusive slot paths; preparation does not imply release.
 - [ ] `ReleaseSession` use case: confirm → lock → inspect → snapshot and round-trip verify (where required) → journal intent → prepare disposition → verify → commit; otherwise `RecoveryRequired`.
 - [x] Add explicit whole-worktree parking using `git worktree move`, a private destination on the same root, durable SQLite intent before move, and no file deletion.
 - [x] Add explicit unparking, including recorded return intent, occupied-destination refusal, and recovery after interrupted moves.
