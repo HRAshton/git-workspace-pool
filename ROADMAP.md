@@ -49,6 +49,7 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [x] Reject corrupted payloads and manifest path traversal before allocating a recovery worktree.
 - [x] Discover interrupted exports, published-but-unjournalled snapshots, missing receipts and unmanaged recovery worktrees without deleting data; expose findings in tray diagnostics.
 - [x] Persist restore intent before worktree allocation, verify after reconstruction, and distinguish interrupted/verified/missing recovery outcomes.
+- [x] Report interrupted parking/unparking and missing parked worktrees in read-only diagnostics.
 - [x] Reject snapshot/restore before allocation when the target disk fails a conservative free-space preflight.
 - [x] Reject executable Git filter drivers before worktree checkout; disable Git LFS smudge/process as a safe identity fallback.
 - [x] Restore snapshot directory attributes and timestamps after materializing child files.

@@ -37,6 +37,18 @@ public enum WorkspaceRecoveryKind
 
     /// <summary>A restore has a journal intent but its directory is missing.</summary>
     MissingRecoveryWorktree,
+
+    /// <summary>A durable parking intent was not completely verified.</summary>
+    InterruptedParking,
+
+    /// <summary>A durable return-to-original-path intent remains incomplete.</summary>
+    InterruptedUnparking,
+
+    /// <summary>The worktree for a parked owner is missing or unregistered.</summary>
+    MissingParkedWorktree,
+
+    /// <summary>The Git identity of a parked worktree could not be inspected.</summary>
+    UnverifiableParkedWorktree,
 }
 
 /// <summary>

@@ -271,6 +271,59 @@ public sealed class WorkspaceRecoveryInspector : IWorkspaceRecoveryInspector
             }
         }
 
+        IReadOnlyList<WorkspaceSession> parking =
+            await _journal.ListRecoveryParkingSessionsAsync(cancellationToken);
+
+        foreach (WorkspaceSession session in parking)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string location = session.ParkingPath ?? session.WorkspacePath;
+
+            if (session.State == WorkspaceSessionState.Parking)
+            {
+                Add(findings, WorkspaceRecoveryKind.InterruptedParking, location, null);
+                continue;
+            }
+
+            if (session.State == WorkspaceSessionState.Unparking)
+            {
+                Add(findings, WorkspaceRecoveryKind.InterruptedUnparking, location, null);
+                continue;
+            }
+
+            if (session.ParkingPath is null)
+            {
+                Add(findings, WorkspaceRecoveryKind.MissingParkedWorktree, location, null);
+                continue;
+            }
+
+            try
+            {
+                if (
+                    !Directory.Exists(location)
+                    || (File.GetAttributes(location) & FileAttributes.ReparsePoint) != 0
+                    || !await _git.IsRegisteredWorktreeAsync(
+                        session.SourcePath,
+                        location,
+                        cancellationToken
+                    )
+                )
+                {
+                    Add(findings, WorkspaceRecoveryKind.MissingParkedWorktree, location, null);
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception) when (
+                exception is IOException or InvalidOperationException
+            )
+            {
+                Add(findings, WorkspaceRecoveryKind.UnverifiableParkedWorktree, location, null);
+            }
+        }
+
         return findings;
     }
 
@@ -297,6 +350,10 @@ public sealed class WorkspaceRecoveryInspector : IWorkspaceRecoveryInspector
                 WorkspaceRecoveryKind.InterruptedRestore => "Restore was interrupted before complete verification.",
                 WorkspaceRecoveryKind.VerifiedRecoveryWorktree => "Verified isolated worktree; not owned by the managed PR pool.",
                 WorkspaceRecoveryKind.MissingRecoveryWorktree => "Restore intent exists but the target directory is missing.",
+                WorkspaceRecoveryKind.InterruptedParking => "A parking intent was not committed; retry Park for safe reconciliation.",
+                WorkspaceRecoveryKind.InterruptedUnparking => "A return-move intent was not committed; retry Unpark for safe reconciliation.",
+                WorkspaceRecoveryKind.MissingParkedWorktree => "The parked path is missing, unregistered or points to a reparse location.",
+                WorkspaceRecoveryKind.UnverifiableParkedWorktree => "Git registration for the parked tree could not be verified.",
                 _ => "Unknown entry in app-owned recovery storage.",
             }
         ));

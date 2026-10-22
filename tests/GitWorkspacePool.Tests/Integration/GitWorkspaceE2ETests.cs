@@ -449,6 +449,55 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task Parking_RecoveryInventoryShowsInterruptedMovesAndMissingParkedTree()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        _ = await fixture.OpenAsync(PullRequestUrl);
+        WorkspaceSession session = await fixture.OwnedSessionAsync();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.ParkAsync(
+                session.OperationId,
+                new ThrowAtParkingCheckpoint(WorkspaceParkingCheckpoint.ParkingIntentRecorded)
+            )
+        );
+
+        Assert.Contains(
+            await fixture.ScanRecoveryAsync(),
+            finding => finding.Kind == WorkspaceRecoveryKind.InterruptedParking
+        );
+
+        string parked = await fixture.ParkAsync(session.OperationId);
+        Assert.DoesNotContain(
+            await fixture.ScanRecoveryAsync(),
+            finding => finding.Kind is WorkspaceRecoveryKind.InterruptedParking
+                or WorkspaceRecoveryKind.MissingParkedWorktree
+        );
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.UnparkAsync(
+                session.OperationId,
+                new ThrowAtParkingCheckpoint(WorkspaceParkingCheckpoint.UnparkingIntentRecorded)
+            )
+        );
+
+        Assert.Contains(
+            await fixture.ScanRecoveryAsync(),
+            finding => finding.Kind == WorkspaceRecoveryKind.InterruptedUnparking
+                && finding.Path == parked
+        );
+
+        string returned = await fixture.UnparkAsync(session.OperationId);
+        Assert.True(await fixture.IsRegisteredWorktreeAsync(returned));
+        Assert.DoesNotContain(
+            await fixture.ScanRecoveryAsync(),
+            finding => finding.Kind is WorkspaceRecoveryKind.InterruptedParking
+                or WorkspaceRecoveryKind.InterruptedUnparking
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task Parking_UnparkRefusesOccupiedDestinationWithoutChangingEitherTree()
     {
         using Fixture fixture = await Fixture.CreateAsync();

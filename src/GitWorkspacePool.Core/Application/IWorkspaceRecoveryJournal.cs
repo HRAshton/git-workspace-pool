@@ -24,4 +24,9 @@ public interface IWorkspaceRecoveryJournal
     Task<IReadOnlyList<WorkspaceRestoreOperation>> ListRecoveryRestoresAsync(
         CancellationToken cancellationToken
     );
+
+    /// <summary>Returns all interrupted and parked sessions without silent truncation.</summary>
+    Task<IReadOnlyList<WorkspaceSession>> ListRecoveryParkingSessionsAsync(
+        CancellationToken cancellationToken
+    );
 }

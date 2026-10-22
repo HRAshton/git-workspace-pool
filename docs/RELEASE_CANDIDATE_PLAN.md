@@ -58,6 +58,7 @@
 - [x] Add explicit whole-worktree parking using `git worktree move`, a private destination on the same root, durable SQLite intent before move, and no file deletion.
 - [x] Add explicit unparking, including recorded return intent, occupied-destination refusal, and recovery after interrupted moves.
 - [x] Add real OS subprocess-kill tests for all four move boundaries, checking durable intent, unchanged user data, and safe retry under new lock ownership.
+- [x] Read-only diagnostics now identify interrupted parking/unparking and missing or unverifiable parked trees without changing the working files.
 - [ ] Harden submodules, locked paths, external editor races, cross-process moves and other relocation failures before automatic slot reuse.
 - [ ] `RestoreParkedSession` with safe location allocation, exact content validation and explicit activation.
 - [ ] Ensure moving worktrees updates Git metadata, with hard stop on unsupported submodules and Windows sharing violations.

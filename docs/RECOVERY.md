@@ -24,6 +24,10 @@ The recovery scanner does not recursively inspect arbitrary user directories. It
 | `InterruptedRestore` | SQLite recorded restore intent, but final verification was never committed. | Preserve and inspect; restoring again creates a separate new path. |
 | `VerifiedRecoveryWorktree` | Restore verification succeeded, but the worktree is not part of the PR pool. | Preserve it until reviewed; no automatic reclamation. |
 | `MissingRecoveryWorktree` | Restore intent exists, but its target directory is missing. | Inspect Git metadata and storage without deleting the journal record. |
+| `InterruptedParking` | A parking move has an intent but no committed completion. | Use Park to reconcile the two registered locations without deleting files. |
+| `InterruptedUnparking` | A return move has an intent but no committed completion. | Use Unpark only when the original destination is unoccupied. |
+| `MissingParkedWorktree` | A parked worktree is missing or not registered by Git. | Investigate the original clone; never delete its journal entry. |
+| `UnverifiableParkedWorktree` | Git registration for a parked worktree could not be confirmed. | Leave all paths intact and check source clone availability. |
 | `UnregisteredRecoveryDirectory` | A recovery directory exists without a corresponding Git worktree registration. | Inspect manually. Do not assume partial checkout means it is safe to delete. |
 | `UnverifiableRecoveryDirectory` | Git could not establish registration. | Check the original clone is accessible and retry diagnostics; preserve data. |
 | `UnknownEntry` | Unexpected name/file or a directory whose owner cannot be proven. | Do not delete; inspect ownership. |

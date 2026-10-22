@@ -292,6 +292,40 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
     }
 
     /// <inheritdoc/>
+    public Task<IReadOnlyList<WorkspaceSession>> ListRecoveryParkingSessionsAsync(
+        CancellationToken cancellationToken
+    )
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using SqliteConnection connection = Open();
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT operation_id, repository_key, pr_number, source_path,
+                   workspace_path, state, pinned_commit, parking_path, parking_head
+              FROM sessions
+             WHERE state IN ('Parking', 'Parked', 'Unparking')
+             ORDER BY updated_utc DESC
+             LIMIT 10001
+            """;
+
+        List<WorkspaceSession> sessions = [];
+        using SqliteDataReader reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            if (sessions.Count >= 10000)
+            {
+                throw new InvalidOperationException(
+                    "The parking journal exceeds the safe recovery inventory limit."
+                );
+            }
+
+            sessions.Add(Map(reader));
+        }
+
+        return Task.FromResult<IReadOnlyList<WorkspaceSession>>(sessions);
+    }
+
+    /// <inheritdoc/>
     public Task ReserveRestoreAsync(
         Guid restoreId,
         Guid snapshotId,
