@@ -67,7 +67,10 @@ public sealed class ParkWorkspaceSessionService
                 await QuarantineAsync(id, cancellationToken);
             }
 
-            // Reject unsafe parents before writing the irreversible intent.
+            // Reject unsupported Git layouts before writing the durable intent.
+            await _operations.EnsureMoveSupportedAsync(
+                session.WorkspacePath, cancellationToken
+            );
             _operations.PrepareParkingDirectory(session.WorkspacePath, destination);
             string head = await _operations.GetHeadAsync(session.WorkspacePath, cancellationToken);
             await _journal.BeginParkingAsync(id, destination, head, cancellationToken);
@@ -88,6 +91,9 @@ public sealed class ParkWorkspaceSessionService
 
         if (oldPresent && oldRegistered && !newPresent && !newRegistered)
         {
+            await _operations.EnsureMoveSupportedAsync(
+                session.WorkspacePath, cancellationToken
+            );
             string head = await _operations.GetHeadAsync(session.WorkspacePath, cancellationToken);
             if (!head.Equals(session.ParkingCommitSha, StringComparison.OrdinalIgnoreCase))
             {
@@ -169,8 +175,9 @@ public sealed class ParkWorkspaceSessionService
                 await QuarantineAsync(id, cancellationToken);
             }
 
-            // The parked worktree may be edited independently; we move its entire
-            // directory back without resetting or checking out anything.
+            // The parked worktree may be edited independently. Reject newly
+            // added submodule links before recording the return-move intent.
+            await _operations.EnsureMoveSupportedAsync(destination, cancellationToken);
             await _journal.BeginUnparkingAsync(id, cancellationToken);
             await CheckpointAsync(WorkspaceParkingCheckpoint.UnparkingIntentRecorded, cancellationToken);
         }
@@ -192,6 +199,7 @@ public sealed class ParkWorkspaceSessionService
 
         if (!originalPresent && !originalRegistered && parkedPresent && parkedRegistered)
         {
+            await _operations.EnsureMoveSupportedAsync(destination, cancellationToken);
             await _operations.MoveAsync(
                 session.SourcePath, destination, session.WorkspacePath, cancellationToken
             );

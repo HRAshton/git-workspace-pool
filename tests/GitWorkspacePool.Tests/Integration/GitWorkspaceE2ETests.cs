@@ -498,6 +498,40 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task Parking_SubmoduleIndexEntryIsRefusedBeforeMoveIntent()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        WorkspaceSession session = await fixture.OwnedSessionAsync();
+        string head = await new GitCliWorkspaceGit().GetWorktreeCommitAsync(
+            opened.WorkspacePath, CancellationToken.None
+        );
+
+        await fixture.GitInWorkspaceAsync(
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            $"160000,{head},external/submodule"
+        );
+        string note = Path.Combine(opened.WorkspacePath, "local.txt");
+        File.WriteAllText(note, "important user data");
+
+        InvalidOperationException failure = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.ParkAsync(session.OperationId)
+        );
+
+        Assert.Contains("submodule", failure.Message);
+        Assert.Equal("important user data", File.ReadAllText(note));
+        Assert.Equal(
+            WorkspaceSessionState.Active,
+            (await fixture.SessionAsync(session.OperationId))!.State
+        );
+        Assert.Null((await fixture.SessionAsync(session.OperationId))!.ParkingPath);
+        Assert.True(await fixture.IsRegisteredWorktreeAsync(opened.WorkspacePath));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task Parking_UnparkRefusesOccupiedDestinationWithoutChangingEitherTree()
     {
         using Fixture fixture = await Fixture.CreateAsync();

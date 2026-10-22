@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Text;
 using GitWorkspacePool.Core.Application;
 
 namespace GitWorkspacePool.Infrastructure;
@@ -66,6 +68,74 @@ public sealed class GitWorkspaceParkingOperations : IWorkspaceParkingOperations
         string path,
         CancellationToken cancellationToken
     ) => _git.IsRegisteredWorktreeAsync(repository, path, cancellationToken);
+
+    /// <inheritdoc/>
+    public async Task EnsureMoveSupportedAsync(
+        string worktree,
+        CancellationToken cancellationToken
+    )
+    {
+        // Refuse junctions/symlinks on the inspected path before writing any
+        // parking intent, not only inside the later Git move adapter.
+        CheckAncestors(Path.GetFullPath(worktree));
+
+        ProcessStartInfo start = new("git")
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
+        };
+        GitProcessSafety.Configure(start);
+        start.Environment["GIT_OPTIONAL_LOCKS"] = "0";
+        start.ArgumentList.Add("-C");
+        start.ArgumentList.Add(worktree);
+        start.ArgumentList.Add("ls-files");
+        start.ArgumentList.Add("--stage");
+        start.ArgumentList.Add("-z");
+
+        using Process process = Process.Start(start)
+            ?? throw new InvalidOperationException("Could not inspect Git submodules.");
+        Task<string> outputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        Task<string> errorTask = process.StandardError.ReadToEndAsync(cancellationToken);
+
+        try
+        {
+            await process.WaitForExitAsync(cancellationToken);
+            string entries = await outputTask;
+            string stderr = await errorTask;
+
+            if (process.ExitCode != 0)
+            {
+                throw new InvalidOperationException(
+                    $"Git submodule inspection failed: {stderr.Trim()}"
+                );
+            }
+
+            foreach (string entry in entries.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (entry.StartsWith("160000 ", StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        "Parking a worktree with Git submodule entries is unsupported. "
+                            + "No move intent was recorded and no files were changed."
+                    );
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync(CancellationToken.None);
+            }
+
+            throw;
+        }
+    }
 
     /// <inheritdoc/>
     public Task<string> GetHeadAsync(string path, CancellationToken cancellationToken)

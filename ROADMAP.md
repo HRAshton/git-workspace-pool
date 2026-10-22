@@ -44,6 +44,7 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [ ] Extend state machine to released / warm / parked with safe ownership transfers.
 - [x] Explicit parking/unparking through Git-aware worktree moves, preserving staged/ignored/untracked files and journal ownership; no release inferred from editor lifecycle.
 - [x] Prevent nested and cross-column SQLite path ownership conflicts between active workspaces and reserved parked trees.
+- [x] Detect Git submodule index entries before worktree relocation and refuse unsupported moves without changing session state.
 - [ ] Safe release and recycling after relocation safety gates.
 - [x] Implement explicit non-destructive snapshot export for staged/unstaged, untracked, ignored and binary files, with independent staged blobs and a Git index.
 - [x] Restore a journalled snapshot into a separate Git worktree on the saved commit; verify index, working tree files and exact Git status.

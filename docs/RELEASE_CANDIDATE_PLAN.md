@@ -60,7 +60,8 @@
 - [x] Add real OS subprocess-kill tests for all four move boundaries, checking durable intent, unchanged user data, and safe retry under new lock ownership.
 - [x] Read-only diagnostics now identify interrupted parking/unparking and missing or unverifiable parked trees without changing the working files.
 - [x] Guard reservation and parking transactions against nested and cross-column path overlaps; test that other PR sessions cannot claim existing parked directories.
-- [ ] Harden submodules, locked paths, external editor races, cross-process moves and other relocation failures before automatic slot reuse.
+- [x] Fail closed on staged/committed Git submodule index entries before recording a parking intent; offline Git E2E verifies no path or journal mutation.
+- [ ] Harden locked paths, external editor races, cross-process moves, untracked nested Git repositories and other relocation failures before automatic slot reuse.
 - [ ] `RestoreParkedSession` with safe location allocation, exact content validation and explicit activation.
 - [ ] Ensure moving worktrees updates Git metadata, with hard stop on unsupported submodules and Windows sharing violations.
 - [ ] Reconcile all unfinished operations on restart; never auto-`git clean -fdx` or delete unknown paths.

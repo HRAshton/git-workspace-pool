@@ -14,6 +14,11 @@ public interface IWorkspaceParkingOperations
     /// <summary>Queries actual linked-worktree Git registration.</summary>
     Task<bool> IsRegisteredAsync(string repository, string path, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Refuses unsupported Git submodule index entries before a move intent is persisted.
+    /// </summary>
+    Task EnsureMoveSupportedAsync(string worktree, CancellationToken cancellationToken);
+
     /// <summary>Reads the actual current HEAD commit.</summary>
     Task<string> GetHeadAsync(string path, CancellationToken cancellationToken);
 
