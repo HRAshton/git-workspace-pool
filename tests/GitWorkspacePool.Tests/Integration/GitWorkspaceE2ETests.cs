@@ -1698,6 +1698,90 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task Snapshot_MidCopyIoFailureRetainsIncompleteSnapshotAndUserFiles()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string original = Path.Combine(opened.WorkspacePath, "local-large.bin");
+        byte[] userBytes = Enumerable.Repeat((byte)0xA5, 256 * 1024).ToArray();
+        File.WriteAllBytes(original, userBytes);
+
+        IOException error = await Assert.ThrowsAsync<IOException>(
+            () => fixture.SnapshotAsync(
+                copyProgress: new FailCopyAfterBytes(SnapshotCopyPhase.ExportWorkingFile, 65536)
+            )
+        );
+
+        Assert.Contains("disk full", error.Message);
+        Assert.Equal(userBytes, File.ReadAllBytes(original));
+        Assert.Empty(await fixture.ListPublishedSnapshotsAsync());
+
+        string pending = Assert.Single(
+            Directory.GetDirectories(
+                fixture.SnapshotRoot,
+                ".pending-*",
+                SearchOption.AllDirectories
+            )
+        );
+        string partial = Path.Combine(pending, "files", "local-large.bin");
+        Assert.True(File.Exists(partial));
+        Assert.InRange(new FileInfo(partial).Length, 1, userBytes.Length - 1);
+        Assert.Contains(
+            await fixture.ScanRecoveryAsync(),
+            item => item.Kind == WorkspaceRecoveryKind.IncompleteSnapshot
+        );
+
+        WorkspaceSnapshotReceipt retry = await fixture.SnapshotAsync();
+        Assert.Equal(userBytes, File.ReadAllBytes(Path.Combine(retry.Folder, "files", "local-large.bin")));
+        Assert.Equal(userBytes, File.ReadAllBytes(original));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task Restore_MidCopyIoFailureRetainsJournalledOrphanAndAllowsRetry()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string original = Path.Combine(opened.WorkspacePath, "local-large.bin");
+        byte[] userBytes = Enumerable.Repeat((byte)0x5A, 256 * 1024).ToArray();
+        File.WriteAllBytes(original, userBytes);
+        WorkspaceSnapshotReceipt snapshot = await fixture.SnapshotAsync();
+
+        IOException error = await Assert.ThrowsAsync<IOException>(
+            () => fixture.RestoreSnapshotAsync(
+                snapshot.SnapshotId,
+                copyProgress: new FailCopyAfterBytes(SnapshotCopyPhase.RestoreWorkingFile, 65536)
+            )
+        );
+
+        Assert.Contains("disk full", error.Message);
+        SqliteWorkspaceSessionJournal journal = new(fixture.DatabasePath);
+        WorkspaceRestoreOperation failed = Assert.Single(
+            await journal.ListRecoveryRestoresAsync(CancellationToken.None)
+        );
+        Assert.Equal(WorkspaceRestoreState.Preparing, failed.State);
+        Assert.True(await fixture.IsRegisteredWorktreeAsync(failed.Path));
+        string partial = Path.Combine(failed.Path, "local-large.bin");
+        Assert.InRange(new FileInfo(partial).Length, 1, userBytes.Length - 1);
+        Assert.Equal(userBytes, File.ReadAllBytes(original));
+        Assert.Contains(
+            await fixture.ScanRecoveryAsync(),
+            item => item.Kind == WorkspaceRecoveryKind.InterruptedRestore
+                && item.Path == failed.Path
+        );
+
+        string retry = await fixture.RestoreSnapshotAsync(snapshot.SnapshotId);
+        Assert.NotEqual(failed.Path, retry);
+        Assert.Equal(userBytes, File.ReadAllBytes(Path.Combine(retry, "local-large.bin")));
+        Assert.Equal(userBytes, File.ReadAllBytes(original));
+        Assert.Equal(
+            2,
+            (await journal.ListRecoveryRestoresAsync(CancellationToken.None)).Count
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task Snapshot_RefusesLockedUserFileWithoutPublishing()
     {
         using Fixture fixture = await Fixture.CreateAsync();
@@ -1732,6 +1816,26 @@ public sealed class GitWorkspaceE2ETests
 
         Assert.False(Directory.Exists(fixture.WorkspacePath(999)));
         Assert.Empty(fixture.Editor.OpenedPaths);
+    }
+
+    private sealed class FailCopyAfterBytes(
+        SnapshotCopyPhase target,
+        long failAfter
+    ) : ISnapshotCopyProgressSink
+    {
+        public ValueTask AfterBytesWrittenAsync(
+            SnapshotCopyPhase phase,
+            long bytesWritten,
+            CancellationToken cancellationToken
+        )
+        {
+            if (phase == target && bytesWritten >= failAfter)
+            {
+                throw new IOException("Injected disk full during snapshot file copy.");
+            }
+
+            return ValueTask.CompletedTask;
+        }
     }
 
     private sealed class FixedDiskSpaceProbe(long bytes) : ISnapshotDiskSpaceProbe
@@ -2044,7 +2148,8 @@ public sealed class GitWorkspaceE2ETests
 
         public async Task<WorkspaceSnapshotReceipt> SnapshotAsync(
             ISnapshotCheckpointSink? checkpoints = null,
-            ISnapshotDiskSpaceProbe? diskSpace = null
+            ISnapshotDiskSpaceProbe? diskSpace = null,
+            ISnapshotCopyProgressSink? copyProgress = null
         )
         {
             WorkspaceSession session = await OwnedSessionAsync();
@@ -2057,7 +2162,8 @@ public sealed class GitWorkspaceE2ETests
                     SnapshotRoot,
                     new GitWorktreeSnapshotScanner(),
                     checkpoints,
-                    diskSpace
+                    diskSpace,
+                    copyProgress
                 )
             );
             return await handler.CaptureAsync(session.OperationId, CancellationToken.None);
@@ -2066,7 +2172,8 @@ public sealed class GitWorkspaceE2ETests
         public async Task<string> RestoreSnapshotAsync(
             Guid snapshotId,
             ISnapshotCheckpointSink? checkpoints = null,
-            ISnapshotDiskSpaceProbe? diskSpace = null
+            ISnapshotDiskSpaceProbe? diskSpace = null,
+            ISnapshotCopyProgressSink? copyProgress = null
         )
         {
             SqliteWorkspaceSessionJournal sessions = new(
@@ -2080,7 +2187,8 @@ public sealed class GitWorkspaceE2ETests
                     new GitWorktreeSnapshotScanner(),
                     sessions,
                     checkpoints,
-                    diskSpace
+                    diskSpace,
+                    copyProgress
                 )
             );
             return await service.RestoreAsync(snapshotId, CancellationToken.None);

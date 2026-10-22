@@ -18,6 +18,7 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
     private readonly GitWorktreeSnapshotScanner _scanner;
     private readonly ISnapshotCheckpointSink? _checkpoints;
     private readonly ISnapshotDiskSpaceProbe _diskSpace;
+    private readonly ISnapshotCopyProgressSink? _copyProgress;
     private static readonly StringComparer PathComparer = OperatingSystem.IsWindows()
         ? StringComparer.OrdinalIgnoreCase
         : StringComparer.Ordinal;
@@ -29,13 +30,15 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
         string snapshotRoot,
         GitWorktreeSnapshotScanner scanner,
         ISnapshotCheckpointSink? checkpoints = null,
-        ISnapshotDiskSpaceProbe? diskSpace = null
+        ISnapshotDiskSpaceProbe? diskSpace = null,
+        ISnapshotCopyProgressSink? copyProgress = null
     )
     {
         _snapshotRoot = Path.GetFullPath(snapshotRoot);
         _scanner = scanner;
         _checkpoints = checkpoints;
         _diskSpace = diskSpace ?? new SystemSnapshotDiskSpaceProbe();
+        _copyProgress = copyProgress;
     }
 
     /// <inheritdoc/>
@@ -94,6 +97,7 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
         (string indexHash, long indexLength) = await CopyVerifiedAsync(
             before.IndexPath,
             indexTarget,
+            SnapshotCopyPhase.ExportIndex,
             cancellationToken
         );
         fileCount++;
@@ -149,6 +153,7 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
             (string digest, long actualLength) = await CopyVerifiedAsync(
                 source,
                 destination,
+                SnapshotCopyPhase.ExportWorkingFile,
                 cancellationToken
             );
             fileCount++;
@@ -320,34 +325,21 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
         cancellationToken
     ) ?? ValueTask.CompletedTask;
 
-    private static async Task<(string Hash, long Length)> CopyVerifiedAsync(
+    private async Task<(string Hash, long Length)> CopyVerifiedAsync(
         string source,
         string destination,
+        SnapshotCopyPhase phase,
         CancellationToken cancellationToken
     )
     {
-        WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(source);
-        await using (FileStream input = new(
+        await SnapshotFileCopier.CopyAsync(
             source,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.Read,
-            bufferSize: 65536,
-            FileOptions.SequentialScan
-        ))
-        await using (FileStream output = new(
             destination,
             FileMode.CreateNew,
-            FileAccess.Write,
-            FileShare.None,
-            bufferSize: 65536,
-            FileOptions.WriteThrough
-        ))
-        {
-            await input.CopyToAsync(output, cancellationToken);
-            await output.FlushAsync(cancellationToken);
-            output.Flush(flushToDisk: true);
-        }
+            phase,
+            _copyProgress,
+            cancellationToken
+        );
 
         string hash = await HashFileAsync(destination, cancellationToken);
         string sourceHash = await HashFileAsync(source, cancellationToken);

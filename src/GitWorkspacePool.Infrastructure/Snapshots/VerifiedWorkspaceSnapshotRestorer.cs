@@ -17,6 +17,7 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
     private readonly GitWorktreeSnapshotScanner _scanner;
     private readonly ISnapshotCheckpointSink? _checkpoints;
     private readonly ISnapshotDiskSpaceProbe _diskSpace;
+    private readonly ISnapshotCopyProgressSink? _copyProgress;
 
     /// <summary>
     /// Initializes recovery with a private directory outside every managed worktree.
@@ -27,7 +28,8 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
         GitWorktreeSnapshotScanner scanner,
         IWorkspaceRestoreJournal restoreJournal,
         ISnapshotCheckpointSink? checkpoints = null,
-        ISnapshotDiskSpaceProbe? diskSpace = null
+        ISnapshotDiskSpaceProbe? diskSpace = null,
+        ISnapshotCopyProgressSink? copyProgress = null
     )
     {
         _recoveryRoot = Path.GetFullPath(recoveryRoot);
@@ -36,6 +38,7 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
         _restoreJournal = restoreJournal;
         _checkpoints = checkpoints;
         _diskSpace = diskSpace ?? new SystemSnapshotDiskSpaceProbe();
+        _copyProgress = copyProgress;
     }
 
     /// <inheritdoc/>
@@ -271,7 +274,14 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
             }
 
             WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(source);
-            File.Copy(source, destination, overwrite: true);
+            await SnapshotFileCopier.CopyAsync(
+                source,
+                destination,
+                FileMode.Create,
+                SnapshotCopyPhase.RestoreWorkingFile,
+                _copyProgress,
+                cancellationToken
+            );
             File.SetAttributes(destination, file.Attributes);
             File.SetLastWriteTimeUtc(destination, file.LastWriteUtc);
         }
