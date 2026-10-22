@@ -2841,6 +2841,56 @@ public sealed class GitWorkspaceE2ETests
         Assert.Equal(WorkspaceRestoreState.Preparing, attempt.State);
     }
 
+    [Theory]
+    [Trait("Category", "FastE2E")]
+    [InlineData("manifest.json")]
+    [InlineData("index.bin")]
+    [InlineData("files/feature.txt")]
+    [InlineData("staged/feature.txt")]
+    public async Task Snapshot_RefusesModifiedPendingEvidenceBeforePublication(
+        string relativeEvidencePath
+    )
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string original = Path.Combine(opened.WorkspacePath, "feature.txt");
+        File.WriteAllText(original, "preserved staged bytes");
+        await fixture.GitInWorkspaceAsync("add", "feature.txt");
+        File.WriteAllText(original, "preserved working bytes");
+
+        ISnapshotCheckpointSink changeEvidence = new MutateAtCheckpoint(
+            SnapshotCheckpoint.ExportReadyToPublish,
+            () =>
+            {
+                string pending = Assert.Single(Directory.GetDirectories(
+                    fixture.SnapshotRoot, ".pending-*", SearchOption.AllDirectories
+                ));
+                string evidencePath = Path.Combine(
+                    pending, relativeEvidencePath.Replace('/', Path.DirectorySeparatorChar)
+                );
+                Assert.True(File.Exists(evidencePath));
+                File.AppendAllText(evidencePath, "outside change after copy");
+                return Task.CompletedTask;
+            }
+        );
+
+        InvalidOperationException failure = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.SnapshotAsync(changeEvidence)
+        );
+
+        Assert.Contains("snapshot evidence changed", failure.Message);
+        Assert.Empty(await fixture.ListPublishedSnapshotsAsync());
+        Assert.Empty(Directory.GetDirectories(
+            fixture.SnapshotRoot, "snapshot-*", SearchOption.AllDirectories
+        ));
+        Assert.Single(Directory.GetDirectories(
+            fixture.SnapshotRoot, ".pending-*", SearchOption.AllDirectories
+        ));
+        Assert.Equal("preserved working bytes", File.ReadAllText(original));
+        Assert.Equal("preserved staged bytes", await fixture.ReadStagedFeatureAsync());
+        Assert.Equal(WorkspaceSessionState.Active, (await fixture.OwnedSessionAsync()).State);
+    }
+
     [Fact]
     [Trait("Category", "FastE2E")]
     public async Task Snapshot_RefusesOversizedManifestBeforePublication()
