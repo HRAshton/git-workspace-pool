@@ -40,8 +40,31 @@ public sealed class ReconcileExplicitReadySlotService
     /// already exists. Missing, dirty, altered or unpinned worktrees retain
     /// their Reserved/Preparing ownership for manual recovery.
     /// </summary>
-    public async Task<WorkspaceSession> ReconcileAsync(
+    public Task<WorkspaceSession> ReconcileAsync(
         Guid slotId,
+        RepositoryRegistration trustedRepository,
+        CancellationToken cancellationToken
+    ) => ReconcileCoreAsync(slotId, null, trustedRepository, cancellationToken);
+
+    /// <summary>
+    /// Explicit UI recovery for the exact reservation the user selected.
+    /// Rejects a stale lease, generation, PR or pinned commit before activation.
+    /// </summary>
+    public Task<WorkspaceSession> ReconcileSelectedAsync(
+        WorkspaceReadySlotReservation selected,
+        RepositoryRegistration trustedRepository,
+        CancellationToken cancellationToken
+    )
+    {
+        ArgumentNullException.ThrowIfNull(selected);
+        return ReconcileCoreAsync(
+            selected.Lease.SlotId, selected, trustedRepository, cancellationToken
+        );
+    }
+
+    private async Task<WorkspaceSession> ReconcileCoreAsync(
+        Guid slotId,
+        WorkspaceReadySlotReservation? selected,
         RepositoryRegistration trustedRepository,
         CancellationToken cancellationToken
     )
@@ -53,9 +76,24 @@ public sealed class ReconcileExplicitReadySlotService
             trustedRepository.WorkspaceRoot,
             slot.WorkspacePath
         );
+        string lockedPath = Path.GetFullPath(slot.WorkspacePath);
         await using IAsyncDisposable ownership = await _locks.AcquireAsync(
-            slot.WorkspacePath, cancellationToken
+            lockedPath, cancellationToken
         );
+        slot = await _slots.FindSlotAsync(slotId, cancellationToken)
+            ?? throw new InvalidOperationException("Reserved slot disappeared under lock.");
+        StringComparison comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        if (
+            slot.State != WorkspaceSlotState.Reserved
+            || !Path.GetFullPath(slot.WorkspacePath).Equals(lockedPath, comparison)
+        )
+        {
+            throw new InvalidOperationException(
+                "Reserved slot changed while acquiring its lock; no data was changed."
+            );
+        }
         _safety.EnsureSafe(
             trustedRepository.LocalPath,
             trustedRepository.WorkspaceRoot,
@@ -67,6 +105,28 @@ public sealed class ReconcileExplicitReadySlotService
                 ?? throw new InvalidOperationException(
                     "No matching Preparing session and Reserved generation."
                 );
+        if (
+            selected is not null
+            && (
+                reservation.Lease.LeaseId != selected.Lease.LeaseId
+                || reservation.Lease.SessionId != selected.Lease.SessionId
+                || reservation.Lease.Generation != selected.Lease.Generation
+                || reservation.Session.OperationId != selected.Session.OperationId
+                || reservation.Session.PullRequestNumber != selected.Session.PullRequestNumber
+                || slot.Generation != selected.Lease.Generation
+                || !string.Equals(
+                    reservation.Session.PinnedCommitSha,
+                    selected.Session.PinnedCommitSha,
+                    StringComparison.OrdinalIgnoreCase
+                )
+            )
+        )
+        {
+            throw new InvalidOperationException(
+                "Selected PR reservation or pinned commit changed; no data was changed."
+            );
+        }
+
         string? expected = reservation.Session.PinnedCommitSha;
         if (
             !slot.RepositoryKey.Equals(
