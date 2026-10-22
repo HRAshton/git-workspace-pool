@@ -34,6 +34,8 @@ internal sealed class TrayContext : ApplicationContext
     private readonly PrepareWorkspaceSlotReleaseService _prepareRelease;
     private readonly FinalizeWorkspaceSlotReleaseService _finalizeRelease;
     private readonly OpenPullRequestInReadySlotHandler _openInReadySlot;
+    private readonly ReconcileExplicitReadySlotService _reconcileSlot;
+    private readonly IEditorLauncher _editor;
 
     public TrayContext(string? initialRequest)
     {
@@ -126,6 +128,11 @@ internal sealed class TrayContext : ApplicationContext
         SettingsStore repositories = new();
         GitHubOriginVerifier originVerifier = new(git);
         VsCodeLauncher editor = new();
+        _editor = editor;
+        _reconcileSlot = new ReconcileExplicitReadySlotService(
+            slots, slots, new WorkspaceReadySlotSafety(),
+            new VerifiedReadySlotCheckout(), git, locks
+        );
         _openRetained = new OpenReleasedParkedWorkspaceService(
             journal, locks, new GitWorkspaceParkingOperations(git), editor
         );
@@ -194,6 +201,13 @@ internal sealed class TrayContext : ApplicationContext
         retainedMenu.DropDownOpening += async (_, _) =>
             await PopulateRetainedReleasedAsync(retainedMenu);
         menu.Items.Insert(11, retainedMenu);
+
+        ToolStripMenuItem interruptedMenu = new(
+            "Finish interrupted PR checkout (verified only)..."
+        );
+        interruptedMenu.DropDownOpening += async (_, _) =>
+            await PopulateInterruptedSlotRecoveryAsync(interruptedMenu);
+        menu.Items.Insert(4, interruptedMenu);
 
         _ = ListenAsync(_shutdown.Token);
         _ = AnnounceInterruptedAllocationsAsync();
@@ -416,6 +430,148 @@ internal sealed class TrayContext : ApplicationContext
         catch (Exception exception)
         {
             Notify("Recovery inspection failed", exception.Message);
+        }
+    }
+
+    private async Task PopulateInterruptedSlotRecoveryAsync(ToolStripMenuItem menu)
+    {
+        menu.DropDownItems.Clear();
+        try
+        {
+            IReadOnlyList<WorkspaceReadySlotReservation> pending =
+                await _pendingSlotInventory.ListReservedAsync(_shutdown.Token);
+            IReadOnlyList<RepositoryRegistration> configured = SettingsStore.Read().Repositories;
+            int shown = 0;
+            foreach (WorkspaceReadySlotReservation selected in pending.Take(101))
+            {
+                RepositoryRegistration? trusted =
+                    FindTrustedRecoveryRepository(selected, configured);
+                if (trusted is null)
+                {
+                    continue;
+                }
+
+                if (shown++ >= 100)
+                {
+                    break;
+                }
+
+                ToolStripMenuItem item = new(
+                    selected.Session.RepositoryKey + " PR #"
+                        + selected.Session.PullRequestNumber
+                )
+                {
+                    ToolTipText = "Reserved generation " + selected.Lease.Generation
+                        + " — " + selected.Session.WorkspacePath
+                        + Environment.NewLine + "Pinned commit: "
+                        + (selected.Session.PinnedCommitSha ?? "(not pinned)"),
+                };
+                WorkspaceReadySlotReservation choice = selected;
+                RepositoryRegistration repository = trusted;
+                item.Click += (_, _) => _ = FinishInterruptedSlotAsync(choice, repository);
+                menu.DropDownItems.Add(item);
+            }
+
+            if (menu.DropDownItems.Count == 0)
+            {
+                menu.DropDownItems.Add(new ToolStripMenuItem(
+                    "No pending PR checkouts for configured repositories."
+                ) { Enabled = false });
+            }
+
+            if (pending.Count > 100)
+            {
+                menu.DropDownItems.Add(new ToolStripMenuItem(
+                    "Showing at most 100 reservations; see Recovery diagnostics for more."
+                ) { Enabled = false });
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Application is exiting.
+        }
+        catch (Exception exception)
+        {
+            Notify("Cannot list interrupted checkouts", exception.Message);
+        }
+    }
+
+    private static RepositoryRegistration? FindTrustedRecoveryRepository(
+        WorkspaceReadySlotReservation reservation,
+        IReadOnlyList<RepositoryRegistration> configured
+    )
+    {
+        StringComparison comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        RepositoryRegistration[] matches = configured.Where(repository =>
+            Path.IsPathFullyQualified(repository.LocalPath)
+            && Path.IsPathFullyQualified(repository.WorkspaceRoot)
+            && Directory.Exists(repository.LocalPath)
+            && reservation.Session.RepositoryKey.Equals(
+                "github:" + repository.RepositoryKey,
+                StringComparison.OrdinalIgnoreCase
+            )
+            && Path.GetFullPath(reservation.Session.SourcePath).Equals(
+                Path.GetFullPath(repository.LocalPath), comparison
+            )
+            && Path.GetDirectoryName(Path.GetFullPath(reservation.Session.WorkspacePath))!
+                .Equals(Path.GetFullPath(repository.WorkspaceRoot), comparison)
+        ).ToArray();
+        return matches.Length == 1 ? matches[0] : null;
+    }
+
+    private async Task FinishInterruptedSlotAsync(
+        WorkspaceReadySlotReservation selected,
+        RepositoryRegistration trusted
+    )
+    {
+        DialogResult confirmed = MessageBox.Show(
+            "Verify and finish the interrupted checkout for "
+                + selected.Session.RepositoryKey + " PR #"
+                + selected.Session.PullRequestNumber + "?\n\n"
+                + "Reserved slot: " + selected.Session.WorkspacePath + "\n"
+                + "Generation: " + selected.Lease.Generation + "\n"
+                + "Pinned commit: "
+                + (selected.Session.PinnedCommitSha ?? "(missing)") + "\n\n"
+                + "Only the selected unchanged reservation and a completely clean, "
+                + "registered Git worktree at the pinned commit can become Active. "
+                + "If any check fails, the existing reservation and files stay untouched. "
+                + "No checkout, reset, cleanup or deletion will be attempted.",
+            "Finish verified PR checkout",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Question,
+            MessageBoxDefaultButton.Button2
+        );
+        if (confirmed != DialogResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            WorkspaceSession recovered = await _reconcileSlot.ReconcileSelectedAsync(
+                selected, trusted, _shutdown.Token
+            );
+            try
+            {
+                await _editor.OpenAsync(recovered.WorkspacePath, _shutdown.Token);
+                Notify("Interrupted PR checkout completed", recovered.WorkspacePath);
+            }
+            catch (Exception exception)
+            {
+                Notify("PR recovered, but editor did not open",
+                    recovered.WorkspacePath + " — " + exception.Message);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // A cancelled verification leaves its pending lease untouched.
+        }
+        catch (Exception exception)
+        {
+            Notify("PR checkout was not recovered",
+                exception.Message + " No automatic cleanup or deletion was attempted.");
         }
     }
 
