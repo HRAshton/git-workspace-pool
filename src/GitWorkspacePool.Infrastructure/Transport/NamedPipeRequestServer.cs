@@ -45,11 +45,21 @@ public sealed class NamedPipeRequestServer
                     detectEncodingFromByteOrderMarks: false,
                     leaveOpen: true
                 );
-                string? message = await reader.ReadLineAsync(cancellationToken);
-
-                if (message is { Length: > 0 and <= NamedPipeRequestClient.MaxMessageLength })
+                // Bound input *while reading*, not after ReadLineAsync has
+                // allocated an attacker-controlled string. A caller in the
+                // current user session can connect without using our client.
+                try
                 {
-                    onRequest(message);
+                    string? message = await ReadBoundedLineAsync(reader, cancellationToken);
+                    if (message is { Length: > 0 })
+                    {
+                        onRequest(message);
+                    }
+                }
+                catch (IOException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    // A peer may disconnect during a frame. Drop only that
+                    // request and continue serving later protocol launches.
                 }
             }
         }
@@ -57,5 +67,44 @@ public sealed class NamedPipeRequestServer
         {
             // Normal shutdown.
         }
+    }
+
+    private static async Task<string?> ReadBoundedLineAsync(
+        StreamReader reader,
+        CancellationToken cancellationToken
+    )
+    {
+        StringBuilder message = new();
+        char[] next = new char[1];
+        int max = NamedPipeRequestClient.MaxMessageLength;
+
+        while (await reader.ReadAsync(next.AsMemory(), cancellationToken) != 0)
+        {
+            char character = next[0];
+            if (character == '\\n')
+            {
+                // StreamWriter on Windows uses CRLF, but no embedded CR or
+                // second command is allowed. Require the newline terminator.
+                if (message.Length > 0 && message[^1] == '\\r')
+                {
+                    message.Length--;
+                }
+
+                return message.Length is > 0 and <= NamedPipeRequestClient.MaxMessageLength
+                    && !message.ToString().Contains('\\r')
+                    ? message.ToString()
+                    : null;
+            }
+
+            message.Append(character);
+            if (message.Length > max + 1)
+            {
+                // Allow just one extra character for an optional CRLF.
+                return null;
+            }
+        }
+
+        // EOF without a newline is not a complete protocol frame.
+        return null;
     }
 }

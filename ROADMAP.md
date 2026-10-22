@@ -24,6 +24,7 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [x] Unit tests and Windows CI.
 - [x] **Fast local Git E2E:** temporary bare remote + local clone + fake `refs/pull/N/head`; real `git fetch` and `git worktree add`; fake editor; no network, browser or UI automation.
 - [x] **Transport E2E:** versioned protocol URL validation, real user-scoped named-pipe transport, and URL → pipe → Git handler → fake editor in an offline fixture.
+- [x] Bound named-pipe message frames while reading, fail closed on oversized/unterminated input, and continue serving later requests. Offline IPC E2E covers both malformed cases.
 - [x] **Single-instance process E2E:** launch two isolated real tray processes; verify the OS mutex, user-scoped pipe forwarding and failure when the primary owns the mutex without a listener. No registry, settings or UI writes in the fixture.
 - [x] Recover a pinned checkout after interruption; quarantine mismatching/unknown paths without cleanup.
 - [x] Verify the configured GitHub clone's resolved `origin` (HTTPS or SSH) before allocating; reject lookalike hosts and mismatching repositories.
