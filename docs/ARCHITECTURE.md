@@ -83,6 +83,7 @@ The journal is an ownership protocol, not a transactional filesystem. No automat
 - Both moves use `git worktree move` (not raw `Directory.Move`) to preserve Git administrative registration and all working files. Parking remains on the same volume beneath a dedicated directory.
 - An interrupted operation reconciles original vs parked Git registrations before retry/commit. Occupied paths, symlinks/junctions, conflicting registrations and failed verification never trigger deletion.
 - SQLite schema v5 adds owner-bound parking path and move identity; v3/v4 upgrade retains snapshot and restore foreign-key references.
+- SQLite reservation and parking intents are serialized within one transaction and reject path equality and ancestor/descendant overlaps across all PR worktrees, other parked paths, and the session's own worktree. A parked tree can never be claimed as another PR workspace simply because its original path is empty.
 - **This is not a release or pool eviction.** Automatic reuse is disabled until stronger process-kill, concurrency, submodule and Windows sharing-violation coverage passes.
 
 ## Subsequent slices

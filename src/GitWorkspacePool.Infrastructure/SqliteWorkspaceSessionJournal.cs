@@ -622,6 +622,26 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
         using SqliteConnection connection = Open();
         using SqliteTransaction transaction = connection.BeginTransaction();
 
+        // The parking path must be separate from this owner's original tree
+        // as well as every other workspace and parked destination.
+        using (SqliteCommand getOwner = connection.CreateCommand())
+        {
+            getOwner.Transaction = transaction;
+            getOwner.CommandText = """
+                SELECT workspace_path FROM sessions WHERE operation_id = $id
+                """;
+            getOwner.Parameters.AddWithValue("$id", id.ToString("D"));
+            string original = getOwner.ExecuteScalar() as string
+                ?? throw new InvalidOperationException("The parking owner does not exist.");
+
+            if (Overlaps(destination, original))
+            {
+                throw new InvalidOperationException(
+                    "A parking destination cannot overlap its original worktree."
+                );
+            }
+        }
+
         // Reserve both the original path and the parking path atomically in
         // SQLite, so no other PR may acquire either one between checks.
         EnsurePathIsUnowned(connection, transaction, destination, id);

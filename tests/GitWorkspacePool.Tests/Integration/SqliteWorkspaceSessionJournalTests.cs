@@ -121,6 +121,40 @@ public sealed class SqliteWorkspaceSessionJournalTests
     }
 
     [Fact]
+    public async Task Journal_RefusesParkingInsideItsOwnWorktree()
+    {
+        using Fixture fixture = new();
+        SqliteWorkspaceSessionJournal journal = fixture.CreateJournal();
+        WorkspaceSession owner = await fixture.ReserveAsync(journal);
+        await journal.PinCommitAsync(owner.OperationId, new string('a', 40), CancellationToken.None);
+        await journal.ActivateAsync(owner.OperationId, CancellationToken.None);
+
+        foreach (string invalid in new[]
+        {
+            owner.WorkspacePath,
+            Path.Combine(owner.WorkspacePath, "child"),
+            Path.GetDirectoryName(owner.WorkspacePath)!,
+        })
+        {
+            InvalidOperationException failure = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => journal.BeginParkingAsync(
+                    owner.OperationId,
+                    invalid,
+                    new string('a', 40),
+                    CancellationToken.None
+                )
+            );
+            Assert.Contains("cannot overlap", failure.Message);
+        }
+
+        WorkspaceSession unchanged = (await journal.FindAsync(
+            owner.OperationId, CancellationToken.None
+        ))!;
+        Assert.Equal(WorkspaceSessionState.Active, unchanged.State);
+        Assert.Null(unchanged.ParkingPath);
+    }
+
+    [Fact]
     public async Task Journal_RejectsParkingInsideAnotherSessionsReservedPath()
     {
         using Fixture fixture = new();
