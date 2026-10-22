@@ -31,7 +31,8 @@
 - [x] Session ownership journal and interprocess serialization for PR acquisition.
 - [x] Export snapshot with Git index, staged blobs, working files, ignored/untracked files, hashes and manifest.
 - [x] Side-by-side restore into a new linked worktree without touching the active session.
-- [x] Revalidate clean recovery tracked files via SHA-256 on an exclusive file handle before overwrite, and recheck Git status after collecting baselines. Offline real-Git E2E leaves an intervening editor's file intact; alias/deletion/index races remain open.
+- [x] Revalidate clean recovery tracked files via SHA-256 on an exclusive file handle before overwrite, and recheck Git status after collecting baselines. Offline real-Git E2E leaves an intervening editor's file intact; alias/deletion races remain open.
+- [x] Retain the clean Git index SHA-256 and path; before copying the snapshot index, revalidate on the same exclusive file handle used to overwrite it. Offline real-Git E2E preserves a concurrent user's staged changes; Git admin path replacement and other races still need review.
 - [x] Restore checks checksums and validates exact Git status; corruption/path traversal tests.
 - [x] Injectable exception/fault checkpoints at snapshot export, publish and restore milestones; tests assert preserved source, retained partial data, retry and ownership.
 - [x] Run real parent-initiated OS process kills at snapshot pre-publish/post-publish and restore worktree-created/index-applied boundaries; assert no original-data loss, persistent orphan state, and successful retry.

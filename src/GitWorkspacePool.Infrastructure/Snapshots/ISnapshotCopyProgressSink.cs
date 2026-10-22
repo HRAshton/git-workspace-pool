@@ -25,4 +25,7 @@ public enum SnapshotCopyPhase
 
     /// <summary>Restoring a working file into a new isolated recovery worktree.</summary>
     RestoreWorkingFile,
+
+    /// <summary>Restoring the saved Git index after verifying the clean checkout index.</summary>
+    RestoreIndex,
 }

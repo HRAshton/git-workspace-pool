@@ -2727,6 +2727,60 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task Restore_RefusesInterveningGitIndexUpdateWithoutLosingStagedChanges()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        string source = Path.Combine(opened.WorkspacePath, "feature.txt");
+        File.WriteAllText(source, "source staged content");
+        await fixture.GitInWorkspaceAsync("add", "feature.txt");
+        File.WriteAllText(source, "source unstaged content");
+        WorkspaceSnapshotReceipt receipt = await fixture.SnapshotAsync();
+
+        string? recoveredPath = null;
+        byte[]? stagedIndexBytes = null;
+        string? recoveredIndex = null;
+        ISnapshotCheckpointSink competingEditor = new MutateAtCheckpoint(
+            SnapshotCheckpoint.RestoreFilesApplied,
+            async () =>
+            {
+                recoveredPath = Assert.Single(
+                    Directory.GetDirectories(fixture.RecoveryRoot)
+                );
+                // The snapshot working files have been restored but the Git
+                // index has not. An editor stages one of those files now.
+                await fixture.GitInDirectoryAsync(
+                    recoveredPath, "add", "feature.txt"
+                );
+                recoveredIndex = (await new GitWorktreeSnapshotScanner().InspectAsync(
+                    recoveredPath, CancellationToken.None
+                )).IndexPath;
+                stagedIndexBytes = File.ReadAllBytes(recoveredIndex);
+            }
+        );
+
+        InvalidOperationException failure = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.RestoreSnapshotAsync(receipt.SnapshotId, competingEditor)
+        );
+
+        Assert.Contains("changed since clean validation", failure.Message);
+        Assert.NotNull(recoveredPath);
+        Assert.NotNull(recoveredIndex);
+        Assert.NotNull(stagedIndexBytes);
+        Assert.True(stagedIndexBytes.SequenceEqual(File.ReadAllBytes(recoveredIndex)));
+        Assert.Equal("source unstaged content", await fixture.ReadStagedFeatureAsync(recoveredPath));
+        Assert.Equal("source staged content", await fixture.ReadStagedFeatureAsync());
+        Assert.Equal("source unstaged content", File.ReadAllText(source));
+        Assert.Equal(WorkspaceSessionState.Active, (await fixture.OwnedSessionAsync()).State);
+        WorkspaceRestoreOperation attempt = Assert.Single(
+            await new SqliteWorkspaceSessionJournal(fixture.DatabasePath)
+                .ListRecoveryRestoresAsync(CancellationToken.None)
+        );
+        Assert.Equal(WorkspaceRestoreState.Preparing, attempt.State);
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task Restore_RejectsInterveningTrackedCheckoutEditsWithoutOverwriting()
     {
         using Fixture fixture = await Fixture.CreateAsync();

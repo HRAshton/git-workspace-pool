@@ -268,6 +268,23 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
             );
         }
 
+        // Preserve the clean checkout's linked Git index identity as well.
+        // Staging in a recovery tree while its snapshot is being applied must
+        // not be overwritten by the saved index bytes.
+        string cleanIndexPath = checkout.IndexPath;
+        WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(cleanIndexPath);
+        await using FileStream cleanIndex = new(
+            cleanIndexPath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            bufferSize: 65536,
+            FileOptions.SequentialScan
+        );
+        string cleanIndexSha256 = Convert.ToHexString(
+            await SHA256.HashDataAsync(cleanIndex, cancellationToken)
+        );
+
         // Remember the exact file occupants present at the verified clean
         // checkout. Testing File.Exists only at copy time is unsafe: a foreign
         // file created after checkout could otherwise be mistaken for a
@@ -429,7 +446,30 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
         );
         WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(indexFile);
         WorkspaceSnapshotPathPolicy.EnsureNotReparse(newIndexPath);
-        File.Copy(indexFile, newIndexPath, overwrite: true);
+        if (!Path.GetFullPath(newIndexPath).Equals(
+            Path.GetFullPath(cleanIndexPath),
+            OperatingSystem.IsWindows()
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal
+        ))
+        {
+            throw new InvalidOperationException(
+                "Recovery Git index location changed since its clean checkout was verified."
+            );
+        }
+
+        // The pre-existing index must be unchanged. The copy helper compares
+        // its original bytes on the same exclusive handle used for truncation
+        // and replacement, leaving an intervening user's staged changes intact.
+        await SnapshotFileCopier.CopyAsync(
+            indexFile,
+            newIndexPath,
+            FileMode.Open,
+            SnapshotCopyPhase.RestoreIndex,
+            _copyProgress,
+            cancellationToken,
+            expectedDestinationSha256: cleanIndexSha256
+        );
         await VerifyFileAsync(
             newIndexPath,
             manifest.GitIndexSha256,
