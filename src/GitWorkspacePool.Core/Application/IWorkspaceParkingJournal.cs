@@ -7,6 +7,9 @@ namespace GitWorkspacePool.Core.Application;
 /// </summary>
 public interface IWorkspaceParkingJournal
 {
+    /// <summary>Quarantines a conflicting or ambiguous worktree without changing files.</summary>
+    Task RequireRecoveryAsync(Guid id, CancellationToken cancellationToken);
+
     /// <summary>Lists sessions eligible for parking or a retry.</summary>
     Task<IReadOnlyList<WorkspaceSession>> ListParkCandidatesAsync(CancellationToken cancellationToken);
 
