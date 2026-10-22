@@ -1006,6 +1006,30 @@ public sealed class GitWorkspaceE2ETests
         Assert.True(File.Exists(Path.Combine(
             second.WorkspacePath, "node_modules", "reference", "0000.bin"
         )));
+
+        // Stable machine-readable output for the manual, repeated Windows
+        // benchmark. These timings use real Git+SQLite and the production
+        // verified artifact copier, but a fake editor and no npm installation.
+        string resultJson = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            coldCheckoutMs = cold.Elapsed.TotalMilliseconds,
+            releasedSlotCheckoutMs = nextCheckout.Elapsed.TotalMilliseconds,
+            verifiedArtifactCopyMs = receipt.Elapsed.TotalMilliseconds,
+            artifactFiles = receipt.FileCount,
+            artifactLogicalBytes = receipt.CopiedBytes,
+        });
+        Console.WriteLine("GWP_BENCHMARK_JSON=" + resultJson);
+        string? benchmarkFile = Environment.GetEnvironmentVariable("GWP_BENCHMARK_FILE");
+        if (!string.IsNullOrWhiteSpace(benchmarkFile))
+        {
+            // Write only a never-existing file under the caller's disposable
+            // benchmark output directory. Never truncate user data.
+            using FileStream stream = new(
+                benchmarkFile, FileMode.CreateNew, FileAccess.Write, FileShare.None
+            );
+            using StreamWriter writer = new(stream);
+            writer.WriteLine(resultJson);
+        }
     }
 
     [Fact]

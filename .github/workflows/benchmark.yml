@@ -1,0 +1,48 @@
+name: Manual reuse benchmark
+
+# Deliberately opt-in: no pull_request, push, cron or build-per-commit triggers.
+on:
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: "Repeated real Git/SQLite checkout + verified artifact-copy samples (2-20)"
+        required: true
+        default: "5"
+        type: choice
+        options: ["3", "5", "10"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: manual-benchmark-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  git-reuse-benchmark:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+      - name: Collect repeated real Git and verified-copy timings
+        shell: pwsh
+        run: |
+          $results = Join-Path $env:RUNNER_TEMP ('gwp-benchmark-' + $env:GITHUB_RUN_ID)
+          & ./scripts/Benchmark-WarmReuse.ps1 -OutputDirectory $results -Iterations ${{ inputs.iterations }}
+          if ($LASTEXITCODE -ne 0) { throw 'Benchmark command failed.' }
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "Benchmark evidence: download the **manual-warm-reuse-results** artifact from this run. No speedup claims are made without reference hardware and editor measurements."
+      - name: Attach timing samples and JSON
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: manual-warm-reuse-results
+          path: ${{ runner.temp }}/gwp-benchmark-${{ github.run_id }}/
+          if-no-files-found: warn
+          retention-days: 14
