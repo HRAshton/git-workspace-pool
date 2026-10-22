@@ -113,6 +113,7 @@
 
 ### M6 — release engineering
 
+- [x] RC2 release ZIP includes a read-only Git minimum-version and configured VS Code executable preflight with isolated Windows fixture (2.40.0 accepted as the current conservative policy), without running user Git commands or opening the editor. Full toolchain reproducibility, pinned dependencies and installed GUI acceptance still remain.
 - [ ] .NET SDK, dependencies and Git minimum version pinned and reproducible.
 - [x] Build an unsigned self-contained preview ZIP in PR CI with bundled userscript, SHA-256 checksum, per-user versioned install, explicit HKCU protocol registration/unregistration, and isolated no-UI smoke including a second idempotent install that preserves unknown existing files. Existing preview binaries and all SQLite/settings/worktrees are left alone.
 - [ ] Signed per-user installer/update/uninstall, trusted release publishing, real tray/browser/editor installed smoke and safe downgrade/SQLite rollback proof.

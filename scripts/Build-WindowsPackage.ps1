@@ -59,6 +59,7 @@ if ($PackageVersion) {
     Copy-Item -LiteralPath (Join-Path $projectRoot ("docs/" + $ReleaseDocsPrefix + "_ACCEPTANCE.md")) -Destination $package
     if ($ReleaseDocsPrefix -eq 'RC2') {
         Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/RECOVERY.md') -Destination $package
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Test-RC2Prerequisites.ps1') -Destination $package
     }
 }
 

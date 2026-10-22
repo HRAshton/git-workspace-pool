@@ -20,6 +20,12 @@
 - [ ] Inject interruption, conflicting file occupant, link/junction, read-only file, locked file, low disk and unsafe Git config. Check recovery diagnostics while requiring no original user-file overwrites, resets, cleanup or arbitrary execution.
 - [ ] Confirm quit/restart never triggers eviction/recycling, automatic worktree cleanup, background install, user project build or PR speculation. Advanced manual released-slot handoff and `node_modules` copying are not certified beyond their isolated tests.
 
+## Git and editor prerequisite inspection
+
+- [ ] Run the packaged `Test-RC2Prerequisites.ps1` on the target Windows machine before installing production browser integration. Verify Git is at least 2.40.0, the exact configured VS Code `Code.exe` path exists, and missing Git/editor is reported clearly.
+- [ ] Confirm the preflight does not open the editor, run Git in a repository, mutate user configuration, install dependencies, fetch remotes or change journal data.
+- [ ] Complete the real tray/browser/editor integration test separately; presence checks are not proof that VS Code works.
+
 ## Support documentation shipped with RC2
 
 - [ ] Inspect extracted `RECOVERY.md`, `RC2_RELEASE_NOTES.md` and `RC2_ACCEPTANCE.md`; run the backup helper on a stopped disposable profile and retain the verified manifest.

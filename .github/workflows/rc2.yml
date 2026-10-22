@@ -36,6 +36,12 @@ jobs:
           node --check ./userscript/git-workspace-pool.user.js
           if ($LASTEXITCODE -ne 0) { throw 'Tampermonkey script failed JavaScript syntax validation.' }
 
+      - name: Inspect RC2 Git and editor prerequisites in isolated fixture
+        shell: pwsh
+        run: |
+          & ./scripts/Test-RC2Prerequisites-Fixture.ps1 -TestRoot (Join-Path $env:RUNNER_TEMP 'gwp-rc2-prerequisites')
+          if ($LASTEXITCODE -ne 0) { throw 'RC2 prerequisite fixture failed.' }
+
       - name: Build release candidate
         shell: pwsh
         run: |
@@ -57,7 +63,7 @@ jobs:
           $zip = Join-Path $root 'GitWorkspacePool-win-x64-0.1.0-rc.2.zip'
           & ./scripts/Build-WindowsPackage.ps1 -OutputDirectory $root -PackageBaseName 'GitWorkspacePool-win-x64-0.1.0-rc.2' -PackageVersion '0.1.0-rc.2' -ReleaseDocsPrefix 'RC2'
           if ($LASTEXITCODE -ne 0) { throw 'RC2 packaging failed.' }
-          & ./scripts/Test-WindowsPackage.ps1 -PackagePath $zip -TestRoot (Join-Path $env:RUNNER_TEMP 'gwp-rc2-install-smoke') -RequiredDocs @('RC2_RELEASE_NOTES.md', 'RC2_ACCEPTANCE.md', 'RECOVERY.md')
+          & ./scripts/Test-WindowsPackage.ps1 -PackagePath $zip -TestRoot (Join-Path $env:RUNNER_TEMP 'gwp-rc2-install-smoke') -RequiredDocs @('RC2_RELEASE_NOTES.md', 'RC2_ACCEPTANCE.md', 'RECOVERY.md', 'Test-RC2Prerequisites.ps1')
           if ($LASTEXITCODE -ne 0) { throw 'RC2 installer smoke failed.' }
           & ./scripts/Test-Backup-PerUserState.ps1 -PackageDirectory (Join-Path $root 'package') -TestRoot (Join-Path $env:RUNNER_TEMP 'gwp-rc2-backup-smoke')
           if ($LASTEXITCODE -ne 0) { throw 'RC2 data backup smoke failed.' }

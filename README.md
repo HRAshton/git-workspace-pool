@@ -10,6 +10,8 @@ Experimental Windows preview. Configured local repositories create or reopen a d
 
 The [RC2 Windows candidate workflow](.github/workflows/rc2.yml) builds the next unsigned self-contained Windows x64 package after full real-process crash/recovery and package/backup smoke tests. RC2 adds the included [verified backup-first migration helper](docs/RC2_RELEASE_NOTES.md): stop the tray, run `Backup-PerUserState.ps1 -BackupDirectory <new-safe-location>`, and verify the copied SQLite journal, WAL/SHM files and settings. **Back up worktrees, parked worktrees and snapshots separately.** An actual older-profile migration, GUI acceptance, signed public release and safe rollback are still manual [RC2 acceptance gates](docs/RC2_ACCEPTANCE.md).
 
+Run the bundled `Test-RC2Prerequisites.ps1` to check the supported Windows environment, Git >=2.40.0 and the **configured VS Code Code.exe path** without launching the app, changing user data or fetching any Git ref. This is a diagnostic, not a full installed UI acceptance test.
+
 The extracted RC2 ZIP also bundles [safe recovery and support guidance](docs/RECOVERY.md) for read-only diagnostics, preservation of unfinished operations and credential-safe support requests.
 
 ## RC1 engineering candidate
