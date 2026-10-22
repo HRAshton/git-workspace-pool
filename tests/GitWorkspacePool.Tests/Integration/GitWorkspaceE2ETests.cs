@@ -1451,7 +1451,23 @@ public sealed class GitWorkspaceE2ETests
         Assert.Equal(WorkspaceSlotState.Reserved,
             (await registry.FindSlotAsync(prepared.SlotId, CancellationToken.None))!.State);
 
-        WorkspaceSession recovered = await fixture.ReconcileReadySlotAsync(prepared.SlotId);
+        int openedBeforeRecovery = fixture.Editor.OpenedPaths.Count;
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.RecoverSelectedReadySlotAsync(
+                prepared.SlotId, Guid.NewGuid(),
+                reservation.Session.OperationId, reservation.Lease.Generation
+            )
+        );
+        Assert.Equal(openedBeforeRecovery, fixture.Editor.OpenedPaths.Count);
+        Assert.Equal(WorkspaceSlotState.Reserved,
+            (await registry.FindSlotAsync(prepared.SlotId, CancellationToken.None))!.State);
+
+        WorkspaceSession recovered = await fixture.RecoverSelectedReadySlotAsync(
+            prepared.SlotId, reservation.Lease.LeaseId,
+            reservation.Session.OperationId, reservation.Lease.Generation
+        );
+        Assert.Equal(openedBeforeRecovery + 1, fixture.Editor.OpenedPaths.Count);
+        Assert.Equal(recovered.WorkspacePath, fixture.Editor.OpenedPaths.Last());
         Assert.Equal(reservation.Session.OperationId, recovered.OperationId);
         Assert.Equal(WorkspaceSessionState.Active, recovered.State);
         Assert.Equal(WorkspaceSlotState.Protected,
@@ -1511,7 +1527,10 @@ public sealed class GitWorkspaceE2ETests
         File.WriteAllText(privateFile, "do not erase");
 
         await Assert.ThrowsAsync<InvalidOperationException>(
-            () => fixture.ReconcileReadySlotAsync(prepared.SlotId)
+            () => fixture.RecoverSelectedReadySlotAsync(
+                prepared.SlotId, reservation.Lease.LeaseId,
+                reservation.Session.OperationId, reservation.Lease.Generation
+            )
         );
         Assert.Equal(WorkspaceSlotState.Reserved,
             (await registry.FindSlotAsync(prepared.SlotId, CancellationToken.None))!.State);
@@ -1554,7 +1573,10 @@ public sealed class GitWorkspaceE2ETests
             )
         );
         await Assert.ThrowsAsync<InvalidOperationException>(
-            () => fixture.ReconcileReadySlotAsync(prepared.SlotId)
+            () => fixture.RecoverSelectedReadySlotAsync(
+                prepared.SlotId, reservation.Lease.LeaseId,
+                reservation.Session.OperationId, reservation.Lease.Generation
+            )
         );
         // Even direct legacy activation cannot bypass the Protected-slot CAS.
         await new SqliteWorkspaceSessionJournal(fixture.DatabasePath)
@@ -3939,6 +3961,28 @@ public sealed class GitWorkspaceE2ETests
                 new VerifiedNpmArtifactCopier()
             );
             return service.TransferAsync(sourceId, targetId, CancellationToken.None);
+        }
+
+        public Task<WorkspaceSession> RecoverSelectedReadySlotAsync(
+            Guid slotId, Guid leaseId, Guid sessionId, long generation
+        )
+        {
+            SqliteWorkspaceSlotRegistry slots = new(DatabasePath);
+            ReconcileExplicitReadySlotService recovery = new(
+                slots, slots, new WorkspaceReadySlotSafety(),
+                new VerifiedReadySlotCheckout(), new GitCliWorkspaceGit(),
+                new FileWorkspaceOperationLock(Path.Combine(_root, "state", "locks"))
+            );
+            RecoverInterruptedSlotHandler handler = new(
+                slots,
+                new Catalog(new RepositoryRegistration("owner/repo", _source, _workspaces)),
+                new LocalFixtureOriginVerifier(),
+                recovery,
+                Editor
+            );
+            return handler.HandleAsync(
+                slotId, leaseId, sessionId, generation, CancellationToken.None
+            );
         }
 
         public Task<WorkspaceSession> ReconcileReadySlotAsync(Guid slotId)

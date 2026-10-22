@@ -43,7 +43,10 @@ public sealed class ReconcileExplicitReadySlotService
     public async Task<WorkspaceSession> ReconcileAsync(
         Guid slotId,
         RepositoryRegistration trustedRepository,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        Guid? expectedLeaseId = null,
+        Guid? expectedSessionId = null,
+        long? expectedGeneration = null
     )
     {
         WorkspaceSlot slot = await _slots.FindSlotAsync(slotId, cancellationToken)
@@ -67,6 +70,19 @@ public sealed class ReconcileExplicitReadySlotService
                 ?? throw new InvalidOperationException(
                     "No matching Preparing session and Reserved generation."
                 );
+        if (
+            (expectedLeaseId is not null && reservation.Lease.LeaseId != expectedLeaseId)
+            || (expectedSessionId is not null
+                && reservation.Session.OperationId != expectedSessionId)
+            || (expectedGeneration is not null
+                && reservation.Lease.Generation != expectedGeneration)
+        )
+        {
+            throw new InvalidOperationException(
+                "The selected Reserved slot generation or owner changed; no files were modified."
+            );
+        }
+
         string? expected = reservation.Session.PinnedCommitSha;
         if (
             !slot.RepositoryKey.Equals(

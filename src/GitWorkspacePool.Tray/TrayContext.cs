@@ -34,6 +34,7 @@ internal sealed class TrayContext : ApplicationContext
     private readonly PrepareWorkspaceSlotReleaseService _prepareRelease;
     private readonly FinalizeWorkspaceSlotReleaseService _finalizeRelease;
     private readonly OpenPullRequestInReadySlotHandler _openInReadySlot;
+    private readonly RecoverInterruptedSlotHandler _recoverInterrupted;
 
     public TrayContext(string? initialRequest)
     {
@@ -142,6 +143,15 @@ internal sealed class TrayContext : ApplicationContext
             editor
         );
 
+        _recoverInterrupted = new RecoverInterruptedSlotHandler(
+            slots, repositories, originVerifier,
+            new ReconcileExplicitReadySlotService(
+                slots, slots, new WorkspaceReadySlotSafety(),
+                new VerifiedReadySlotCheckout(), git, locks
+            ),
+            editor
+        );
+
         ToolStripMenuItem snapshotsMenu = new("Snapshot active PR...");
         snapshotsMenu.DropDownOpening += async (_, _) => await PopulateSnapshotsAsync(snapshotsMenu);
         menu.Items.Insert(1, snapshotsMenu);
@@ -194,6 +204,13 @@ internal sealed class TrayContext : ApplicationContext
         retainedMenu.DropDownOpening += async (_, _) =>
             await PopulateRetainedReleasedAsync(retainedMenu);
         menu.Items.Insert(11, retainedMenu);
+
+        ToolStripMenuItem interruptedSlotMenu = new(
+            "Verify and finish interrupted PR checkout..."
+        );
+        interruptedSlotMenu.DropDownOpening += async (_, _) =>
+            await PopulateInterruptedSlotsAsync(interruptedSlotMenu);
+        menu.Items.Insert(4, interruptedSlotMenu);
 
         _ = ListenAsync(_shutdown.Token);
         _ = AnnounceInterruptedAllocationsAsync();
@@ -416,6 +433,104 @@ internal sealed class TrayContext : ApplicationContext
         catch (Exception exception)
         {
             Notify("Recovery inspection failed", exception.Message);
+        }
+    }
+
+    private async Task PopulateInterruptedSlotsAsync(ToolStripMenuItem menu)
+    {
+        menu.DropDownItems.Clear();
+        try
+        {
+            IReadOnlyList<WorkspaceReadySlotReservation> pending =
+                await _pendingSlotInventory.ListReservedAsync(_shutdown.Token);
+            if (pending.Count == 0)
+            {
+                menu.DropDownItems.Add(new ToolStripMenuItem(
+                    "No interrupted Ready-slot checkouts."
+                ) { Enabled = false });
+                return;
+            }
+
+            foreach (WorkspaceReadySlotReservation reservation in pending.Take(100))
+            {
+                WorkspaceSession session = reservation.Session;
+                WorkspaceSlotLease lease = reservation.Lease;
+                ToolStripMenuItem item = new(
+                    session.RepositoryKey + " PR #" + session.PullRequestNumber
+                        + " — " + Path.GetFileName(session.WorkspacePath)
+                )
+                {
+                    ToolTipText = "Reserved generation " + lease.Generation
+                        + Environment.NewLine + session.WorkspacePath,
+                };
+                Guid slotId = lease.SlotId;
+                Guid leaseId = lease.LeaseId;
+                Guid sessionId = session.OperationId;
+                long generation = lease.Generation;
+                string path = session.WorkspacePath;
+                item.Click += (_, _) => _ = RecoverInterruptedSlotFromMenuAsync(
+                    slotId, leaseId, sessionId, generation, path
+                );
+                menu.DropDownItems.Add(item);
+            }
+
+            if (pending.Count > 100)
+            {
+                menu.DropDownItems.Add(new ToolStripMenuItem(
+                    "Showing first 100; inspect other reservations in Recovery diagnostics."
+                ) { Enabled = false });
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Application is exiting.
+        }
+        catch (Exception exception)
+        {
+            Notify("Could not list interrupted PR checkouts", exception.Message);
+        }
+    }
+
+    private async Task RecoverInterruptedSlotFromMenuAsync(
+        Guid slotId, Guid leaseId, Guid sessionId, long generation, string path
+    )
+    {
+        if (MessageBox.Show(
+            "Verify and finish only this interrupted PR checkout?\n\n"
+                + path + "\n\n"
+                + "The Git worktree must already exist, be registered, match its "
+                + "pinned commit and have no staged, unstaged or untracked changes. "
+                + "The exact Reserved generation and owner will be checked again "
+                + "under a cross-process lock. Only then will its ownership be "
+                + "committed as Active/Protected and VS Code opened.\n\n"
+                + "Missing or modified trees will be refused unchanged. "
+                + "No checkout, cleanup, file move or deletion will be performed.",
+            "Verify interrupted PR slot",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Warning,
+            MessageBoxDefaultButton.Button2
+        ) != DialogResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            WorkspaceSession active = await _recoverInterrupted.HandleAsync(
+                slotId, leaseId, sessionId, generation, _shutdown.Token
+            );
+            Notify("Interrupted PR checkout recovered",
+                "Verified Active/Protected owner and opened " + active.WorkspacePath);
+        }
+        catch (OperationCanceledException)
+        {
+            // User cancelled or application is exiting.
+        }
+        catch (Exception exception)
+        {
+            Notify("Could not finish interrupted PR checkout",
+                exception.Message + " Check Recovery diagnostics before retrying; "
+                    + "no files were moved or deleted.");
         }
     }
 
