@@ -1,0 +1,88 @@
+name: RC1 Windows candidate
+
+# This produces a test candidate, not an automatic signed GitHub Release.
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rc1-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rc1-candidate:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'release/rc1'
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout exact candidate source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Validate userscript JavaScript
+        shell: pwsh
+        run: |
+          node --check ./userscript/git-workspace-pool.user.js
+          if ($LASTEXITCODE -ne 0) { throw 'Tampermonkey script failed JavaScript syntax validation.' }
+
+      - name: Build release candidate
+        shell: pwsh
+        run: |
+          dotnet restore GitWorkspacePool.slnx
+          if ($LASTEXITCODE -ne 0) { throw 'RC1 dependency restore failed.' }
+          dotnet build GitWorkspacePool.slnx --configuration Release --no-restore -p:ContinuousIntegrationBuild=true
+          if ($LASTEXITCODE -ne 0) { throw 'RC1 release build failed.' }
+
+      - name: Extended real-process recovery and crash tests
+        shell: pwsh
+        run: |
+          dotnet test tests/GitWorkspacePool.Tests/GitWorkspacePool.Tests.csproj --configuration Release --no-build --no-restore --filter "Category=SlowE2E"
+          if ($LASTEXITCODE -ne 0) { throw 'Extended RC1 recovery/crash E2E failed.' }
+
+      - name: Build, checksum-verify and smoke RC1 ZIP
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'gwp-rc1-artifacts'
+          $zip = Join-Path $root 'GitWorkspacePool-win-x64-0.1.0-rc.1.zip'
+          & ./scripts/Build-WindowsPackage.ps1 -OutputDirectory $root -PackageBaseName 'GitWorkspacePool-win-x64-0.1.0-rc.1' -PackageVersion '0.1.0-rc.1'
+          if ($LASTEXITCODE -ne 0) { throw 'RC1 packaging failed.' }
+          & ./scripts/Test-WindowsPackage.ps1 -PackagePath $zip -TestRoot (Join-Path $env:RUNNER_TEMP 'gwp-rc1-install-smoke')
+          if ($LASTEXITCODE -ne 0) { throw 'RC1 installer smoke failed.' }
+          $source = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $source -notmatch '^[a-fA-F0-9]{40}$') { throw 'Cannot capture candidate source commit.' }
+          $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          @(
+            'candidate=0.1.0-rc.1'
+            "source_commit=$source"
+            "workflow_run=$env:GITHUB_RUN_ID"
+            "source_ref=$env:GITHUB_REF"
+            "zip_sha256=$hash"
+            'scope=Unsigned Windows x64 RC1 engineering candidate; manual acceptance pending'
+          ) | Set-Content -LiteralPath (Join-Path $root 'RC1_BUILD_EVIDENCE.txt') -Encoding utf8
+          Copy-Item ./docs/RC1_RELEASE_NOTES.md $root
+          Copy-Item ./docs/RC1_ACCEPTANCE.md $root
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value 'RC1 ZIP, checksum, exact source SHA, release notes and acceptance matrix attached. **Unsigned engineering candidate only.** Real browser/tray/VS Code, upgrade/rollback and signing are NOT certified by this workflow.'
+
+      - name: Archive unsigned candidate and evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: GitWorkspacePool-win-x64-rc1-candidate
+          path: |
+            ${{ runner.temp }}/gwp-rc1-artifacts/GitWorkspacePool-win-x64-0.1.0-rc.1.zip
+            ${{ runner.temp }}/gwp-rc1-artifacts/GitWorkspacePool-win-x64-0.1.0-rc.1.zip.sha256
+            ${{ runner.temp }}/gwp-rc1-artifacts/RC1_BUILD_EVIDENCE.txt
+            ${{ runner.temp }}/gwp-rc1-artifacts/RC1_RELEASE_NOTES.md
+            ${{ runner.temp }}/gwp-rc1-artifacts/RC1_ACCEPTANCE.md
+          if-no-files-found: error
+          retention-days: 30

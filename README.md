@@ -6,6 +6,12 @@ A Windows tray application that opens GitHub pull requests in local VS Code work
 
 Experimental Windows preview. Configured local repositories create or reopen a dedicated Git worktree per PR, backed by a durable SQLite journal and pinned commit identity. Separately confirmed parking, release, released-slot checkout, recovery and compatible npm file copying are available. **Automatic** worktree recycling, eviction, dependency installation, project builds and deleting user files remain out of scope.
 
+## RC1 engineering candidate
+
+A dedicated [RC1 Windows candidate workflow](.github/workflows/rc1.yml) builds an unsigned, self-contained Windows x64 package with app version `0.1.0-rc.1`, source provenance and a SHA-256 checksum. It also runs extended real-process recovery/crash tests. Download the `GitWorkspacePool-win-x64-rc1-candidate` artifact from a successful RC1 workflow run. This is **not** a signed GitHub Release.
+
+[RC1 release notes](docs/RC1_RELEASE_NOTES.md) describe the supported GitHub PR → VS Code flow and deferred capabilities. [RC1 acceptance and upgrade/rollback](docs/RC1_ACCEPTANCE.md) lists mandatory manual Windows tests before approval as an actual release. Passing package CI alone does not certify browser/tray/editor integration, real prior-profile migration, security edge cases or code signing. Use verified backups of your workspaces and SQLite journal for RC1 evaluation.
+
 ## Windows preview ZIP (no .NET SDK required)
 
 A PR Windows CI run produces a **self-contained, unsigned win-x64 preview ZIP** as a downloadable workflow artifact, plus a SHA-256 checksum. The installer only uses the current user's profile and does not need administrator rights.
