@@ -256,6 +256,9 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
         // Never publish evidence that recovery diagnostics or restore cannot
         // read. This also rejects unusually long status/path metadata.
         SnapshotManifestIO.RequireWithinLimit(manifestPath);
+        string publishedManifestHash = await HashFileAsync(
+            manifestPath, cancellationToken
+        );
 
         cancellationToken.ThrowIfCancellationRequested();
         await CheckpointAsync(
@@ -306,9 +309,58 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
             }
         }
 
-        // Check again after all injected checkpoints and source verification.
-        // Even a late manifest replacement must not become published evidence.
+        // The entire staged snapshot is evidence, not just the source files.
+        // A copy can be changed after it was first hashed (or by a test
+        // checkpoint) while the original worktree remains unchanged.
+        // Refuse all such changes before making the directory published.
         SnapshotManifestIO.RequireWithinLimit(manifestPath);
+        if (!string.Equals(
+            publishedManifestHash,
+            await HashFileAsync(manifestPath, cancellationToken),
+            StringComparison.Ordinal
+        ) || !string.Equals(
+            indexHash,
+            await HashFileAsync(indexTarget, cancellationToken),
+            StringComparison.Ordinal
+        ))
+        {
+            throw new InvalidOperationException(
+                "Pending snapshot evidence changed before publication; nothing was published."
+            );
+        }
+
+        foreach (WorkspaceSnapshotFile payload in files.Where(item => !item.IsDirectory))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string location = Resolve(payloadDirectory, payload.RelativePath);
+            if (new FileInfo(location).Length != payload.Length || !string.Equals(
+                payload.Sha256,
+                await HashFileAsync(location, cancellationToken),
+                StringComparison.Ordinal
+            ))
+            {
+                throw new InvalidOperationException(
+                    "Pending snapshot evidence changed before publication; nothing was published."
+                );
+            }
+        }
+
+        foreach (WorkspaceSnapshotFile payload in stagedFiles)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string location = Resolve(stagedRoot, payload.RelativePath);
+            if (new FileInfo(location).Length != payload.Length || !string.Equals(
+                payload.Sha256,
+                await HashFileAsync(location, cancellationToken),
+                StringComparison.Ordinal
+            ))
+            {
+                throw new InvalidOperationException(
+                    "Pending snapshot evidence changed before publication; nothing was published."
+                );
+            }
+        }
+
         Directory.Move(staging, published);
         await CheckpointAsync(
             SnapshotCheckpoint.ExportPublished,
