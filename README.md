@@ -50,6 +50,17 @@ The tray supports a **manual**, non-destructive cross-PR slot handoff:
 
 This reuses the **former directory/slot**, not cached build outputs or `node_modules`. It does not automatically choose slots, reclaim disk, delete user data or predict PRs. The released PR remains parked under its original session identity. An actual speed benefit and artifact-preserving warm reuse are still separate milestones.
 
+## Experimental npm artifact reuse (opt-in)
+
+The tray now exposes **Reuse compatible npm dependencies (copy only)...** after manually parking/releasing PR A and opening PR B in its former slot. Select the active PR/donor pair and confirm. The adapter:
+
+- Requires both PRs to use the same trusted Git repository and original slot, with the old PR in `Released` and the new PR `Active`, and verifies both Git worktree registrations and pinned commits under OS locks.
+- Requires identical `package.json` and `package-lock.json` files; transfers **only** ignored, untracked `node_modules` regular files. Both Git check-ignore rules must cover the cache path.
+- Refuses symlinks/junctions, destination collisions, tracked paths, more than 20,000 files or 512 MiB, and unsupported filesystem states. Uses independent copies and `CreateNew`; **never deletes or moves source files**.
+- Reports file count, bytes and transfer duration. An interrupted copy leaves its incomplete destination for inspection; a retry will not overwrite it. No rollback, automatic cleanup or cross-branch dependency execution is attempted.
+
+This is an **experimental manual feature**, not automatically selected warm reuse. Compatibility is strict and limited to npm; it makes no claim that file transfer is faster than dependency installation. To collect reproducible local timings, run the offline synthetic benchmark via `dotnet test tests/GitWorkspacePool.Tests/GitWorkspacePool.Tests.csproj --filter "FullyQualifiedName~WarmNpm_BenchmarkColdCheckoutVsVerifiedArtifactCopy" --logger "console;verbosity=detailed"`. Timings are environment-specific and exclude `npm install`, VS Code startup and web-to-tray latency.
+
 ## Experimental workspace snapshots
 
 The tray menu provides **Snapshot active PR...** for an explicit, non-destructive snapshot. Captures include the Git index, staged blobs independently from unstaged working files, tracked changes, untracked and ignored files (including binary data), deletions and a SHA-256 manifest. Snapshots are stored under `%LOCALAPPDATA%\\GitWorkspacePool\\snapshots`. Only explicitly selected active sessions are eligible.

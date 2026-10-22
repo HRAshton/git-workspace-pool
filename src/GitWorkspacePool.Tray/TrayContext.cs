@@ -18,6 +18,8 @@ internal sealed class TrayContext : ApplicationContext
     private readonly CancellationTokenSource _shutdown = new();
     private readonly OpenPullRequestHandler _open;
     private readonly IWorkspaceSnapshotSessionStore _sessions;
+    private readonly IWorkspaceRecoveryJournal _recoverySessions;
+    private readonly TransferVerifiedWarmArtifactsService _warmTransfer;
     private readonly CaptureWorkspaceSnapshotService _snapshot;
     private readonly RestoreWorkspaceSnapshotService _restore;
     private readonly IWorkspaceRecoveryInspector _recoveryInspector;
@@ -57,6 +59,10 @@ internal sealed class TrayContext : ApplicationContext
         SqliteWorkspaceSessionJournal journal = new(Path.Combine(stateRoot, "sessions.db"));
         FileWorkspaceOperationLock locks = new(Path.Combine(stateRoot, "locks"));
         _sessions = journal;
+        _recoverySessions = journal;
+        _warmTransfer = new TransferVerifiedWarmArtifactsService(
+            journal, locks, git, new VerifiedNpmArtifactCopier()
+        );
         _parkingJournal = journal;
         _parking = new ParkWorkspaceSessionService(
             journal,
@@ -170,6 +176,13 @@ internal sealed class TrayContext : ApplicationContext
         cancelReleaseMenu.DropDownOpening += async (_, _) =>
             await PopulatePendingReleasesAsync(cancelReleaseMenu);
         menu.Items.Insert(9, cancelReleaseMenu);
+
+        ToolStripMenuItem npmWarmMenu = new(
+            "Reuse compatible npm dependencies (copy only)..."
+        );
+        npmWarmMenu.DropDownOpening += async (_, _) =>
+            await PopulateNpmArtifactTransfersAsync(npmWarmMenu);
+        menu.Items.Insert(10, npmWarmMenu);
 
         _ = ListenAsync(_shutdown.Token);
         _ = AnnounceInterruptedAllocationsAsync();
@@ -915,6 +928,146 @@ internal sealed class TrayContext : ApplicationContext
         catch (Exception exception)
         {
             Notify("Could not cancel slot release", exception.Message);
+        }
+    }
+
+    private async Task PopulateNpmArtifactTransfersAsync(ToolStripMenuItem menu)
+    {
+        menu.DropDownItems.Clear();
+        try
+        {
+            IReadOnlyList<WorkspaceSession> active =
+                await _sessions.ListActiveAsync(_shutdown.Token);
+            IReadOnlyList<WorkspaceSession> allParked =
+                await _recoverySessions.ListRecoveryParkingSessionsAsync(_shutdown.Token);
+            StringComparison cmp = OperatingSystem.IsWindows()
+                ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            int added = 0;
+            foreach (WorkspaceSession current in active)
+            {
+                // Historical released PRs are still parked. Match exclusively
+                // the old slot identity and trusted source, not similar names.
+                foreach (WorkspaceSession donor in allParked.Where(x =>
+                    x.State == WorkspaceSessionState.Released
+                    && x.RepositoryKey.Equals(current.RepositoryKey,
+                        StringComparison.OrdinalIgnoreCase)
+                    && Path.GetFullPath(x.SourcePath).Equals(
+                        Path.GetFullPath(current.SourcePath), cmp)
+                    && Path.GetFullPath(x.WorkspacePath).Equals(
+                        Path.GetFullPath(current.WorkspacePath), cmp)
+                ))
+                {
+                    if (++added > 100)
+                    {
+                        throw new InvalidOperationException(
+                            "Too many npm artifact donors to display safely."
+                        );
+                    }
+
+                    ToolStripMenuItem item = new(
+                        current.RepositoryKey + " PR #" + current.PullRequestNumber
+                        + " ← parked PR #" + donor.PullRequestNumber
+                    )
+                    {
+                        ToolTipText = "From " + donor.ParkingPath
+                            + " to " + current.WorkspacePath,
+                    };
+                    Guid donorId = donor.OperationId;
+                    Guid recipientId = current.OperationId;
+                    item.Click += (_, _) => _ = TransferNpmArtifactsFromMenuAsync(
+                        donorId, recipientId
+                    );
+                    menu.DropDownItems.Add(item);
+                }
+            }
+
+            if (added == 0)
+            {
+                menu.DropDownItems.Add(new ToolStripMenuItem(
+                    "No active PR with a released donor at its workspace slot."
+                ) { Enabled = false });
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Application is exiting.
+        }
+        catch (Exception exception)
+        {
+            Notify("Cannot inspect npm artifact sources", exception.Message);
+        }
+    }
+
+    private async Task TransferNpmArtifactsFromMenuAsync(
+        Guid releasedSessionId,
+        Guid activeSessionId
+    )
+    {
+        WorkspaceSession? donor;
+        WorkspaceSession? target;
+        try
+        {
+            donor = await _sessions.FindAsync(releasedSessionId, _shutdown.Token);
+            target = await _sessions.FindAsync(activeSessionId, _shutdown.Token);
+            if (donor?.State != WorkspaceSessionState.Released
+                || target?.State != WorkspaceSessionState.Active)
+            {
+                throw new InvalidOperationException("The selected owners changed.");
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        catch (Exception exception)
+        {
+            Notify("Warm npm reuse unavailable", exception.Message);
+            return;
+        }
+
+        if (MessageBox.Show(
+            "Copy ignored node_modules from parked "
+                + donor.RepositoryKey + " PR #" + donor.PullRequestNumber
+                + " into active PR #" + target.PullRequestNumber + "?\n\n"
+                + "The source will remain untouched. Both package.json and "
+                + "package-lock.json must match exactly. The destination "
+                + "node_modules directory must not exist; links and tracked "
+                + "files are refused. Up to 512 MiB / 20,000 files may be "
+                + "copied. Any partial copy after an I/O failure remains "
+                + "for inspection, never automatically deleted.\n\n"
+                + "This is not a dependency installation or speed guarantee.",
+            "Explicit npm dependency reuse",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Warning,
+            MessageBoxDefaultButton.Button2
+        ) != DialogResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            WarmArtifactTransferReceipt result = await _warmTransfer.TransferAsync(
+                releasedSessionId, activeSessionId, _shutdown.Token
+            );
+            Notify(
+                "npm dependency cache copied",
+                result.FileCount + " files / "
+                    + (result.CopiedBytes / (1024 * 1024.0)).ToString("F1")
+                    + " MiB in " + result.Elapsed.TotalSeconds.ToString("F2")
+                    + " s. Original parked PR unchanged."
+            );
+        }
+        catch (OperationCanceledException)
+        {
+            // Any partial copy remains on disk for explicit inspection.
+        }
+        catch (Exception exception)
+        {
+            Notify(
+                "npm dependency reuse refused or interrupted",
+                exception.Message + " No automatic cleanup was attempted."
+            );
         }
     }
 

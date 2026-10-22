@@ -767,6 +767,183 @@ public sealed class GitWorkspaceE2ETests
 
     [Fact]
     [Trait("Category", "FastE2E")]
+    public async Task WarmNpm_ExplicitCopyReusesIgnoredDependenciesAndPreservesFormerPr()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult first = await fixture.OpenAsync(PullRequestUrl);
+        WorkspaceSession oldOwner = await fixture.OwnedSessionAsync();
+        string original = first.WorkspacePath;
+        File.WriteAllText(Path.Combine(original, ".gitignore"), "node_modules/\n");
+        File.WriteAllText(Path.Combine(original, "package.json"), "{\"name\":\"fixture\",\"version\":\"1.0.0\"}");
+        File.WriteAllText(Path.Combine(original, "package-lock.json"), "{\"lockfileVersion\":3}");
+        File.WriteAllText(Path.Combine(original, "notes.local"), "old PR must survive");
+        string cached = Path.Combine(original, "node_modules", "fixture-package");
+        Directory.CreateDirectory(cached);
+        File.WriteAllText(Path.Combine(cached, "index.js"), "module.exports = 42");
+        byte[] binary = Enumerable.Range(0, 4096).Select(n => (byte)(n % 251)).ToArray();
+        File.WriteAllBytes(Path.Combine(cached, "cache.bin"), binary);
+
+        string parked = await fixture.ParkAsync(oldOwner.OperationId);
+        WorkspaceSlotReleasePreparation prepared = await fixture.PrepareReleaseAsync(oldOwner.OperationId);
+        _ = await fixture.FinalizeReleaseAsync(prepared.PreparationId);
+        await fixture.CreatePullRequestAsync(18);
+        OpenPullRequestResult second = await fixture.OpenInReadySlotAsync(
+            "https://github.com/owner/repo/pull/18", prepared.SlotId, prepared.Generation
+        );
+        WorkspaceSession newOwner = await fixture.OwnedSessionAsync();
+        File.WriteAllText(Path.Combine(second.WorkspacePath, ".gitignore"), "node_modules/\n");
+        File.WriteAllText(Path.Combine(second.WorkspacePath, "package.json"), "{\"name\":\"fixture\",\"version\":\"1.0.0\"}");
+        File.WriteAllText(Path.Combine(second.WorkspacePath, "package-lock.json"), "{\"lockfileVersion\":3}");
+
+        System.Diagnostics.Stopwatch wall = System.Diagnostics.Stopwatch.StartNew();
+        WarmArtifactTransferReceipt receipt = await fixture.TransferNpmAsync(
+            oldOwner.OperationId, newOwner.OperationId
+        );
+        wall.Stop();
+
+        Assert.Equal(2, receipt.FileCount);
+        Assert.Equal(binary.Length + "module.exports = 42".Length, receipt.CopiedBytes);
+        Assert.Equal("node_modules", receipt.ArtifactRelativePath);
+        Assert.True(receipt.Elapsed >= TimeSpan.Zero);
+        Assert.True(wall.Elapsed >= receipt.Elapsed);
+        Assert.Equal("module.exports = 42", File.ReadAllText(
+            Path.Combine(second.WorkspacePath, "node_modules", "fixture-package", "index.js")
+        ));
+        Assert.Equal(binary, File.ReadAllBytes(
+            Path.Combine(second.WorkspacePath, "node_modules", "fixture-package", "cache.bin")
+        ));
+        Assert.Equal("old PR must survive", File.ReadAllText(
+            Path.Combine(parked, "notes.local")
+        ));
+        Assert.Equal("module.exports = 42", File.ReadAllText(
+            Path.Combine(parked, "node_modules", "fixture-package", "index.js")
+        ));
+        Assert.Equal(WorkspaceSessionState.Released,
+            (await fixture.SessionAsync(oldOwner.OperationId))!.State);
+        Assert.Equal(WorkspaceSessionState.Active,
+            (await fixture.SessionAsync(newOwner.OperationId))!.State);
+
+        // The cache is immutable from the old PR's perspective and never
+        // overwrites a previously imported destination on repeated actions.
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.TransferNpmAsync(oldOwner.OperationId, newOwner.OperationId)
+        );
+        Assert.Equal(binary, File.ReadAllBytes(
+            Path.Combine(second.WorkspacePath, "node_modules", "fixture-package", "cache.bin")
+        ));
+    }
+
+    [Fact]
+    [Trait("Category", "SlowE2E")]
+    public async Task WarmNpm_BenchmarkColdCheckoutVsVerifiedArtifactCopy()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        System.Diagnostics.Stopwatch cold = System.Diagnostics.Stopwatch.StartNew();
+        OpenPullRequestResult first = await fixture.OpenAsync(PullRequestUrl);
+        cold.Stop();
+        WorkspaceSession original = await fixture.OwnedSessionAsync();
+        File.WriteAllText(Path.Combine(first.WorkspacePath, ".gitignore"), "node_modules/\n");
+        File.WriteAllText(Path.Combine(first.WorkspacePath, "package.json"), "{\"name\":\"fixture\"}");
+        File.WriteAllText(Path.Combine(first.WorkspacePath, "package-lock.json"), "{\"lockfileVersion\":3}");
+        string packages = Path.Combine(first.WorkspacePath, "node_modules", "reference");
+        Directory.CreateDirectory(packages);
+        for (int n = 0; n < 1024; n++)
+        {
+            File.WriteAllBytes(Path.Combine(packages, n.ToString("D4") + ".bin"),
+                Enumerable.Repeat((byte)(n % 251), 2048).ToArray());
+        }
+
+        _ = await fixture.ParkAsync(original.OperationId);
+        WorkspaceSlotReleasePreparation released = await fixture.PrepareReleaseAsync(
+            original.OperationId
+        );
+        _ = await fixture.FinalizeReleaseAsync(released.PreparationId);
+        await fixture.CreatePullRequestAsync(18);
+        System.Diagnostics.Stopwatch nextCheckout = System.Diagnostics.Stopwatch.StartNew();
+        OpenPullRequestResult second = await fixture.OpenInReadySlotAsync(
+            "https://github.com/owner/repo/pull/18",
+            released.SlotId, released.Generation
+        );
+        nextCheckout.Stop();
+        WorkspaceSession target = await fixture.OwnedSessionAsync();
+        File.WriteAllText(Path.Combine(second.WorkspacePath, ".gitignore"), "node_modules/\n");
+        File.WriteAllText(Path.Combine(second.WorkspacePath, "package.json"), "{\"name\":\"fixture\"}");
+        File.WriteAllText(Path.Combine(second.WorkspacePath, "package-lock.json"), "{\"lockfileVersion\":3}");
+        WarmArtifactTransferReceipt receipt = await fixture.TransferNpmAsync(
+            original.OperationId, target.OperationId
+        );
+
+        Console.WriteLine(
+            "Cold PR17 initial checkout: {0:F1} ms; PR18 empty-slot checkout: {1:F1} ms; "
+                + "explicit npm artifact copy: {2:F1} ms for {3} files / {4} bytes. "
+                + "PR18 checkout+copy: {5:F1} ms (excludes dependency installation).",
+            cold.Elapsed.TotalMilliseconds,
+            nextCheckout.Elapsed.TotalMilliseconds,
+            receipt.Elapsed.TotalMilliseconds,
+            receipt.FileCount,
+            receipt.CopiedBytes,
+            nextCheckout.Elapsed.TotalMilliseconds + receipt.Elapsed.TotalMilliseconds
+        );
+
+        Assert.Equal(1024, receipt.FileCount);
+        Assert.Equal(1024L * 2048, receipt.CopiedBytes);
+        Assert.True(File.Exists(Path.Combine(
+            second.WorkspacePath, "node_modules", "reference", "0000.bin"
+        )));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task WarmNpm_MismatchedManifestAndForeignDestinationAreNeverOverwritten()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        OpenPullRequestResult first = await fixture.OpenAsync(PullRequestUrl);
+        WorkspaceSession oldOwner = await fixture.OwnedSessionAsync();
+        File.WriteAllText(Path.Combine(first.WorkspacePath, ".gitignore"), "node_modules/\n");
+        File.WriteAllText(Path.Combine(first.WorkspacePath, "package.json"), "{\"name\":\"fixture\"}");
+        File.WriteAllText(Path.Combine(first.WorkspacePath, "package-lock.json"), "{\"lockfileVersion\":3}");
+        Directory.CreateDirectory(Path.Combine(first.WorkspacePath, "node_modules"));
+        File.WriteAllText(Path.Combine(first.WorkspacePath, "node_modules", "package.js"), "unchanged");
+
+        string parked = await fixture.ParkAsync(oldOwner.OperationId);
+        WorkspaceSlotReleasePreparation prepared = await fixture.PrepareReleaseAsync(oldOwner.OperationId);
+        _ = await fixture.FinalizeReleaseAsync(prepared.PreparationId);
+        await fixture.CreatePullRequestAsync(18);
+        OpenPullRequestResult second = await fixture.OpenInReadySlotAsync(
+            "https://github.com/owner/repo/pull/18", prepared.SlotId, prepared.Generation
+        );
+        WorkspaceSession newOwner = await fixture.OwnedSessionAsync();
+        File.WriteAllText(Path.Combine(second.WorkspacePath, ".gitignore"), "node_modules/\n");
+        File.WriteAllText(Path.Combine(second.WorkspacePath, "package.json"), "{\"name\":\"fixture\"}");
+        string targetLock = Path.Combine(second.WorkspacePath, "package-lock.json");
+        File.WriteAllText(targetLock, "{\"lockfileVersion\":2}");
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.TransferNpmAsync(oldOwner.OperationId, newOwner.OperationId)
+        );
+        Assert.False(Directory.Exists(Path.Combine(second.WorkspacePath, "node_modules")));
+        Assert.Equal("{\"lockfileVersion\":2}", File.ReadAllText(targetLock));
+
+        File.WriteAllText(targetLock, "{\"lockfileVersion\":3}");
+        string targetCache = Path.Combine(second.WorkspacePath, "node_modules");
+        Directory.CreateDirectory(targetCache);
+        File.WriteAllText(Path.Combine(targetCache, "foreign.txt"), "never overwrite");
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.TransferNpmAsync(oldOwner.OperationId, newOwner.OperationId)
+        );
+        Assert.Equal("never overwrite", File.ReadAllText(
+            Path.Combine(targetCache, "foreign.txt")
+        ));
+        Assert.Equal("unchanged", File.ReadAllText(
+            Path.Combine(parked, "node_modules", "package.js")
+        ));
+        Assert.Equal(WorkspaceSessionState.Active,
+            (await fixture.SessionAsync(newOwner.OperationId))!.State);
+        Assert.Empty(await new SqliteWorkspaceSlotRegistry(fixture.DatabasePath)
+            .AuditAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
     public async Task ReadySlot_UserFacingHandlerRejectsInvalidRepoAndStaleSelectionWithoutCheckout()
     {
         using Fixture fixture = await Fixture.CreateAsync();
@@ -3595,6 +3772,21 @@ public sealed class GitWorkspaceE2ETests
                 Editor
             );
             return handler.HandleAsync(url, slotId, generation, CancellationToken.None);
+        }
+
+        public Task<WarmArtifactTransferReceipt> TransferNpmAsync(
+            Guid sourceId,
+            Guid targetId
+        )
+        {
+            SqliteWorkspaceSessionJournal journal = new(DatabasePath);
+            TransferVerifiedWarmArtifactsService service = new(
+                journal,
+                new FileWorkspaceOperationLock(Path.Combine(_root, "state", "locks")),
+                new GitCliWorkspaceGit(),
+                new VerifiedNpmArtifactCopier()
+            );
+            return service.TransferAsync(sourceId, targetId, CancellationToken.None);
         }
 
         public Task<WorkspaceSession> ReconcileReadySlotAsync(Guid slotId)
