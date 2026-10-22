@@ -81,18 +81,19 @@ public sealed class NamedPipeRequestServer
         while (await reader.ReadAsync(next.AsMemory(), cancellationToken) != 0)
         {
             char character = next[0];
-            if (character == '\\n')
+            if (character == '\n')
             {
                 // StreamWriter on Windows uses CRLF, but no embedded CR or
                 // second command is allowed. Require the newline terminator.
-                if (message.Length > 0 && message[^1] == '\\r')
+                if (message.Length > 0 && message[^1] == '\r')
                 {
                     message.Length--;
                 }
 
-                return message.Length is > 0 and <= NamedPipeRequestClient.MaxMessageLength
-                    && !message.ToString().Contains('\\r')
-                    ? message.ToString()
+                string frame = message.ToString();
+                return frame.Length is > 0 and <= NamedPipeRequestClient.MaxMessageLength
+                    && !frame.Contains('\r')
+                    ? frame
                     : null;
             }
 
