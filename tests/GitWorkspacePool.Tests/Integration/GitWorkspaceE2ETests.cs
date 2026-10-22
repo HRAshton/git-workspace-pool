@@ -711,13 +711,20 @@ public sealed class GitWorkspaceE2ETests
                 .FindSlotAsync(preparation.SlotId, CancellationToken.None)
         );
         Assert.Equal(WorkspaceSlotState.Ready, slot.State);
+        Assert.Contains(
+            await new SqliteWorkspaceSlotRegistry(fixture.DatabasePath)
+                .ListReadyAsync(CancellationToken.None),
+            candidate => candidate.SlotId == slot.SlotId
+                && candidate.Generation == slot.Generation
+        );
 
-        OpenPullRequestResult second = await fixture.OpenInReadySlotAsync(
+        OpenPullRequestResult second = await fixture.OpenInReadySlotWithHandlerAsync(
             "https://github.com/owner/repo/pull/18",
             slot.SlotId,
             slot.Generation
         );
         Assert.Equal(first.WorkspacePath, second.WorkspacePath);
+        Assert.Contains(second.WorkspacePath, fixture.Editor.OpenedPaths);
         Assert.False(second.Reused);
         Assert.True(await fixture.IsRegisteredWorktreeAsync(second.WorkspacePath));
         Assert.Equal("feature for pr 18", File.ReadAllText(
@@ -745,6 +752,7 @@ public sealed class GitWorkspaceE2ETests
         );
         Assert.Equal(WorkspaceSlotState.Protected, reused.State);
         Assert.Equal(slot.Generation + 1, reused.Generation);
+        Assert.Empty(await registry.ListReadyAsync(CancellationToken.None));
         Assert.Empty(await registry.AuditAsync(CancellationToken.None));
 
         OpenPullRequestResult reopened = await fixture.OpenWithFreshHandlerAsync(
@@ -755,6 +763,64 @@ public sealed class GitWorkspaceE2ETests
         Assert.Equal("secret user data", File.ReadAllText(
             Path.Combine(parked, "private.local")
         ));
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task ReadySlot_UserFacingHandlerRejectsInvalidRepoAndStaleSelectionWithoutCheckout()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        _ = await fixture.OpenAsync(PullRequestUrl);
+        WorkspaceSession owner = await fixture.OwnedSessionAsync();
+        string parked = await fixture.ParkAsync(owner.OperationId);
+        WorkspaceSlotReleasePreparation prepared = await fixture.PrepareReleaseAsync(owner.OperationId);
+        _ = await fixture.FinalizeReleaseAsync(prepared.PreparationId);
+        WorkspaceSlot slot = Assert.IsType<WorkspaceSlot>(
+            await new SqliteWorkspaceSlotRegistry(fixture.DatabasePath)
+                .FindSlotAsync(prepared.SlotId, CancellationToken.None)
+        );
+        int openedEditors = fixture.Editor.OpenedPaths.Count;
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => fixture.OpenInReadySlotWithHandlerAsync(
+                "http://github.com/owner/repo/pull/18",
+                slot.SlotId,
+                slot.Generation
+            )
+        );
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.OpenInReadySlotWithHandlerAsync(
+                "https://github.com/another/repo/pull/18",
+                slot.SlotId,
+                slot.Generation
+            )
+        );
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.OpenInReadySlotWithHandlerAsync(
+                "https://github.com/owner/repo/pull/17",
+                slot.SlotId,
+                slot.Generation
+            )
+        );
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.OpenInReadySlotWithHandlerAsync(
+                "https://github.com/owner/repo/pull/18",
+                slot.SlotId,
+                slot.Generation + 1
+            )
+        );
+
+        Assert.Equal(openedEditors, fixture.Editor.OpenedPaths.Count);
+        Assert.Equal(WorkspaceSlotState.Ready,
+            (await new SqliteWorkspaceSlotRegistry(fixture.DatabasePath)
+                .FindSlotAsync(slot.SlotId, CancellationToken.None))!.State);
+        Assert.True(await fixture.IsRegisteredWorktreeAsync(parked));
+        Assert.False(Directory.Exists(slot.WorkspacePath));
+        Assert.Contains(
+            await new SqliteWorkspaceSlotRegistry(fixture.DatabasePath)
+                .ListReadyAsync(CancellationToken.None),
+            candidate => candidate.SlotId == slot.SlotId
+        );
     }
 
     [Fact]
@@ -3332,6 +3398,32 @@ public sealed class GitWorkspaceE2ETests
                 generation,
                 CancellationToken.None
             );
+        }
+
+        public Task<OpenPullRequestResult> OpenInReadySlotWithHandlerAsync(
+            string url,
+            Guid slotId,
+            long generation
+        )
+        {
+            SqliteWorkspaceSessionJournal journal = new(DatabasePath);
+            SqliteWorkspaceSlotRegistry slots = new(DatabasePath);
+            AcquireExplicitReadySlotService acquisition = new(
+                slots,
+                slots,
+                new WorkspaceReadySlotSafety(),
+                new GitCliWorkspaceGit(),
+                new WorkspaceDirectories(),
+                journal,
+                new FileWorkspaceOperationLock(Path.Combine(_root, "state", "locks"))
+            );
+            OpenPullRequestInReadySlotHandler handler = new(
+                new Catalog(new RepositoryRegistration("owner/repo", _source, _workspaces)),
+                new LocalFixtureOriginVerifier(),
+                acquisition,
+                Editor
+            );
+            return handler.HandleAsync(url, slotId, generation, CancellationToken.None);
         }
 
         public Task<WorkspaceSession> ReconcileReadySlotAsync(Guid slotId)

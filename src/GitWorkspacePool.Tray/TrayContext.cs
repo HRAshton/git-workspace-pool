@@ -2,6 +2,7 @@ using System.Drawing;
 using GitWorkspacePool.Core.Application;
 using GitWorkspacePool.Core.Application.WarmPool;
 using GitWorkspacePool.Core.Domain;
+using GitWorkspacePool.Core.Domain.WarmPool;
 using GitWorkspacePool.Core.Protocol;
 using GitWorkspacePool.Infrastructure;
 using GitWorkspacePool.Infrastructure.Snapshots;
@@ -24,6 +25,12 @@ internal sealed class TrayContext : ApplicationContext
     private readonly ParkWorkspaceSessionService _parking;
     private readonly IWorkspaceParkingJournal _parkingJournal;
     private readonly IWorkspaceSlotReservationInventory _pendingSlotInventory;
+    private readonly IWorkspaceReadySlotCatalog _readyCatalog;
+    private readonly IWorkspaceSlotRegistry _slotRegistry;
+    private readonly IWorkspaceSlotReleasePreparationJournal _releasePreparations;
+    private readonly PrepareWorkspaceSlotReleaseService _prepareRelease;
+    private readonly FinalizeWorkspaceSlotReleaseService _finalizeRelease;
+    private readonly OpenPullRequestInReadySlotHandler _openInReadySlot;
 
     public TrayContext(string? initialRequest)
     {
@@ -84,6 +91,18 @@ internal sealed class TrayContext : ApplicationContext
         );
         SqliteWorkspaceSlotRegistry slots = new(Path.Combine(stateRoot, "sessions.db"));
         _pendingSlotInventory = slots;
+        _readyCatalog = slots;
+        _slotRegistry = slots;
+        _releasePreparations = slots;
+        AssessWorkspaceReleaseService releaseAssessment = new(
+            journal, slots, locks, new GitWorkspaceParkingOperations(git)
+        );
+        _prepareRelease = new PrepareWorkspaceSlotReleaseService(
+            journal, locks, releaseAssessment, slots
+        );
+        _finalizeRelease = new FinalizeWorkspaceSlotReleaseService(
+            journal, locks, releaseAssessment, slots
+        );
         _recoveryInspector = new WorkspaceRecoveryInspector(
             Path.Combine(stateRoot, "snapshots"),
             Path.Combine(stateRoot, "recovered"),
@@ -97,11 +116,20 @@ internal sealed class TrayContext : ApplicationContext
             journal,
             locks
         );
+        SettingsStore repositories = new();
+        GitHubOriginVerifier originVerifier = new(git);
+        VsCodeLauncher editor = new();
         _open = new OpenPullRequestHandler(
-            new SettingsStore(),
-            new GitHubOriginVerifier(git),
-            acquisition,
-            new VsCodeLauncher()
+            repositories, originVerifier, acquisition, editor
+        );
+        _openInReadySlot = new OpenPullRequestInReadySlotHandler(
+            repositories,
+            originVerifier,
+            new AcquireExplicitReadySlotService(
+                slots, slots, new WorkspaceReadySlotSafety(), git,
+                new WorkspaceDirectories(), journal, locks
+            ),
+            editor
         );
 
         ToolStripMenuItem snapshotsMenu = new("Snapshot active PR...");
@@ -127,6 +155,21 @@ internal sealed class TrayContext : ApplicationContext
         ToolStripMenuItem unparkMenu = new("Unpark PR worktree...");
         unparkMenu.DropDownOpening += async (_, _) => await PopulateParkingAsync(unparkMenu, true);
         menu.Items.Insert(6, unparkMenu);
+
+        ToolStripMenuItem releaseMenu = new("Release parked PR slot (keep user files)...");
+        releaseMenu.DropDownOpening += async (_, _) =>
+            await PopulateReleaseCandidatesAsync(releaseMenu);
+        menu.Items.Insert(7, releaseMenu);
+
+        ToolStripMenuItem readyMenu = new("Open PR in a released slot...");
+        readyMenu.DropDownOpening += async (_, _) =>
+            await PopulateReadySlotsAsync(readyMenu);
+        menu.Items.Insert(8, readyMenu);
+
+        ToolStripMenuItem cancelReleaseMenu = new("Cancel pending slot release...");
+        cancelReleaseMenu.DropDownOpening += async (_, _) =>
+            await PopulatePendingReleasesAsync(cancelReleaseMenu);
+        menu.Items.Insert(9, cancelReleaseMenu);
 
         _ = ListenAsync(_shutdown.Token);
         _ = AnnounceInterruptedAllocationsAsync();
@@ -494,6 +537,384 @@ internal sealed class TrayContext : ApplicationContext
         catch (Exception exception)
         {
             Notify("Worktree relocation was not verified", exception.Message);
+        }
+    }
+
+    private async Task PopulateReleaseCandidatesAsync(ToolStripMenuItem menu)
+    {
+        menu.DropDownItems.Clear();
+        try
+        {
+            IReadOnlyList<WorkspaceSession> parked =
+                await _parkingJournal.ListUnparkCandidatesAsync(_shutdown.Token);
+            WorkspaceSession[] eligible = parked.Where(
+                session => session.State == WorkspaceSessionState.Parked
+            ).ToArray();
+            if (eligible.Length == 0)
+            {
+                menu.DropDownItems.Add(new ToolStripMenuItem(
+                    "Park a PR worktree first; nothing is releasable."
+                ) { Enabled = false });
+                return;
+            }
+
+            foreach (WorkspaceSession session in eligible)
+            {
+                ToolStripMenuItem item = new(
+                    session.RepositoryKey + " PR #" + session.PullRequestNumber
+                )
+                {
+                    ToolTipText = session.ParkingPath ?? session.WorkspacePath,
+                };
+                Guid id = session.OperationId;
+                item.Click += (_, _) => _ = ReleaseParkedSlotFromMenuAsync(id);
+                menu.DropDownItems.Add(item);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Application is exiting.
+        }
+        catch (Exception exception)
+        {
+            Notify("Cannot list parked PRs", exception.Message);
+        }
+    }
+
+    private async Task ReleaseParkedSlotFromMenuAsync(Guid operationId)
+    {
+        WorkspaceSession? session;
+        try
+        {
+            session = await _sessions.FindAsync(operationId, _shutdown.Token);
+            if (session is null || session.State != WorkspaceSessionState.Parked)
+            {
+                throw new InvalidOperationException(
+                    "The selected PR is no longer parked. Nothing was released."
+                );
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        catch (Exception exception)
+        {
+            Notify("Release unavailable", exception.Message);
+            return;
+        }
+
+        DialogResult confirmed = MessageBox.Show(
+            "Release the original slot of " + session.RepositoryKey
+                + " PR #" + session.PullRequestNumber + "?\n\n"
+                + "Its entire parked Git worktree, edits, staged changes and snapshots "
+                + "remain at:\n" + session.ParkingPath + "\n\n"
+                + "Another PR may then use its FORMER workspace path. "
+                + "You cannot unpark this PR back into that slot. "
+                + "You must explicitly restore it into a separate location if needed.\n\n"
+                + "Continue with this irreversible ownership handoff?",
+            "Release parked PR slot",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Warning,
+            MessageBoxDefaultButton.Button2
+        );
+        if (confirmed != DialogResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            WorkspaceSlotReleasePreparation prepared =
+                await _prepareRelease.PrepareAsync(operationId, _shutdown.Token);
+            WorkspaceSlotReleasePreparation finished =
+                await _finalizeRelease.FinalizeAsync(
+                    prepared.PreparationId, _shutdown.Token
+                );
+            Notify(
+                "Parked PR slot released",
+                "Slot " + finished.SlotId.ToString("N")[..8]
+                    + " is Ready. Parked PR files and snapshots remain preserved."
+            );
+        }
+        catch (OperationCanceledException)
+        {
+            // The prepared ownership intent remains durable for explicit inspection.
+        }
+        catch (Exception exception)
+        {
+            Notify(
+                "Slot release not completed",
+                exception.Message + " Check Recovery diagnostics; if a preparation "
+                    + "remains, cancel it explicitly before unparking."
+            );
+        }
+    }
+
+    private async Task PopulateReadySlotsAsync(ToolStripMenuItem menu)
+    {
+        menu.DropDownItems.Clear();
+        try
+        {
+            AppSettings settings = SettingsStore.Read();
+            IReadOnlyList<WorkspaceSlot> slots =
+                await _readyCatalog.ListReadyAsync(_shutdown.Token);
+            StringComparison comparison = OperatingSystem.IsWindows()
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal;
+            WorkspaceSlot[] trusted = slots.Where(slot =>
+                settings.Repositories.Any(repository =>
+                    slot.RepositoryKey.Equals(
+                        "github:" + repository.RepositoryKey,
+                        StringComparison.OrdinalIgnoreCase
+                    )
+                    && Path.GetFullPath(repository.LocalPath).Equals(
+                        Path.GetFullPath(slot.SourcePath), comparison
+                    )
+                    && Path.GetDirectoryName(Path.GetFullPath(slot.WorkspacePath))!
+                        .Equals(Path.GetFullPath(repository.WorkspaceRoot), comparison)
+                )
+            ).ToArray();
+
+            if (trusted.Length == 0)
+            {
+                menu.DropDownItems.Add(new ToolStripMenuItem(
+                    "No released slots for configured repositories."
+                ) { Enabled = false });
+                return;
+            }
+
+            foreach (WorkspaceSlot slot in trusted)
+            {
+                ToolStripMenuItem item = new(
+                    slot.RepositoryKey + " — " + Path.GetFileName(slot.WorkspacePath)
+                )
+                {
+                    ToolTipText = "Generation " + slot.Generation + " — "
+                        + slot.WorkspacePath,
+                };
+                Guid slotId = slot.SlotId;
+                long generation = slot.Generation;
+                item.Click += (_, _) => _ = OpenInSelectedSlotAsync(
+                    slotId, generation
+                );
+                menu.DropDownItems.Add(item);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Application is exiting.
+        }
+        catch (Exception exception)
+        {
+            Notify("Cannot list released slots", exception.Message);
+        }
+    }
+
+    private async Task OpenInSelectedSlotAsync(Guid slotId, long generation)
+    {
+        string? url = AskForPullRequestUrl();
+        if (url is null)
+        {
+            return;
+        }
+
+        if (!PullRequestReference.TryParse(url, out PullRequestReference? request)
+            || request is null)
+        {
+            Notify("Invalid pull request URL", "Enter a supported GitHub HTTPS PR URL.");
+            return;
+        }
+
+        WorkspaceSlot? slot;
+        try
+        {
+            // The selection is advisory; the service verifies state, generation,
+            // source, Git registration and path safety again under the OS lock.
+            slot = await _slotRegistry.FindSlotAsync(
+                slotId, _shutdown.Token
+            );
+            if (slot is null || slot.State != WorkspaceSlotState.Ready
+                || slot.Generation != generation
+                || !slot.RepositoryKey.Equals(
+                    request.Provider + ":" + request.RepositoryKey,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    "The selected slot is stale or belongs to a different repository."
+                );
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        catch (Exception exception)
+        {
+            Notify("Cannot use selected slot", exception.Message);
+            return;
+        }
+
+        DialogResult confirmed = MessageBox.Show(
+            "Open " + request.RepositoryKey + " PR #" + request.Number
+                + " in this explicitly released slot?\n\n"
+                + slot.WorkspacePath + "\n\n"
+                + "The previous PR remains parked elsewhere. This action reserves "
+                + "a new exclusive lease and creates a fresh Git checkout. "
+                + "It does not reuse build artifacts or delete files. "
+                + "If interrupted, manual recovery may be required.",
+            "Use released PR slot",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Question,
+            MessageBoxDefaultButton.Button2
+        );
+        if (confirmed != DialogResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            OpenPullRequestResult result = await _openInReadySlot.HandleAsync(
+                url, slotId, generation, _shutdown.Token
+            );
+            Notify("PR opened in released slot", result.WorkspacePath);
+        }
+        catch (OperationCanceledException)
+        {
+            // An interrupted reservation stays durable, never automatically freed.
+        }
+        catch (Exception exception)
+        {
+            Notify(
+                "PR slot allocation not completed",
+                exception.Message + " Recovery diagnostics will preserve any "
+                    + "unfinished allocation; no automatic cleanup is performed."
+            );
+        }
+    }
+
+    private static string? AskForPullRequestUrl()
+    {
+        using Form dialog = new()
+        {
+            Text = "Open PR in released slot",
+            Width = 580,
+            Height = 185,
+            StartPosition = FormStartPosition.CenterScreen,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false,
+            MinimizeBox = false,
+        };
+        Label prompt = new()
+        {
+            Text = "GitHub pull request URL (HTTPS):",
+            Left = 16,
+            Top = 16,
+            Width = 520,
+            Height = 22,
+        };
+        TextBox input = new()
+        {
+            Left = 16,
+            Top = 42,
+            Width = 530,
+        };
+        Button open = new()
+        {
+            Text = "Continue",
+            Left = 340,
+            Top = 86,
+            Width = 100,
+            DialogResult = DialogResult.OK,
+        };
+        Button cancel = new()
+        {
+            Text = "Cancel",
+            Left = 450,
+            Top = 86,
+            Width = 95,
+            DialogResult = DialogResult.Cancel,
+        };
+        dialog.Controls.AddRange([prompt, input, open, cancel]);
+        dialog.AcceptButton = open;
+        dialog.CancelButton = cancel;
+        return dialog.ShowDialog() == DialogResult.OK ? input.Text.Trim() : null;
+    }
+
+    private async Task PopulatePendingReleasesAsync(ToolStripMenuItem menu)
+    {
+        menu.DropDownItems.Clear();
+        try
+        {
+            IReadOnlyList<WorkspaceSlotReleasePreparation> pending =
+                await _releasePreparations.ListPreparedAsync(_shutdown.Token);
+            if (pending.Count == 0)
+            {
+                menu.DropDownItems.Add(new ToolStripMenuItem(
+                    "No pending release preparations."
+                ) { Enabled = false });
+                return;
+            }
+
+            foreach (WorkspaceSlotReleasePreparation entry in pending)
+            {
+                WorkspaceSession? session = await _sessions.FindAsync(
+                    entry.SessionId, _shutdown.Token
+                );
+                ToolStripMenuItem item = new(
+                    (session is null
+                        ? "Unknown PR"
+                        : session.RepositoryKey + " PR #" + session.PullRequestNumber)
+                    + " — slot " + entry.SlotId.ToString("N")[..8]
+                );
+                Guid preparationId = entry.PreparationId;
+                item.Click += (_, _) => _ = CancelReleaseFromMenuAsync(preparationId);
+                menu.DropDownItems.Add(item);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Application is exiting.
+        }
+        catch (Exception exception)
+        {
+            Notify("Cannot list pending releases", exception.Message);
+        }
+    }
+
+    private async Task CancelReleaseFromMenuAsync(Guid preparationId)
+    {
+        if (MessageBox.Show(
+            "Cancel this pending slot release? The original slot remains "
+                + "Protected, and the PR stays parked. No files are moved.",
+            "Cancel pending release",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Question,
+            MessageBoxDefaultButton.Button2
+        ) != DialogResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            if (!await _prepareRelease.CancelAsync(preparationId, _shutdown.Token))
+            {
+                throw new InvalidOperationException(
+                    "The preparation was already cancelled or committed."
+                );
+            }
+
+            Notify("Release preparation cancelled", "The parked PR retains its original slot.");
+        }
+        catch (OperationCanceledException)
+        {
+            // Application is exiting.
+        }
+        catch (Exception exception)
+        {
+            Notify("Could not cancel slot release", exception.Message);
         }
     }
 

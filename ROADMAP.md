@@ -57,7 +57,8 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [x] Add a locked, non-destructive restart recovery service for Reserved/Preparing slots after Git checkout but before activation: require persisted generation/owner, pinned HEAD, registration, safe ancestry and clean Git status; atomically activate on proof only. Real offline Git E2E covers clean, dirty and missing targets.
 - [x] Reject ordinary PR reopen and legacy ActivateAsync for a Reserved slot: only a verified generation-CAS activation may transfer the owner from Preparing to Active. Fast E2E proves no files or leases are silently changed after interruption.
 - [x] Inventory interrupted Reserved/Preparing allocations read-only in recovery diagnostics and warn in the tray at startup; show slot/generation/owner and require explicit recovery. No auto repair or deletion.
-- [ ] Wire user-facing consent and candidate discovery, perform process-kill allocator fault tests and true artifact-preserving warm-reuse benchmarking before enabling automatic recycling.
+- [x] Expose explicit parked-PR release, cancellation of pending release, and Ready-slot candidate selection in the Windows tray. Recheck trusted GitHub origin and slot generation before the fresh checkout; require separate user confirmations. Real-Git E2E covers selected-slot opening, retained parked data, refused PRs and stale selection.
+- [ ] Prove process-kill allocator transitions and true artifact-preserving warm-reuse benchmarks before considering automatic recycling.
 - [x] Implement explicit non-destructive snapshot export for staged/unstaged, untracked, ignored and binary files, with independent staged blobs and a Git index.
 - [x] Restore a journalled snapshot into a separate Git worktree on the saved commit; verify index, working tree files and exact Git status.
 - [x] Reject corrupted payloads and manifest path traversal before allocating a recovery worktree.

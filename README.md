@@ -39,6 +39,17 @@ The tray menu provides **Suspend active PR (keep worktree)...**. This only chang
 
 The tray offers **Park PR worktree (move, no deletion)...** and **Unpark PR worktree...**. Parking uses `git worktree move` to relocate the complete linked worktree to `<workspace-root>/.gwp-parked/<session-id>`, preserving staged, unstaged, untracked and ignored files. A durable SQLite intent precedes every move and interrupted moves are retried only after checking source/destination registration. Unparking rejects an occupied original path. This is not automatic release, eviction or warm-pool reuse.
 
+## Explicit release and reuse of an empty workspace slot (opt-in)
+
+The tray supports a **manual**, non-destructive cross-PR slot handoff:
+
+1. **Park PR worktree (move, no deletion)...** to move the entire Git linked worktree into private parking. All staged, unstaged, ignored and untracked files stay in the parked directory.
+2. **Release parked PR slot (keep user files)...** to relinquish the PR's *former* workspace path. Read the confirmation: once released, that PR cannot unpark back into the original slot. Its parked worktree and published snapshots remain preserved. If the release is interrupted, inspect recovery diagnostics; **Cancel pending slot release...** can cancel an uncommitted preparation.
+3. **Open PR in a released slot...** and select a listed Ready slot for a configured repository. Enter the new GitHub HTTPS pull-request URL and confirm. The app rechecks trusted Git origin, slot identity and generation, refuses occupied/unregistered/unsafe destinations, and creates a fresh Git worktree with a new exclusive PR lease. The editor opens only after successful checkout.
+4. If allocation is interrupted, use **Recovery diagnostics...**. Reserved worktrees are preserved for explicit inspection and verified recovery; the normal PR opener never silently reassigns them.
+
+This reuses the **former directory/slot**, not cached build outputs or `node_modules`. It does not automatically choose slots, reclaim disk, delete user data or predict PRs. The released PR remains parked under its original session identity. An actual speed benefit and artifact-preserving warm reuse are still separate milestones.
+
 ## Experimental workspace snapshots
 
 The tray menu provides **Snapshot active PR...** for an explicit, non-destructive snapshot. Captures include the Git index, staged blobs independently from unstaged working files, tracked changes, untracked and ignored files (including binary data), deletions and a SHA-256 manifest. Snapshots are stored under `%LOCALAPPDATA%\\GitWorkspacePool\\snapshots`. Only explicitly selected active sessions are eligible.
