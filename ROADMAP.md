@@ -125,7 +125,8 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 
 ## P3 — Providers and distribution
 
-- [ ] GitLab, Bitbucket, Azure DevOps PR URL adapters.
+- [x] Generic configured HTTPS repository + branch opening, including Bitbucket DC 9, using ordinary Git and existing credential helpers; no PR or provider API required. See [branch workspaces](docs/GIT_BRANCH_WORKSPACES.md).
+- [ ] GitLab, Bitbucket, Azure DevOps provider-specific PR URL adapters.
 - [ ] Provider-specific fetch/head resolution; support fork PRs without assuming `origin`.
 - [x] Add an unsigned, self-contained Windows x64 preview ZIP with versioned per-user installation, HKCU protocol registration, conservative unregistration, SHA-256 checksum, an included userscript, and a no-UI launch / idempotent-upgrade smoke in PR CI. Existing settings, snapshots, worktrees, and prior versions remain untouched.
 - [x] Ship an RC2 verified backup-first helper for closed SQLite journal/sidecars and settings: refuse overlapping/occupied destinations and reparse points, record SHA-256 evidence, and exercise an isolated older-profile fixture in Windows packaging smoke. **Manual full-profile migration/rollback remains outstanding.**

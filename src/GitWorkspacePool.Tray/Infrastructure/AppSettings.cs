@@ -7,6 +7,8 @@ internal sealed class AppSettings
 {
     public List<RepositoryRegistration> Repositories { get; set; } = [];
 
+    public List<GitRepositoryRegistration> GitRepositories { get; set; } = [];
+
     public SnapshotExportLimits SnapshotLimits { get; set; } = new();
 
     public string? EditorExecutable { get; set; }

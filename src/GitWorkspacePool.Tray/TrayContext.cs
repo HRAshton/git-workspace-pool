@@ -17,6 +17,8 @@ internal sealed class TrayContext : ApplicationContext
     private readonly Control _dispatcher;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly OpenPullRequestHandler _open;
+    private readonly OpenGitBranchHandler _openBranch;
+    private readonly IGitBranchSessionStore _branchSessions;
     private readonly IWorkspaceSnapshotSessionStore _sessions;
     private readonly IWorkspaceRecoveryJournal _recoverySessions;
     private readonly TransferVerifiedWarmArtifactsService _warmTransfer;
@@ -149,6 +151,17 @@ internal sealed class TrayContext : ApplicationContext
             ),
             editor
         );
+
+        _branchSessions = new SqliteGitBranchSessionStore(Path.Combine(stateRoot, "sessions.db"));
+        _openBranch = new OpenGitBranchHandler(
+            repositories, git, git, git, _branchSessions, locks, new WorkspaceDirectories(),
+            new WorkspaceReadySlotSafety(), new VerifiedReadySlotCheckout(), editor
+        );
+        menu.Items.Insert(1, new ToolStripMenuItem("Open Git branch...", null,
+            async (_, _) => await OpenGitBranchFromTrayAsync()));
+        ToolStripMenuItem branchRecovery = new("Git branch recovery (read-only)...");
+        branchRecovery.DropDownOpening += async (_, _) => await PopulateBranchRecoveryAsync(branchRecovery);
+        menu.Items.Insert(2, branchRecovery);
 
         ToolStripMenuItem snapshotsMenu = new("Snapshot active PR...");
         snapshotsMenu.DropDownOpening += async (_, _) => await PopulateSnapshotsAsync(snapshotsMenu);
@@ -1391,9 +1404,14 @@ internal sealed class TrayContext : ApplicationContext
 
     private async Task HandleRequestAsync(string raw)
     {
+        if (GitBranchProtocol.TryParse(raw, out GitBranchRequest? branch))
+        {
+            await OpenGitBranchAsync(branch);
+            return;
+        }
         if (!OpenRequestProtocol.TryExtract(raw, out string requestUrl))
         {
-            Notify("Rejected URL", "Only configured GitHub pull requests are accepted.");
+            Notify("Rejected URL", "Use a configured Git repo/branch v2 link or GitHub PR v1 link.");
             return;
         }
 
@@ -1416,6 +1434,73 @@ internal sealed class TrayContext : ApplicationContext
         {
             Notify("Could not open PR", exception.Message);
         }
+    }
+
+    private async Task OpenGitBranchAsync(GitBranchRequest request)
+    {
+        try
+        {
+            // SQLite inventory and filesystem preflight must not block the tray thread.
+            OpenPullRequestResult result = await Task.Run(
+                () => _openBranch.HandleAsync(request, _shutdown.Token), _shutdown.Token);
+            Notify(result.Reused ? "Reopened branch workspace" : "Created branch workspace", result.WorkspacePath);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception exception) { Notify("Could not open Git branch", exception.Message); }
+    }
+
+    private async Task OpenGitBranchFromTrayAsync()
+    {
+        try
+        {
+            using Form dialog = new()
+            {
+                Text = "Open Git branch", Width = 650, Height = 245,
+                StartPosition = FormStartPosition.CenterScreen, FormBorderStyle = FormBorderStyle.FixedDialog,
+                MaximizeBox = false, MinimizeBox = false,
+            };
+            ComboBox repository = new() { Left = 16, Top = 42, Width = 600, DropDownStyle = ComboBoxStyle.DropDownList };
+            repository.Items.AddRange(SettingsStore.Read().GitRepositories.Select(r => r.CloneUrl).Cast<object>().ToArray());
+            if (repository.Items.Count > 0) repository.SelectedIndex = 0;
+            TextBox branch = new() { Left = 16, Top = 106, Width = 600 };
+            Button open = new() { Text = "Open", Left = 400, Top = 150, Width = 100, DialogResult = DialogResult.OK };
+            Button cancel = new() { Text = "Cancel", Left = 510, Top = 150, Width = 100, DialogResult = DialogResult.Cancel };
+            dialog.Controls.AddRange([
+                new Label { Text = "Configured HTTPS Git clone URL:", Left = 16, Top = 16, Width = 600 }, repository,
+                new Label { Text = "Source branch (for example feature/my-task):", Left = 16, Top = 80, Width = 600 }, branch,
+                open, cancel,
+            ]);
+            dialog.AcceptButton = open; dialog.CancelButton = cancel;
+            if (dialog.ShowDialog() == DialogResult.OK && repository.SelectedItem is string cloneUrl)
+                await OpenGitBranchAsync(new GitBranchRequest(cloneUrl, branch.Text.Trim()));
+        }
+        catch (Exception exception)
+        {
+            Notify("Cannot open Git branch dialog", exception.Message);
+        }
+    }
+
+    private async Task PopulateBranchRecoveryAsync(ToolStripMenuItem menu)
+    {
+        menu.DropDownItems.Clear();
+        try
+        {
+            IReadOnlyList<GitBranchSession> sessions = await Task.Run(
+                () => _branchSessions.ListUnfinishedAsync(_shutdown.Token), _shutdown.Token);
+            foreach (GitBranchSession session in sessions.Take(100))
+            {
+                menu.DropDownItems.Add(new ToolStripMenuItem(
+                    session.State + ": " + session.Branch + " | " + session.WorkspacePath
+                    + " | commit " + (session.PinnedCommit ?? "not yet pinned")
+                ) { Enabled = false });
+            }
+            menu.DropDownItems.Add(new ToolStripMenuItem(sessions.Count == 0
+                ? "No unfinished branch workspaces."
+                : "Evidence retained. Reopen retries Preparing only; RecoveryRequired needs manual inspection.") { Enabled = false });
+            if (sessions.Count > 100) menu.DropDownItems.Add(new ToolStripMenuItem("Showing the first 100 records.") { Enabled = false });
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception exception) { Notify("Cannot inspect Git branches", exception.Message); }
     }
 
     private void Notify(string title, string description)

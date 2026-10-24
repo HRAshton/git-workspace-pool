@@ -4,7 +4,7 @@ using GitWorkspacePool.Core.Domain;
 
 namespace GitWorkspacePool.Tray.Infrastructure;
 
-internal sealed class SettingsStore : IRepositoryCatalog
+internal sealed class SettingsStore : IRepositoryCatalog, IGitBranchCatalog
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -92,6 +92,14 @@ internal sealed class SettingsStore : IRepositoryCatalog
         return registration;
     }
 
+    public GitRepositoryRegistration? Find(GitBranchRequest request)
+    {
+        GitRepositoryRegistration[] matches = Read().GitRepositories
+            .Where(repository => GitBranchRequest.OriginMatches(repository.CloneUrl, request.CloneUrl)).ToArray();
+        if (matches.Length > 1) throw new InvalidOperationException("Duplicate Git clone URL registration.");
+        return matches.SingleOrDefault();
+    }
+
     public static AppSettings Read()
     {
         AppSettings? settings = JsonSerializer.Deserialize<AppSettings>(
@@ -105,6 +113,14 @@ internal sealed class SettingsStore : IRepositoryCatalog
         }
 
         settings.SnapshotLimits.Validate();
+        if (settings.GitRepositories is null) throw new InvalidOperationException("Invalid GitRepositories settings.");
+        foreach (GitRepositoryRegistration repository in settings.GitRepositories)
+        {
+            _ = GitBranchRequest.NormalizeCloneUrl(repository.CloneUrl);
+            if (!Path.IsPathFullyQualified(repository.LocalPath) || !Path.IsPathFullyQualified(repository.WorkspaceRoot)
+                || !Directory.Exists(repository.LocalPath))
+                throw new InvalidOperationException("Git repository paths must be absolute and the clone must exist.");
+        }
         return settings;
     }
 }
