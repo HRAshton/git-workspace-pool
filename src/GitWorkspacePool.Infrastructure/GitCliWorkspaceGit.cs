@@ -1,13 +1,14 @@
 using System.Diagnostics;
 using System.Text;
 using GitWorkspacePool.Core.Application;
+using GitWorkspacePool.Core.Domain;
 
 namespace GitWorkspacePool.Infrastructure;
 
 /// <summary>
 /// Runs bounded Git CLI commands without shell expansion.
 /// </summary>
-public sealed class GitCliWorkspaceGit : IWorkspaceGit, IGitRemoteReader
+public sealed class GitCliWorkspaceGit : IWorkspaceGit, IGitRemoteReader, IGitBranchFetcher
 {
     /// <inheritdoc/>
     public async Task<bool> IsRegisteredWorktreeAsync(
@@ -49,6 +50,24 @@ public sealed class GitCliWorkspaceGit : IWorkspaceGit, IGitRemoteReader
             cancellationToken
         );
         return output.Trim();
+    }
+
+    /// <inheritdoc/>
+    public async Task<string> FetchBranchCommitAsync(
+        string repositoryPath, string branch, Guid operationId, CancellationToken cancellationToken
+    )
+    {
+        if (!GitBranchRequest.IsSafeBranch(branch)) throw new ArgumentException("Invalid Git branch name.");
+        await EnsureSafeFetchConfigurationAsync(repositoryPath, cancellationToken);
+        string sourceRef = "refs/heads/" + branch;
+        await RunAsync(repositoryPath, ["check-ref-format", sourceRef], cancellationToken);
+        string targetRef = "refs/git-workspace-pool/branches/" + operationId.ToString("N");
+        // Each durable operation has its own ref. Do not read shared FETCH_HEAD or a remote tracking branch.
+        await RunAsync(repositoryPath,
+            ["-c", "http.followRedirects=false", "fetch", "--no-tags", "--no-recurse-submodules",
+                "--no-write-fetch-head", "origin", $"+{sourceRef}:{targetRef}"], cancellationToken);
+        return (await RunAsync(repositoryPath,
+            ["rev-parse", "--verify", targetRef + "^{commit}"], cancellationToken)).Trim();
     }
 
     /// <inheritdoc/>

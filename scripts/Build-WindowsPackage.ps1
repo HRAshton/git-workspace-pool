@@ -53,6 +53,8 @@ Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Install-PerUser.ps1') -Destinat
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Unregister-PerUser.ps1') -Destination $package
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Backup-PerUserState.ps1') -Destination $package
 Copy-Item -LiteralPath (Join-Path $projectRoot 'userscript/git-workspace-pool.user.js') -Destination $package
+Copy-Item -LiteralPath (Join-Path $projectRoot 'userscript/git-branch-workspace.user.js') -Destination $package
+Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/GIT_BRANCH_WORKSPACES.md') -Destination $package
 
 if ($PackageVersion) {
     Copy-Item -LiteralPath (Join-Path $projectRoot ("docs/" + $ReleaseDocsPrefix + "_RELEASE_NOTES.md")) -Destination $package
