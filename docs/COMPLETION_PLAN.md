@@ -19,4 +19,5 @@ Optional ReFS acceleration and provider-specific API adapters remain extension w
 - [x] Verified candidate collection/ranking, commit-bound user selection and existing copy-only npm policy implemented; broader artifact classes and measured automatic reuse remain gated.
 - [ ] Storage governance and safe recovery/retention policy.
 - [ ] Extended release validation and package evidence.
+- [x] Package provenance/file manifest, full inventory verification and non-destructive corruption/junction refusal fixtures; installed Bitbucket acceptance procedure bundled. Final extended Windows validation still gates the package.
 - [ ] Installed environment acceptance and signing.

@@ -93,6 +93,17 @@ internal static class GitProcessSafety
             string key = record[..separator];
             string value = record[(separator + 1)..];
 
+            // URL-scoped http.<url>.sslVerify overrides a generic -c http.sslVerify=true.
+            // Require a trusted CA rather than silently accepting a clone that disables TLS checks.
+            if (key.StartsWith("http.", StringComparison.OrdinalIgnoreCase)
+                && key.EndsWith(".sslverify", StringComparison.OrdinalIgnoreCase)
+                && !new[] { "true", "yes", "on", "1" }.Contains(value.Trim(), StringComparer.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    "The Git clone disables HTTPS certificate verification. Configure your company's trusted CA and remove the sslVerify override before fetching."
+                );
+            }
+
             bool urlRewrite = key.StartsWith("url.", StringComparison.OrdinalIgnoreCase)
                 && (key.EndsWith(".insteadof", StringComparison.OrdinalIgnoreCase)
                     || key.EndsWith(".pushinsteadof", StringComparison.OrdinalIgnoreCase));

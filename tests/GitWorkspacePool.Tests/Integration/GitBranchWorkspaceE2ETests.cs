@@ -141,6 +141,8 @@ public sealed class GitBranchWorkspaceE2ETests
     [Theory]
     [Trait("Category", "FastE2E")]
     [InlineData("credential.helper", "!echo unsafe")]
+    [InlineData("http.sslVerify", "false")]
+    [InlineData("http.https://bitbucket.example.com/.sslVerify", "false")]
     [InlineData("core.sshCommand", "unsafe")]
     [InlineData("url.https://elsewhere.invalid/.insteadOf", "https://bitbucket.example.com/")]
     public async Task BranchFetchRejectsUnsafeGitConfiguration(string key, string value)

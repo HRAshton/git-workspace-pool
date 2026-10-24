@@ -102,6 +102,12 @@ One PR may batch compatible changes in a workstream, but a failed check is repai
 
 ### M3/M4 — reuse and disk
 
+The active generic repo/branch workflow now has shared schema-v9 lifecycle ownership, settings/cancellation and local timings, explicit verified candidate selection, optional copy-only npm reuse and bounded exact-baseline refresh. These additions do not satisfy the remaining unattended recycling/eviction, measured performance or installed acceptance gates below. See [completion work](COMPLETION_PLAN.md), [verified reuse](VERIFIED_REUSE.md) and [Bitbucket acceptance](BITBUCKET_ACCEPTANCE.md).
+
+- [x] Collect independently verified released-slot/donor observations and offer commit-bound explicit branch selection through the generation-checked allocator. Empty released slots still require checkout; no automatic release or speedup claim.
+- [x] Add optional validated advisory snapshot/recovered/combined logical-byte warning thresholds in Settings and the read-only tray inventory. Warnings never authorize disposal.
+- [x] Refresh explicitly named baseline refs sequentially in bounded passes, with deadlines, interval-based failure backoff and dedicated refs; empty configuration disables background fetch. No checked-out file is changed.
+
 - [x] Add a bounded read-only snapshot/recovery disk inspector and tray readout of logical file bytes/count; refuse reparse points and unknown data instead of guessing reclaimable space. No workspace eviction or cleanup is enabled.
 
 - [x] Implement a bounded and deterministic, side-effect-free candidate-ranking policy that never mutates worktrees or decides ownership; prefer exact commit, then estimated artifact invalidation, tracked paths and optional observed duration.
@@ -125,6 +131,8 @@ One PR may batch compatible changes in a workstream, but a failed check is repai
 - [ ] Demonstrate real pre-RC user-data upgrade, full worktree/snapshot backup, restored matching older SQLite DB rollback, actual browser/tray/VS Code integration and signed distribution before release approval. Refer to [RC2 acceptance](RC2_ACCEPTANCE.md).
 
 ### M6 — release engineering
+
+- [x] Include source commit/tree, SDK and per-file hashes in every package, verify full package/application inventories before registration, and exercise corruption, manifest traversal, unknown application file and package/install-junction refusal. Preserve previous versions and failed staging evidence. This is traceability and integrity, not signing or byte-for-byte archive reproducibility.
 
 - [x] RC2 release ZIP includes a read-only Git minimum-version and configured VS Code executable preflight with isolated Windows fixture (2.40.0 accepted as the current conservative policy), without running user Git commands or opening the editor. Full toolchain reproducibility, pinned dependencies and installed GUI acceptance still remain.
 - [ ] .NET SDK, dependencies and Git minimum version pinned and reproducible.

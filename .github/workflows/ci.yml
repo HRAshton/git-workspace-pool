@@ -49,5 +49,6 @@ jobs:
           path: |
             ${{ runner.temp }}/gwp-preview-package/GitWorkspacePool-win-x64-preview.zip
             ${{ runner.temp }}/gwp-preview-package/GitWorkspacePool-win-x64-preview.zip.sha256
+            ${{ runner.temp }}/gwp-preview-package/package/PACKAGE_MANIFEST.json
           if-no-files-found: error
           retention-days: 14

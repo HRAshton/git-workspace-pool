@@ -69,10 +69,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'RC2 data backup smoke failed.' }
           $source = (git rev-parse HEAD).Trim()
           if ($LASTEXITCODE -ne 0 -or $source -notmatch '^[a-fA-F0-9]{40}$') { throw 'Cannot capture candidate source commit.' }
+          $tree = (git rev-parse 'HEAD^{tree}').Trim()
+          if ($LASTEXITCODE -ne 0 -or $tree -notmatch '^[a-fA-F0-9]{40}$') { throw 'Cannot capture candidate source tree.' }
           $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
           @(
             'candidate=0.1.0-rc.2'
             "source_commit=$source"
+            "source_tree=$tree"
             "workflow_run=$env:GITHUB_RUN_ID"
             "source_ref=$env:GITHUB_REF"
             "zip_sha256=$hash"
@@ -92,5 +95,6 @@ jobs:
             ${{ runner.temp }}/gwp-rc2-artifacts/RC2_BUILD_EVIDENCE.txt
             ${{ runner.temp }}/gwp-rc2-artifacts/RC2_RELEASE_NOTES.md
             ${{ runner.temp }}/gwp-rc2-artifacts/RC2_ACCEPTANCE.md
+            ${{ runner.temp }}/gwp-rc2-artifacts/package/PACKAGE_MANIFEST.json
           if-no-files-found: error
           retention-days: 30
