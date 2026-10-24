@@ -8,6 +8,12 @@ public interface IGitBranchSessionStore
     /// <summary>Finds a case-sensitive repository/branch ownership record.</summary>
     Task<GitBranchSession?> FindAsync(GitBranchRequest request, CancellationToken cancellationToken);
 
+    /// <summary>Gets the stable internal reference number used by the shared slot allocator.</summary>
+    Task<int> GetReferenceNumberAsync(GitBranchRequest request, CancellationToken cancellationToken);
+
+    /// <summary>Resumes a verified suspended branch without fetching or changing files.</summary>
+    Task ResumeAsync(Guid operationId, CancellationToken cancellationToken);
+
     /// <summary>Reserves a new workspace, or verifies an existing reservation at exactly the same paths.</summary>
     Task<GitBranchSession> ReserveAsync(
         GitBranchRequest request, GitRepositoryRegistration repository, string path, CancellationToken cancellationToken

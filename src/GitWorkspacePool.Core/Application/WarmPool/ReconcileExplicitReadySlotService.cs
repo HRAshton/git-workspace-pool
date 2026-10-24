@@ -44,7 +44,8 @@ public sealed class ReconcileExplicitReadySlotService
         Guid slotId,
         RepositoryRegistration trustedRepository,
         CancellationToken cancellationToken
-    ) => ReconcileCoreAsync(slotId, null, trustedRepository, cancellationToken);
+    ) => ReconcileCoreAsync(slotId, null, "github:" + trustedRepository.RepositoryKey,
+        trustedRepository.LocalPath, trustedRepository.WorkspaceRoot, cancellationToken);
 
     /// <summary>
     /// Explicit UI recovery for the exact reservation the user selected.
@@ -58,22 +59,35 @@ public sealed class ReconcileExplicitReadySlotService
     {
         ArgumentNullException.ThrowIfNull(selected);
         return ReconcileCoreAsync(
-            selected.Lease.SlotId, selected, trustedRepository, cancellationToken
+            selected.Lease.SlotId, selected, "github:" + trustedRepository.RepositoryKey,
+            trustedRepository.LocalPath, trustedRepository.WorkspaceRoot, cancellationToken
         );
     }
+
+    /// <summary>Verifies an explicitly selected generic branch reservation under the same generation lease.</summary>
+    public Task<WorkspaceSession> ReconcileSelectedAsync(
+        WorkspaceReadySlotReservation selected,
+        GitRepositoryRegistration trustedRepository,
+        CancellationToken cancellationToken
+    ) => ReconcileCoreAsync(
+        selected.Lease.SlotId, selected, trustedRepository.RepositoryIdentity,
+        trustedRepository.LocalPath, trustedRepository.WorkspaceRoot, cancellationToken
+    );
 
     private async Task<WorkspaceSession> ReconcileCoreAsync(
         Guid slotId,
         WorkspaceReadySlotReservation? selected,
-        RepositoryRegistration trustedRepository,
+        string repositoryKey,
+        string sourcePath,
+        string workspaceRoot,
         CancellationToken cancellationToken
     )
     {
         WorkspaceSlot slot = await _slots.FindSlotAsync(slotId, cancellationToken)
             ?? throw new InvalidOperationException("Unknown reserved slot.");
         _safety.EnsureSafe(
-            trustedRepository.LocalPath,
-            trustedRepository.WorkspaceRoot,
+            sourcePath,
+            workspaceRoot,
             slot.WorkspacePath
         );
         string lockedPath = Path.GetFullPath(slot.WorkspacePath);
@@ -95,8 +109,8 @@ public sealed class ReconcileExplicitReadySlotService
             );
         }
         _safety.EnsureSafe(
-            trustedRepository.LocalPath,
-            trustedRepository.WorkspaceRoot,
+            sourcePath,
+            workspaceRoot,
             slot.WorkspacePath
         );
 
@@ -130,7 +144,7 @@ public sealed class ReconcileExplicitReadySlotService
         string? expected = reservation.Session.PinnedCommitSha;
         if (
             !slot.RepositoryKey.Equals(
-                "github:" + trustedRepository.RepositoryKey,
+                repositoryKey,
                 StringComparison.OrdinalIgnoreCase
             )
             || expected is not { Length: 40 or 64 }
@@ -139,7 +153,7 @@ public sealed class ReconcileExplicitReadySlotService
                 slot.RepositoryKey, StringComparison.OrdinalIgnoreCase
             )
             || !Path.GetFullPath(slot.SourcePath).Equals(
-                Path.GetFullPath(trustedRepository.LocalPath),
+                Path.GetFullPath(sourcePath),
                 OperatingSystem.IsWindows()
                     ? StringComparison.OrdinalIgnoreCase
                     : StringComparison.Ordinal

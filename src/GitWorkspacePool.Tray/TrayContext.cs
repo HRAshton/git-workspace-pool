@@ -142,20 +142,18 @@ internal sealed class TrayContext : ApplicationContext
         _open = new OpenPullRequestHandler(
             repositories, originVerifier, acquisition, editor, journal, _openRetained
         );
+        AcquireExplicitReadySlotService readyAcquisition = new(
+            slots, slots, new WorkspaceReadySlotSafety(), git,
+            new WorkspaceDirectories(), journal, locks
+        );
         _openInReadySlot = new OpenPullRequestInReadySlotHandler(
-            repositories,
-            originVerifier,
-            new AcquireExplicitReadySlotService(
-                slots, slots, new WorkspaceReadySlotSafety(), git,
-                new WorkspaceDirectories(), journal, locks
-            ),
-            editor
+            repositories, originVerifier, readyAcquisition, editor
         );
 
         _branchSessions = new SqliteGitBranchSessionStore(Path.Combine(stateRoot, "sessions.db"));
         _openBranch = new OpenGitBranchHandler(
             repositories, git, git, git, _branchSessions, locks, new WorkspaceDirectories(),
-            new WorkspaceReadySlotSafety(), new VerifiedReadySlotCheckout(), editor
+            new WorkspaceReadySlotSafety(), new VerifiedReadySlotCheckout(), editor, _openRetained, readyAcquisition
         );
         menu.Items.Insert(1, new ToolStripMenuItem("Open Git branch...", null,
             async (_, _) => await OpenGitBranchFromTrayAsync()));
@@ -163,7 +161,7 @@ internal sealed class TrayContext : ApplicationContext
         branchRecovery.DropDownOpening += async (_, _) => await PopulateBranchRecoveryAsync(branchRecovery);
         menu.Items.Insert(2, branchRecovery);
 
-        ToolStripMenuItem snapshotsMenu = new("Snapshot active PR...");
+        ToolStripMenuItem snapshotsMenu = new("Snapshot active workspace...");
         snapshotsMenu.DropDownOpening += async (_, _) => await PopulateSnapshotsAsync(snapshotsMenu);
         menu.Items.Insert(1, snapshotsMenu);
 
@@ -180,24 +178,24 @@ internal sealed class TrayContext : ApplicationContext
             await PopulateLocalDiskUsageAsync(diskUsageMenu, stateRoot);
         menu.Items.Insert(4, diskUsageMenu);
 
-        ToolStripMenuItem suspendMenu = new("Suspend active PR (keep worktree)...");
+        ToolStripMenuItem suspendMenu = new("Suspend workspace (keep worktree)...");
         suspendMenu.DropDownOpening += async (_, _) => await PopulateSuspensionsAsync(suspendMenu);
         menu.Items.Insert(4, suspendMenu);
 
-        ToolStripMenuItem parkMenu = new("Park PR worktree (move, no deletion)...");
+        ToolStripMenuItem parkMenu = new("Park workspace (move, no deletion)...");
         parkMenu.DropDownOpening += async (_, _) => await PopulateParkingAsync(parkMenu, false);
         menu.Items.Insert(5, parkMenu);
 
-        ToolStripMenuItem unparkMenu = new("Unpark PR worktree...");
+        ToolStripMenuItem unparkMenu = new("Unpark workspace...");
         unparkMenu.DropDownOpening += async (_, _) => await PopulateParkingAsync(unparkMenu, true);
         menu.Items.Insert(6, unparkMenu);
 
-        ToolStripMenuItem releaseMenu = new("Release parked PR slot (keep user files)...");
+        ToolStripMenuItem releaseMenu = new("Release parked slot (keep user files)...");
         releaseMenu.DropDownOpening += async (_, _) =>
             await PopulateReleaseCandidatesAsync(releaseMenu);
         menu.Items.Insert(7, releaseMenu);
 
-        ToolStripMenuItem readyMenu = new("Open PR in a released slot...");
+        ToolStripMenuItem readyMenu = new("Open workspace in a released slot...");
         readyMenu.DropDownOpening += async (_, _) =>
             await PopulateReadySlotsAsync(readyMenu);
         menu.Items.Insert(8, readyMenu);
@@ -215,14 +213,14 @@ internal sealed class TrayContext : ApplicationContext
         menu.Items.Insert(10, npmWarmMenu);
 
         ToolStripMenuItem retainedMenu = new(
-            "Open retained released PR (without moving files)..."
+            "Open retained released workspace..."
         );
         retainedMenu.DropDownOpening += async (_, _) =>
             await PopulateRetainedReleasedAsync(retainedMenu);
         menu.Items.Insert(11, retainedMenu);
 
         ToolStripMenuItem interruptedMenu = new(
-            "Finish interrupted PR checkout (verified only)..."
+            "Finish interrupted checkout (verified only)..."
         );
         interruptedMenu.DropDownOpening += async (_, _) =>
             await PopulateInterruptedSlotRecoveryAsync(interruptedMenu);
@@ -286,7 +284,7 @@ internal sealed class TrayContext : ApplicationContext
 
             if (active.Count == 0)
             {
-                menu.DropDownItems.Add(new ToolStripMenuItem("No active PR sessions")
+                menu.DropDownItems.Add(new ToolStripMenuItem("No active workspaces")
                 {
                     Enabled = false,
                 });
@@ -296,7 +294,7 @@ internal sealed class TrayContext : ApplicationContext
             foreach (WorkspaceSession session in active)
             {
                 ToolStripMenuItem item = new(
-                    $"{session.RepositoryKey} PR #{session.PullRequestNumber}"
+                    session.DisplayName
                 );
                 Guid operationId = session.OperationId;
                 item.Click += (_, _) => _ = CaptureFromMenuAsync(operationId);
@@ -355,7 +353,7 @@ internal sealed class TrayContext : ApplicationContext
             foreach (WorkspaceSnapshotRecord record in snapshots)
             {
                 ToolStripMenuItem item = new(
-                    $"{record.Session.RepositoryKey} PR #{record.Session.PullRequestNumber} "
+                    $"{record.Session.DisplayName} "
                         + $"({record.Receipt.SnapshotId.ToString("N")[..8]})"
                 );
                 Guid snapshotId = record.Receipt.SnapshotId;
@@ -508,13 +506,15 @@ internal sealed class TrayContext : ApplicationContext
         {
             IReadOnlyList<WorkspaceReadySlotReservation> pending =
                 await _pendingSlotInventory.ListReservedAsync(_shutdown.Token);
-            IReadOnlyList<RepositoryRegistration> configured = SettingsStore.Read().Repositories;
+            AppSettings settings = SettingsStore.Read();
+            IReadOnlyList<RepositoryRegistration> configured = settings.Repositories;
             int shown = 0;
             foreach (WorkspaceReadySlotReservation selected in pending.Take(101))
             {
                 RepositoryRegistration? trusted =
                     FindTrustedRecoveryRepository(selected, configured);
-                if (trusted is null)
+                GitRepositoryRegistration? branchRepository = FindTrustedBranchRepository(selected, settings.GitRepositories);
+                if (trusted is null && branchRepository is null)
                 {
                     continue;
                 }
@@ -525,8 +525,7 @@ internal sealed class TrayContext : ApplicationContext
                 }
 
                 ToolStripMenuItem item = new(
-                    selected.Session.RepositoryKey + " PR #"
-                        + selected.Session.PullRequestNumber
+                    selected.Session.DisplayName
                 )
                 {
                     ToolTipText = "Reserved generation " + selected.Lease.Generation
@@ -535,15 +534,15 @@ internal sealed class TrayContext : ApplicationContext
                         + (selected.Session.PinnedCommitSha ?? "(not pinned)"),
                 };
                 WorkspaceReadySlotReservation choice = selected;
-                RepositoryRegistration repository = trusted;
-                item.Click += (_, _) => _ = FinishInterruptedSlotAsync(choice, repository);
+                RepositoryRegistration? repository = trusted;
+                item.Click += (_, _) => _ = FinishInterruptedSlotAsync(choice, repository, branchRepository);
                 menu.DropDownItems.Add(item);
             }
 
             if (menu.DropDownItems.Count == 0)
             {
                 menu.DropDownItems.Add(new ToolStripMenuItem(
-                    "No pending PR checkouts for configured repositories."
+                    "No pending checkouts for configured repositories."
                 ) { Enabled = false });
             }
 
@@ -589,15 +588,31 @@ internal sealed class TrayContext : ApplicationContext
         return matches.Length == 1 ? matches[0] : null;
     }
 
+    private static GitRepositoryRegistration? FindTrustedBranchRepository(
+        WorkspaceReadySlotReservation reservation,
+        IReadOnlyList<GitRepositoryRegistration> configured
+    )
+    {
+        StringComparison comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        GitRepositoryRegistration[] matches = configured.Where(repository =>
+            reservation.Session.RepositoryKey.Equals(repository.RepositoryIdentity, StringComparison.Ordinal)
+            && Path.GetFullPath(reservation.Session.SourcePath).Equals(Path.GetFullPath(repository.LocalPath), comparison)
+            && Path.GetDirectoryName(Path.GetFullPath(reservation.Session.WorkspacePath))!
+                .Equals(Path.GetFullPath(repository.WorkspaceRoot), comparison)
+        ).ToArray();
+        return matches.Length == 1 ? matches[0] : null;
+    }
+
     private async Task FinishInterruptedSlotAsync(
         WorkspaceReadySlotReservation selected,
-        RepositoryRegistration trusted
+        RepositoryRegistration? trusted,
+        GitRepositoryRegistration? branchRepository = null
     )
     {
         DialogResult confirmed = MessageBox.Show(
             "Verify and finish the interrupted checkout for "
-                + selected.Session.RepositoryKey + " PR #"
-                + selected.Session.PullRequestNumber + "?\n\n"
+                + selected.Session.DisplayName + "?\n\n"
                 + "Reserved slot: " + selected.Session.WorkspacePath + "\n"
                 + "Generation: " + selected.Lease.Generation + "\n"
                 + "Pinned commit: "
@@ -618,9 +633,9 @@ internal sealed class TrayContext : ApplicationContext
 
         try
         {
-            WorkspaceSession recovered = await _reconcileSlot.ReconcileSelectedAsync(
-                selected, trusted, _shutdown.Token
-            );
+            WorkspaceSession recovered = branchRepository is not null
+                ? await _reconcileSlot.ReconcileSelectedAsync(selected, branchRepository, _shutdown.Token)
+                : await _reconcileSlot.ReconcileSelectedAsync(selected, trusted!, _shutdown.Token);
             try
             {
                 await _editor.OpenAsync(recovered.WorkspacePath, _shutdown.Token);
@@ -655,7 +670,7 @@ internal sealed class TrayContext : ApplicationContext
 
             if (sessions.Count == 0)
             {
-                menu.DropDownItems.Add(new ToolStripMenuItem("No active PR sessions")
+                menu.DropDownItems.Add(new ToolStripMenuItem("No active workspaces")
                 {
                     Enabled = false,
                 });
@@ -665,7 +680,7 @@ internal sealed class TrayContext : ApplicationContext
             foreach (WorkspaceSession session in sessions)
             {
                 ToolStripMenuItem item = new(
-                    $"{session.RepositoryKey} PR #{session.PullRequestNumber}"
+                    session.DisplayName
                 );
                 Guid operationId = session.OperationId;
                 item.Click += (_, _) => _ = SuspendFromMenuAsync(operationId);
@@ -725,7 +740,7 @@ internal sealed class TrayContext : ApplicationContext
 
             if (sessions.Count == 0)
             {
-                menu.DropDownItems.Add(new ToolStripMenuItem("No eligible PR sessions")
+                menu.DropDownItems.Add(new ToolStripMenuItem("No eligible workspaces")
                 {
                     Enabled = false,
                 });
@@ -736,7 +751,7 @@ internal sealed class TrayContext : ApplicationContext
             {
                 Guid id = session.OperationId;
                 ToolStripMenuItem item = new(
-                    $"{session.RepositoryKey} PR #{session.PullRequestNumber} ({session.State})"
+                    $"{session.DisplayName} ({session.State})"
                 );
                 item.Click += (_, _) => _ = MoveParkingFromMenuAsync(id, unpark);
                 menu.DropDownItems.Add(item);
@@ -809,7 +824,7 @@ internal sealed class TrayContext : ApplicationContext
             foreach (WorkspaceSession session in eligible)
             {
                 ToolStripMenuItem item = new(
-                    session.RepositoryKey + " PR #" + session.PullRequestNumber
+                    session.DisplayName
                 )
                 {
                     ToolTipText = session.ParkingPath ?? session.WorkspacePath,
@@ -922,6 +937,11 @@ internal sealed class TrayContext : ApplicationContext
                     )
                     && Path.GetDirectoryName(Path.GetFullPath(slot.WorkspacePath))!
                         .Equals(Path.GetFullPath(repository.WorkspaceRoot), comparison)
+                ) || settings.GitRepositories.Any(repository =>
+                    slot.RepositoryKey.Equals(repository.RepositoryIdentity, StringComparison.Ordinal)
+                    && Path.GetFullPath(repository.LocalPath).Equals(Path.GetFullPath(slot.SourcePath), comparison)
+                    && Path.GetDirectoryName(Path.GetFullPath(slot.WorkspacePath))!
+                        .Equals(Path.GetFullPath(repository.WorkspaceRoot), comparison)
                 )
             ).ToArray();
 
@@ -944,9 +964,9 @@ internal sealed class TrayContext : ApplicationContext
                 };
                 Guid slotId = slot.SlotId;
                 long generation = slot.Generation;
-                item.Click += (_, _) => _ = OpenInSelectedSlotAsync(
-                    slotId, generation
-                );
+                item.Click += (_, _) => _ = slot.RepositoryKey.StartsWith("git:", StringComparison.Ordinal)
+                    ? OpenBranchInSelectedSlotAsync(slot)
+                    : OpenInSelectedSlotAsync(slotId, generation);
                 menu.DropDownItems.Add(item);
             }
         }
@@ -1114,7 +1134,7 @@ internal sealed class TrayContext : ApplicationContext
                 ToolStripMenuItem item = new(
                     (session is null
                         ? "Unknown PR"
-                        : session.RepositoryKey + " PR #" + session.PullRequestNumber)
+                        : session.DisplayName)
                     + " — slot " + entry.SlotId.ToString("N")[..8]
                 );
                 Guid preparationId = entry.PreparationId;
@@ -1201,8 +1221,7 @@ internal sealed class TrayContext : ApplicationContext
                     }
 
                     ToolStripMenuItem item = new(
-                        current.RepositoryKey + " PR #" + current.PullRequestNumber
-                        + " ← parked PR #" + donor.PullRequestNumber
+                        current.DisplayName + " ← " + donor.DisplayName
                     )
                     {
                         ToolTipText = "From " + donor.ParkingPath
@@ -1263,8 +1282,7 @@ internal sealed class TrayContext : ApplicationContext
 
         if (MessageBox.Show(
             "Copy ignored node_modules from parked "
-                + donor.RepositoryKey + " PR #" + donor.PullRequestNumber
-                + " into active PR #" + target.PullRequestNumber + "?\n\n"
+                + donor.DisplayName + " into " + target.DisplayName + "?\n\n"
                 + "The source will remain untouched. Both package.json and "
                 + "package-lock.json must match exactly. The destination "
                 + "node_modules directory must not exist; links and tracked "
@@ -1329,7 +1347,7 @@ internal sealed class TrayContext : ApplicationContext
             foreach (WorkspaceSession session in retained.Take(100))
             {
                 ToolStripMenuItem item = new(
-                    session.RepositoryKey + " PR #" + session.PullRequestNumber
+                    session.DisplayName
                 )
                 {
                     ToolTipText = session.ParkingPath ?? "Parking path missing",
@@ -1453,31 +1471,67 @@ internal sealed class TrayContext : ApplicationContext
     {
         try
         {
-            using Form dialog = new()
-            {
-                Text = "Open Git branch", Width = 650, Height = 245,
-                StartPosition = FormStartPosition.CenterScreen, FormBorderStyle = FormBorderStyle.FixedDialog,
-                MaximizeBox = false, MinimizeBox = false,
-            };
-            ComboBox repository = new() { Left = 16, Top = 42, Width = 600, DropDownStyle = ComboBoxStyle.DropDownList };
-            repository.Items.AddRange(SettingsStore.Read().GitRepositories.Select(r => r.CloneUrl).Cast<object>().ToArray());
-            if (repository.Items.Count > 0) repository.SelectedIndex = 0;
-            TextBox branch = new() { Left = 16, Top = 106, Width = 600 };
-            Button open = new() { Text = "Open", Left = 400, Top = 150, Width = 100, DialogResult = DialogResult.OK };
-            Button cancel = new() { Text = "Cancel", Left = 510, Top = 150, Width = 100, DialogResult = DialogResult.Cancel };
-            dialog.Controls.AddRange([
-                new Label { Text = "Configured HTTPS Git clone URL:", Left = 16, Top = 16, Width = 600 }, repository,
-                new Label { Text = "Source branch (for example feature/my-task):", Left = 16, Top = 80, Width = 600 }, branch,
-                open, cancel,
-            ]);
-            dialog.AcceptButton = open; dialog.CancelButton = cancel;
-            if (dialog.ShowDialog() == DialogResult.OK && repository.SelectedItem is string cloneUrl)
-                await OpenGitBranchAsync(new GitBranchRequest(cloneUrl, branch.Text.Trim()));
+            GitBranchRequest? request = AskForGitBranch();
+            if (request is not null) await OpenGitBranchAsync(request);
         }
         catch (Exception exception)
         {
-            Notify("Cannot open Git branch dialog", exception.Message);
+            Notify("Cannot open Git branch", exception.Message);
         }
+    }
+
+    private GitBranchRequest? AskForGitBranch(GitRepositoryRegistration? selectedRepository = null)
+    {
+        GitRepositoryRegistration[] configured = selectedRepository is null
+            ? SettingsStore.Read().GitRepositories.ToArray() : [selectedRepository];
+        if (configured.Length == 0)
+        {
+            Notify("Configure a repository first", "Add a repository in Settings before opening a branch.");
+            return null;
+        }
+        using Form dialog = new()
+        {
+            Text = "Open Git branch", Width = 650, Height = 245,
+            StartPosition = FormStartPosition.CenterScreen, FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false, MinimizeBox = false,
+        };
+        ComboBox repository = new() { Left = 16, Top = 42, Width = 600, DropDownStyle = ComboBoxStyle.DropDownList };
+        repository.Items.AddRange(configured.Select(r => r.CloneUrl).Cast<object>().ToArray());
+        repository.SelectedIndex = 0;
+        TextBox branch = new() { Left = 16, Top = 106, Width = 600 };
+        Button open = new() { Text = "Open", Left = 400, Top = 150, Width = 100, DialogResult = DialogResult.OK };
+        Button cancel = new() { Text = "Cancel", Left = 510, Top = 150, Width = 100, DialogResult = DialogResult.Cancel };
+        dialog.Controls.AddRange([
+            new Label { Text = "Configured HTTPS Git clone URL:", Left = 16, Top = 16, Width = 600 }, repository,
+            new Label { Text = "Source branch (for example feature/my-task):", Left = 16, Top = 80, Width = 600 }, branch,
+            open, cancel,
+        ]);
+        dialog.AcceptButton = open; dialog.CancelButton = cancel;
+        return dialog.ShowDialog() == DialogResult.OK
+            ? new GitBranchRequest((string)repository.SelectedItem!, branch.Text.Trim()) : null;
+    }
+
+    private async Task OpenBranchInSelectedSlotAsync(WorkspaceSlot slot)
+    {
+        try
+        {
+            GitRepositoryRegistration? repository = SettingsStore.Read().GitRepositories.SingleOrDefault(
+                item => item.RepositoryIdentity.Equals(slot.RepositoryKey, StringComparison.Ordinal)
+            );
+            if (repository is null) throw new InvalidOperationException("The slot's repository is not configured.");
+            GitBranchRequest? request = AskForGitBranch(repository);
+            if (request is null) return;
+            if (MessageBox.Show(
+                "Open " + request.Branch + " in the released slot at " + slot.WorkspacePath
+                    + "? The previous owner's parked files are retained. Existing branch owners reopen in place.",
+                "Use released workspace slot", MessageBoxButtons.YesNo, MessageBoxIcon.Question,
+                MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+            OpenPullRequestResult result = await Task.Run(() => _openBranch.HandleInReadySlotAsync(
+                request, slot.SlotId, slot.Generation, _shutdown.Token), _shutdown.Token);
+            Notify("Branch workspace opened", result.WorkspacePath);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception exception) { Notify("Could not open branch in released slot", exception.Message); }
     }
 
     private async Task PopulateBranchRecoveryAsync(ToolStripMenuItem menu)
