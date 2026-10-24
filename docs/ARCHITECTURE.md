@@ -95,3 +95,13 @@ The journal is an ownership protocol, not a transactional filesystem. No automat
 - Disk-aware eviction and baseline-branch refresh.
 
 No automatic reclamation of user data until snapshots and crash recovery have dedicated integration tests.
+
+## Generic Git branches and shared ownership (schema v9)
+
+`GitBranchProtocol` accepts only a configured HTTPS clone URL and short branch name. `OpenGitBranchHandler` verifies the resolved origin, fetches an ordinary branch into an operation ref, persists its immutable commit, and preserves active edits on reopen. No PR API or fabricated PR URL is involved.
+
+The shared journal's historical `pr_number` column is a positive reference discriminator. GitHub references retain their real PR number; ordinary Git branches get a durable internal discriminator in `git_branch_subjects`. A canonical clone-URL hash forms the branch repository identity, and the branch name uses binary case-sensitive matching. Neither internal number nor hash is presented as a PR. Shared session reads carry clone/branch metadata for display.
+
+The v9 additive upgrade imports legacy generic-branch records into `sessions` and protected slot leases within one transaction. It preserves original operation IDs, paths, state and pinned commits, retains the old table as evidence, and does not move or adopt filesystem contents. Conflicting ownership aborts the transaction. Existing snapshot, restore, event and lease foreign keys remain intact. Older binaries reject the new schema.
+
+Branch snapshot/parking/release/restore uses the same application services as PR sessions. Explicit branch slot checkout and PR slot checkout share the same reservation, pin, verification and generation-CAS implementation; only remote head fetching differs. A released branch reopens its retained parked worktree without touching the former slot. Ordinary open never activates a Reserved generation.

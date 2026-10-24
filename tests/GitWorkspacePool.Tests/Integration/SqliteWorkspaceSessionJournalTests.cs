@@ -445,7 +445,7 @@ public sealed class SqliteWorkspaceSessionJournalTests
         check.CommandText = "PRAGMA foreign_key_check";
         Assert.Null(check.ExecuteScalar());
         check.CommandText = "PRAGMA user_version";
-        Assert.Equal(8L, check.ExecuteScalar());
+        Assert.Equal(9L, check.ExecuteScalar());
     }
 
     [Fact]

@@ -47,7 +47,7 @@ public enum WorkspaceSessionState
 /// </summary>
 /// <param name="OperationId">Unique identity of the initial allocation operation.</param>
 /// <param name="RepositoryKey">Provider-qualified remote repository key.</param>
-/// <param name="PullRequestNumber">Provider pull request number.</param>
+/// <param name="PullRequestNumber">Provider PR number, or an internal branch-subject discriminator when BranchName is set.</param>
 /// <param name="SourcePath">Trusted source clone path at reservation time.</param>
 /// <param name="WorkspacePath">Exclusive stable workspace path.</param>
 /// <param name="State">The current persisted state.</param>
@@ -61,5 +61,13 @@ public sealed record WorkspaceSession(
     WorkspaceSessionState State,
     string? PinnedCommitSha,
     string? ParkingPath = null,
-    string? ParkingCommitSha = null
-);
+    string? ParkingCommitSha = null,
+    string? BranchName = null,
+    string? CloneUrl = null
+)
+{
+    /// <summary>Gets the human-readable reference without exposing a branch's internal numeric discriminator.</summary>
+    public string DisplayName => BranchName is null
+        ? $"{RepositoryKey} PR #{PullRequestNumber}"
+        : $"{CloneUrl} [{BranchName}]";
+}

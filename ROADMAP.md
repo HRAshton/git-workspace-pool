@@ -2,6 +2,8 @@
 
 **Full gated implementation plan through RC1:** [Release Candidate Plan](docs/RELEASE_CANDIDATE_PLAN.md). This roadmap tracks current implementation status; the RC plan defines complete scope, dependencies, test strategy and release gates.
 
+**Active completion tracking:** [Completion plan](docs/COMPLETION_PLAN.md) separates implementation from installed-environment acceptance.
+
 > Goal: minimize time from opening a pull request to editing it locally, with minimum reasonable disk overhead and no loss of user changes.
 
 This is a Windows tray app + Tampermonkey userscript. The application **never** builds projects, restores dependencies, runs tests from a PR, or predicts which PR will be opened next.
@@ -126,6 +128,7 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 ## P3 — Providers and distribution
 
 - [x] Generic configured HTTPS repository + branch opening, including Bitbucket DC 9, using ordinary Git and existing credential helpers; no PR or provider API required. See [branch workspaces](docs/GIT_BRANCH_WORKSPACES.md).
+- [x] Share generic branch ownership with snapshots, suspension, parking, explicit release, released-slot checkout, retained reopening, dependency transfer and verified slot recovery. Schema-v9 migration retains legacy branch IDs/paths and PR foreign-key references. See [upgrade details](docs/LIFECYCLE_UPGRADE.md).
 - [ ] GitLab, Bitbucket, Azure DevOps provider-specific PR URL adapters.
 - [ ] Provider-specific fetch/head resolution; support fork PRs without assuming `origin`.
 - [x] Add an unsigned, self-contained Windows x64 preview ZIP with versioned per-user installation, HKCU protocol registration, conservative unregistration, SHA-256 checksum, an included userscript, and a no-UI launch / idempotent-upgrade smoke in PR CI. Existing settings, snapshots, worktrees, and prior versions remain untouched.

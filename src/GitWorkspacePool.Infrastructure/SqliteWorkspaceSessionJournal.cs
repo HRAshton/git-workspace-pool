@@ -13,7 +13,7 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
     private readonly string _connectionString;
 
     /// <summary>
-    /// Initializes or upgrades the local SQLite journal to schema version eight.
+    /// Initializes or upgrades the local SQLite journal to schema version nine.
     /// </summary>
     public SqliteWorkspaceSessionJournal(string databasePath)
     {
@@ -35,7 +35,7 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
         version.CommandText = "PRAGMA user_version";
         long currentVersion = (long)version.ExecuteScalar()!;
 
-        if (currentVersion > 8)
+        if (currentVersion > 9)
         {
             throw new InvalidOperationException("Session journal schema is newer than this application.");
         }
@@ -104,6 +104,11 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
         {
             UpgradeReleasedOwnership(connection);
         }
+
+        if (currentVersion < 9)
+        {
+            UpgradeBranchOwnership(connection);
+        }
     }
 
     /// <inheritdoc/>
@@ -118,7 +123,11 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = """
             SELECT operation_id, repository_key, pr_number, source_path,
-                   workspace_path, state, pinned_commit, parking_path, parking_head
+                   workspace_path, state, pinned_commit, parking_path, parking_head,
+                   (SELECT branch FROM git_branch_subjects b WHERE b.repository_key = sessions.repository_key
+                       AND b.subject_number = sessions.pr_number) AS branch_name,
+                   (SELECT clone_url FROM git_branch_subjects b WHERE b.repository_key = sessions.repository_key
+                       AND b.subject_number = sessions.pr_number) AS clone_url
               FROM sessions
              WHERE repository_key = $repository AND pr_number = $pr
             """;
@@ -153,7 +162,11 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
         get.Transaction = transaction;
         get.CommandText = """
             SELECT operation_id, repository_key, pr_number, source_path,
-                   workspace_path, state, pinned_commit, parking_path, parking_head
+                   workspace_path, state, pinned_commit, parking_path, parking_head,
+                   (SELECT branch FROM git_branch_subjects b WHERE b.repository_key = sessions.repository_key
+                       AND b.subject_number = sessions.pr_number) AS branch_name,
+                   (SELECT clone_url FROM git_branch_subjects b WHERE b.repository_key = sessions.repository_key
+                       AND b.subject_number = sessions.pr_number) AS clone_url
               FROM sessions
              WHERE repository_key = $repository_key AND pr_number = $pr_number
             """;
@@ -269,7 +282,11 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = """
             SELECT operation_id, repository_key, pr_number, source_path,
-                   workspace_path, state, pinned_commit, parking_path, parking_head
+                   workspace_path, state, pinned_commit, parking_path, parking_head,
+                   (SELECT branch FROM git_branch_subjects b WHERE b.repository_key = sessions.repository_key
+                       AND b.subject_number = sessions.pr_number) AS branch_name,
+                   (SELECT clone_url FROM git_branch_subjects b WHERE b.repository_key = sessions.repository_key
+                       AND b.subject_number = sessions.pr_number) AS clone_url
               FROM sessions
              WHERE operation_id = $id
             """;
@@ -289,7 +306,11 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = """
             SELECT operation_id, repository_key, pr_number, source_path,
-                   workspace_path, state, pinned_commit, parking_path, parking_head
+                   workspace_path, state, pinned_commit, parking_path, parking_head,
+                   (SELECT branch FROM git_branch_subjects b WHERE b.repository_key = sessions.repository_key
+                       AND b.subject_number = sessions.pr_number) AS branch_name,
+                   (SELECT clone_url FROM git_branch_subjects b WHERE b.repository_key = sessions.repository_key
+                       AND b.subject_number = sessions.pr_number) AS clone_url
               FROM sessions
              WHERE state = 'Active'
              ORDER BY updated_utc DESC
@@ -381,7 +402,11 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = """
             SELECT operation_id, repository_key, pr_number, source_path,
-                   workspace_path, state, pinned_commit, parking_path, parking_head
+                   workspace_path, state, pinned_commit, parking_path, parking_head,
+                   (SELECT branch FROM git_branch_subjects b WHERE b.repository_key = sessions.repository_key
+                       AND b.subject_number = sessions.pr_number) AS branch_name,
+                   (SELECT clone_url FROM git_branch_subjects b WHERE b.repository_key = sessions.repository_key
+                       AND b.subject_number = sessions.pr_number) AS clone_url
               FROM sessions
              WHERE state IN ('Parking', 'Parked', 'Unparking', 'Released')
              ORDER BY updated_utc DESC
@@ -555,7 +580,11 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
                sessions.source_path, sessions.workspace_path, sessions.state,
                sessions.pinned_commit, sessions.parking_path, sessions.parking_head,
                snapshots.snapshot_id, snapshots.folder,
-               snapshots.file_count, snapshots.copied_bytes
+               snapshots.file_count, snapshots.copied_bytes,
+               (SELECT branch FROM git_branch_subjects b WHERE b.repository_key = sessions.repository_key
+                   AND b.subject_number = sessions.pr_number) AS branch_name,
+               (SELECT clone_url FROM git_branch_subjects b WHERE b.repository_key = sessions.repository_key
+                   AND b.subject_number = sessions.pr_number) AS clone_url
           FROM snapshots
           JOIN sessions ON sessions.operation_id = snapshots.operation_id
         """;
@@ -713,7 +742,11 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = """
             SELECT operation_id, repository_key, pr_number, source_path,
-                   workspace_path, state, pinned_commit, parking_path, parking_head
+                   workspace_path, state, pinned_commit, parking_path, parking_head,
+                   (SELECT branch FROM git_branch_subjects b WHERE b.repository_key = sessions.repository_key
+                       AND b.subject_number = sessions.pr_number) AS branch_name,
+                   (SELECT clone_url FROM git_branch_subjects b WHERE b.repository_key = sessions.repository_key
+                       AND b.subject_number = sessions.pr_number) AS clone_url
               FROM sessions
             """ + " " + restriction + " ORDER BY updated_utc DESC LIMIT 1000";
         List<WorkspaceSession> sessions = [];
@@ -1179,6 +1212,146 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
         transaction.Commit();
     }
 
+    private static void UpgradeBranchOwnership(SqliteConnection connection)
+    {
+        using SqliteTransaction transaction = connection.BeginTransaction();
+        using (SqliteCommand schema = connection.CreateCommand())
+        {
+            schema.Transaction = transaction;
+            // The legacy pr_number column remains a positive reference discriminator.
+            // For Git branches it is an internal subject number, never a fabricated PR number.
+            schema.CommandText = """
+                CREATE TABLE git_branch_subjects (
+                    subject_number INTEGER PRIMARY KEY AUTOINCREMENT CHECK (subject_number <= 2147483647),
+                    repository_key TEXT NOT NULL COLLATE NOCASE,
+                    clone_url TEXT NOT NULL COLLATE BINARY,
+                    branch TEXT NOT NULL COLLATE BINARY,
+                    UNIQUE (clone_url, branch),
+                    UNIQUE (repository_key, subject_number)
+                );
+                """;
+            schema.ExecuteNonQuery();
+        }
+
+        bool hasLegacy;
+        using (SqliteCommand legacy = connection.CreateCommand())
+        {
+            legacy.Transaction = transaction;
+            legacy.CommandText = "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'git_branch_sessions'";
+            hasLegacy = (long)legacy.ExecuteScalar()! == 1;
+        }
+
+        List<GitBranchSession> previous = [];
+        if (hasLegacy)
+        {
+            using SqliteCommand read = connection.CreateCommand();
+            read.Transaction = transaction;
+            read.CommandText = """
+                SELECT operation_id, clone_url, branch, source_path, workspace_path, state, pinned_commit
+                FROM git_branch_sessions ORDER BY rowid LIMIT 10001;
+                """;
+            using SqliteDataReader reader = read.ExecuteReader();
+            while (reader.Read())
+            {
+                if (previous.Count >= 10000)
+                {
+                    throw new InvalidOperationException("Legacy branch inventory exceeds the bounded migration limit.");
+                }
+                previous.Add(new GitBranchSession(
+                    Guid.Parse(reader.GetString(0)), reader.GetString(1), reader.GetString(2),
+                    reader.GetString(3), reader.GetString(4),
+                    Enum.Parse<WorkspaceSessionState>(reader.GetString(5)),
+                    reader.IsDBNull(6) ? null : reader.GetString(6)
+                ));
+            }
+        }
+
+        foreach (GitBranchSession branch in previous)
+        {
+            GitBranchRequest request = new(branch.CloneUrl, branch.Branch);
+            if (!request.IsValid)
+            {
+                throw new InvalidOperationException("Invalid legacy branch identity; migration retained the original journal.");
+            }
+            EnsurePathIsUnowned(connection, transaction, branch.WorkspacePath, null);
+            int number = GetBranchSubject(connection, transaction, request, create: true)!.Value;
+            WorkspaceSession session = new(branch.OperationId, request.RepositoryIdentity, number,
+                Path.GetFullPath(branch.SourcePath), Path.GetFullPath(branch.WorkspacePath),
+                branch.State, branch.PinnedCommit);
+            using SqliteCommand insert = connection.CreateCommand();
+            insert.Transaction = transaction;
+            insert.CommandText = """
+                INSERT INTO sessions(operation_id, repository_key, pr_number, source_path, workspace_path,
+                    state, pinned_commit, updated_utc)
+                VALUES ($id, $repository, $number, $source, $path, $state, $commit, $utc);
+                """;
+            insert.Parameters.AddWithValue("$id", session.OperationId.ToString("D"));
+            insert.Parameters.AddWithValue("$repository", session.RepositoryKey);
+            insert.Parameters.AddWithValue("$number", number);
+            insert.Parameters.AddWithValue("$source", session.SourcePath);
+            insert.Parameters.AddWithValue("$path", session.WorkspacePath);
+            insert.Parameters.AddWithValue("$state", session.State.ToString());
+            insert.Parameters.AddWithValue("$commit", (object?)session.PinnedCommitSha ?? DBNull.Value);
+            insert.Parameters.AddWithValue("$utc", UtcNow());
+            insert.ExecuteNonQuery();
+            RegisterProtectedSlot(connection, transaction, session);
+            AddEvent(connection, transaction, session.OperationId, "BranchOwnershipMigrated");
+        }
+
+        using (SqliteCommand version = connection.CreateCommand())
+        {
+            version.Transaction = transaction;
+            version.CommandText = "PRAGMA user_version = 9;";
+            version.ExecuteNonQuery();
+        }
+        transaction.Commit();
+    }
+
+    /// <summary>Gets a stable, case-sensitive branch discriminator for the shared session and slot journal.</summary>
+    public Task<int?> GetBranchSubjectAsync(
+        GitBranchRequest request, bool create, CancellationToken cancellationToken
+    )
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!request.IsValid) throw new ArgumentException("Invalid branch identity.");
+        using SqliteConnection connection = Open();
+        using SqliteTransaction transaction = connection.BeginTransaction();
+        int? number = GetBranchSubject(connection, transaction, request, create);
+        transaction.Commit();
+        return Task.FromResult(number);
+    }
+
+    private static int? GetBranchSubject(
+        SqliteConnection connection, SqliteTransaction transaction, GitBranchRequest request, bool create
+    )
+    {
+        if (create)
+        {
+            using SqliteCommand insert = connection.CreateCommand();
+            insert.Transaction = transaction;
+            insert.CommandText = """
+                INSERT INTO git_branch_subjects(repository_key, clone_url, branch)
+                SELECT $repository, $url, $branch
+                WHERE NOT EXISTS (SELECT 1 FROM git_branch_subjects WHERE clone_url = $url AND branch = $branch);
+                """;
+            insert.Parameters.AddWithValue("$repository", request.RepositoryIdentity);
+            insert.Parameters.AddWithValue("$url", GitBranchRequest.NormalizeCloneUrl(request.CloneUrl));
+            insert.Parameters.AddWithValue("$branch", request.Branch);
+            insert.ExecuteNonQuery();
+        }
+        using SqliteCommand find = connection.CreateCommand();
+        find.Transaction = transaction;
+        find.CommandText = """
+            SELECT subject_number FROM git_branch_subjects
+            WHERE repository_key = $repository AND clone_url = $url AND branch = $branch;
+            """;
+        find.Parameters.AddWithValue("$repository", request.RepositoryIdentity);
+        find.Parameters.AddWithValue("$url", GitBranchRequest.NormalizeCloneUrl(request.CloneUrl));
+        find.Parameters.AddWithValue("$branch", request.Branch);
+        object? result = find.ExecuteScalar();
+        return result is null ? null : checked((int)(long)result);
+    }
+
     private static void RegisterProtectedSlot(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -1228,8 +1401,22 @@ public sealed class SqliteWorkspaceSessionJournal : IWorkspaceSessionJournal, IW
             Enum.Parse<WorkspaceSessionState>(reader.GetString(5), ignoreCase: false),
             reader.IsDBNull(6) ? null : reader.GetString(6),
             reader.IsDBNull(7) ? null : reader.GetString(7),
-            reader.IsDBNull(8) ? null : reader.GetString(8)
+            reader.IsDBNull(8) ? null : reader.GetString(8),
+            OptionalString(reader, "branch_name"),
+            OptionalString(reader, "clone_url")
         );
+    }
+
+    private static string? OptionalString(SqliteDataReader reader, string name)
+    {
+        for (int index = 0; index < reader.FieldCount; index++)
+        {
+            if (reader.GetName(index) == name)
+            {
+                return reader.IsDBNull(index) ? null : reader.GetString(index);
+            }
+        }
+        return null;
     }
 
     private static string UtcNow() =>

@@ -6,6 +6,14 @@ namespace GitWorkspacePool.Core.Domain;
 /// <summary>A provider-independent repository and short branch name. No PR or API is required.</summary>
 public sealed record GitBranchRequest(string CloneUrl, string Branch)
 {
+    /// <summary>Gets the shared pool repository identity, preserving case-sensitive Git URL paths.</summary>
+    public string RepositoryIdentity => GetRepositoryIdentity(CloneUrl);
+
+    /// <summary>Gets a canonical shared-pool identity for a configured Git clone URL.</summary>
+    public static string GetRepositoryIdentity(string cloneUrl) => "git:" + Convert.ToHexString(
+        SHA256.HashData(Encoding.UTF8.GetBytes(NormalizeCloneUrl(cloneUrl)))
+    ).ToLowerInvariant();
+
     /// <summary>Gets a case-sensitive identity, also safe as a Windows folder name.</summary>
     public string WorkspaceName => "git-" + Convert.ToHexString(
         SHA256.HashData(Encoding.UTF8.GetBytes(NormalizeCloneUrl(CloneUrl) + "\0" + Branch))

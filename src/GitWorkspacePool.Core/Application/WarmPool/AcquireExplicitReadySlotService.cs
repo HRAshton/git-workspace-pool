@@ -53,15 +53,58 @@ public sealed class AcquireExplicitReadySlotService
         CancellationToken cancellationToken
     )
     {
-        string repositoryKey = request.Provider + ":" + request.RepositoryKey;
-        if (!request.RepositoryKey.Equals(
-            trustedRepository.RepositoryKey,
-            StringComparison.OrdinalIgnoreCase
-        ))
+        if (!request.RepositoryKey.Equals(trustedRepository.RepositoryKey, StringComparison.OrdinalIgnoreCase))
         {
-            throw new InvalidOperationException("The PR does not belong to the trusted repository.");
+            throw new InvalidOperationException("The request does not belong to the trusted repository.");
         }
+        return await AcquireCoreAsync(
+            request.Provider + ":" + request.RepositoryKey, request.Number,
+            trustedRepository.LocalPath, trustedRepository.WorkspaceRoot,
+            slotId, expectedGeneration,
+            async (_, token) =>
+            {
+                await _git.FetchPullRequestAsync(trustedRepository.LocalPath, request.Number, token);
+                return await _git.GetPullRequestCommitAsync(trustedRepository.LocalPath, request.Number, token);
+            }, cancellationToken
+        );
+    }
 
+    /// <summary>Acquires a released slot for an ordinary Git branch using the same generation and ownership rules.</summary>
+    public Task<OpenPullRequestResult> AcquireBranchAsync(
+        GitBranchRequest request,
+        GitRepositoryRegistration trustedRepository,
+        int referenceNumber,
+        Guid slotId,
+        long expectedGeneration,
+        IGitBranchFetcher fetcher,
+        CancellationToken cancellationToken
+    )
+    {
+        if (!request.IsValid || !GitBranchRequest.OriginMatches(trustedRepository.CloneUrl, request.CloneUrl))
+        {
+            throw new InvalidOperationException("The branch does not belong to the trusted repository.");
+        }
+        return AcquireCoreAsync(
+            request.RepositoryIdentity, referenceNumber,
+            trustedRepository.LocalPath, trustedRepository.WorkspaceRoot,
+            slotId, expectedGeneration,
+            (operationId, token) => fetcher.FetchBranchCommitAsync(
+                trustedRepository.LocalPath, request.Branch, operationId, token
+            ), cancellationToken
+        );
+    }
+
+    private async Task<OpenPullRequestResult> AcquireCoreAsync(
+        string repositoryKey,
+        int referenceNumber,
+        string sourcePath,
+        string workspaceRoot,
+        Guid slotId,
+        long expectedGeneration,
+        Func<Guid, CancellationToken, Task<string>> fetchCommit,
+        CancellationToken cancellationToken
+    )
+    {
         WorkspaceSlot slot = await _slots.FindSlotAsync(slotId, cancellationToken)
             ?? throw new InvalidOperationException("The requested slot does not exist.");
         StringComparison comparison = OperatingSystem.IsWindows()
@@ -72,7 +115,7 @@ public sealed class AcquireExplicitReadySlotService
             || slot.Generation != expectedGeneration
             || !slot.RepositoryKey.Equals(repositoryKey, StringComparison.OrdinalIgnoreCase)
             || !Path.GetFullPath(slot.SourcePath).Equals(
-                Path.GetFullPath(trustedRepository.LocalPath), comparison
+                Path.GetFullPath(sourcePath), comparison
             )
         )
         {
@@ -80,8 +123,8 @@ public sealed class AcquireExplicitReadySlotService
         }
 
         _safety.EnsureSafe(
-            trustedRepository.LocalPath,
-            trustedRepository.WorkspaceRoot,
+            sourcePath,
+            workspaceRoot,
             slot.WorkspacePath
         );
 
@@ -93,14 +136,14 @@ public sealed class AcquireExplicitReadySlotService
         // Recheck under the OS lock before reserving, then commit ownership
         // before running Git. A foreign file or registration is never removed.
         _safety.EnsureSafe(
-            trustedRepository.LocalPath,
-            trustedRepository.WorkspaceRoot,
+            sourcePath,
+            workspaceRoot,
             slot.WorkspacePath
         );
         if (
             _files.Exists(slot.WorkspacePath)
             || await _git.IsRegisteredWorktreeAsync(
-                trustedRepository.LocalPath,
+                sourcePath,
                 slot.WorkspacePath,
                 cancellationToken
             )
@@ -115,8 +158,8 @@ public sealed class AcquireExplicitReadySlotService
             slotId,
             expectedGeneration,
             repositoryKey,
-            request.Number,
-            trustedRepository.LocalPath,
+            referenceNumber,
+            sourcePath,
             cancellationToken
         ) ?? throw new InvalidOperationException(
             "The Ready slot was leased or session ownership changed; no checkout occurred."
@@ -133,16 +176,7 @@ public sealed class AcquireExplicitReadySlotService
 
         // No rollback or deletion after this durable reservation.
         // Any Git failure leaves Preparing/Reserved state and evidence.
-        await _git.FetchPullRequestAsync(
-            trustedRepository.LocalPath,
-            request.Number,
-            cancellationToken
-        );
-        string commit = await _git.GetPullRequestCommitAsync(
-            trustedRepository.LocalPath,
-            request.Number,
-            cancellationToken
-        );
+        string commit = await fetchCommit(reservation.Session.OperationId, cancellationToken);
         await _sessions.PinCommitAsync(
             reservation.Session.OperationId,
             commit,
@@ -158,14 +192,14 @@ public sealed class AcquireExplicitReadySlotService
         }
 
         _safety.EnsureSafe(
-            trustedRepository.LocalPath,
-            trustedRepository.WorkspaceRoot,
+            sourcePath,
+            workspaceRoot,
             slot.WorkspacePath
         );
         if (
             _files.Exists(slot.WorkspacePath)
             || await _git.IsRegisteredWorktreeAsync(
-                trustedRepository.LocalPath,
+                sourcePath,
                 slot.WorkspacePath,
                 cancellationToken
             )
@@ -177,7 +211,7 @@ public sealed class AcquireExplicitReadySlotService
         }
 
         await _git.CreateWorktreeAsync(
-            trustedRepository.LocalPath,
+            sourcePath,
             slot.WorkspacePath,
             commit,
             cancellationToken
@@ -194,7 +228,7 @@ public sealed class AcquireExplicitReadySlotService
         if (
             !_files.Exists(slot.WorkspacePath)
             || !await _git.IsRegisteredWorktreeAsync(
-                trustedRepository.LocalPath,
+                sourcePath,
                 slot.WorkspacePath,
                 cancellationToken
             )

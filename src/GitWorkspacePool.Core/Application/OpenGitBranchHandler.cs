@@ -16,17 +16,23 @@ public sealed class OpenGitBranchHandler
     private readonly IWorkspaceReadySlotSafety _safety;
     private readonly IWorkspaceReadySlotCheckoutVerifier _checkout;
     private readonly IEditorLauncher _editor;
+    private readonly OpenReleasedParkedWorkspaceService? _retained;
+    private readonly AcquireExplicitReadySlotService? _ready;
 
     /// <summary>Composes repository trust, durable intent, path verification and editor launch.</summary>
     public OpenGitBranchHandler(
         IGitBranchCatalog catalog, IGitRemoteReader remotes, IGitBranchFetcher fetch,
         IWorkspaceGit git, IGitBranchSessionStore store, IWorkspaceOperationLock locks,
         IWorkspaceDirectories directories, IWorkspaceReadySlotSafety safety,
-        IWorkspaceReadySlotCheckoutVerifier checkout, IEditorLauncher editor
+        IWorkspaceReadySlotCheckoutVerifier checkout, IEditorLauncher editor,
+        OpenReleasedParkedWorkspaceService? retained = null,
+        AcquireExplicitReadySlotService? ready = null
     )
     {
         _catalog = catalog; _remotes = remotes; _fetch = fetch; _git = git; _store = store;
         _locks = locks; _directories = directories; _safety = safety; _checkout = checkout; _editor = editor;
+        _retained = retained;
+        _ready = ready;
     }
 
     /// <summary>Opens the exact registered repository/branch and preserves an existing owner's edits.</summary>
@@ -37,17 +43,36 @@ public sealed class OpenGitBranchHandler
             ?? throw new InvalidOperationException("Register this clone URL in GitRepositories before opening its branch.");
         if (!GitBranchRequest.OriginMatches(repository.CloneUrl, request.CloneUrl))
             throw new InvalidOperationException("Repository registration does not match the requested Git URL.");
-        string path = Path.GetFullPath(Path.Combine(repository.WorkspaceRoot, request.WorkspaceName));
+        GitBranchSession? previous = await _store.FindAsync(request, cancellationToken);
+        string path = previous?.WorkspacePath
+            ?? Path.GetFullPath(Path.Combine(repository.WorkspaceRoot, request.WorkspaceName));
+        ValidateOwnership(previous, repository, path);
         _safety.EnsureSafe(repository.LocalPath, repository.WorkspaceRoot, path);
+        await VerifyOriginAsync(repository, cancellationToken);
+        if (previous?.State == WorkspaceSessionState.Released)
+        {
+            if (_retained is null)
+            {
+                throw new InvalidOperationException("Retained-worktree opening is not configured.");
+            }
+            string parked = await _retained.OpenAsync(previous.OperationId, cancellationToken);
+            return new OpenPullRequestResult(parked, true);
+        }
+
         await using IAsyncDisposable ownership = await _locks.AcquireAsync(path, cancellationToken);
         _safety.EnsureSafe(repository.LocalPath, repository.WorkspaceRoot, path);
         await VerifyOriginAsync(repository, cancellationToken);
-        GitBranchSession? previous = await _store.FindAsync(request, cancellationToken);
+        previous = await _store.FindAsync(request, cancellationToken);
+        ValidateOwnership(previous, repository, path);
         bool exists = _directories.Exists(path);
         bool registered = await _git.IsRegisteredWorktreeAsync(repository.LocalPath, path, cancellationToken);
         if (previous is null && (exists || registered))
             throw new InvalidOperationException("The target is already occupied or registered. No existing worktree will be adopted.");
         GitBranchSession session = await _store.ReserveAsync(request, repository, path, cancellationToken);
+        if (session.State is WorkspaceSessionState.Parking or WorkspaceSessionState.Parked or WorkspaceSessionState.Unparking)
+        {
+            throw new InvalidOperationException("This branch is parked or has an interrupted move. Use the explicit Park/Unpark command.");
+        }
         if (session.State == WorkspaceSessionState.RecoveryRequired)
             throw new InvalidOperationException("This branch workspace requires manual recovery. Its files and ownership are retained.");
         if (session.State == WorkspaceSessionState.Preparing && session.PinnedCommit is not null
@@ -56,9 +81,13 @@ public sealed class OpenGitBranchHandler
             await QuarantineAsync(session, cancellationToken);
         }
         bool reused;
-        if (session.State == WorkspaceSessionState.Active)
+        if (session.State is WorkspaceSessionState.Active or WorkspaceSessionState.Suspended)
         {
             if (!exists || !registered) await QuarantineAsync(session, cancellationToken);
+            if (session.State == WorkspaceSessionState.Suspended)
+            {
+                await _store.ResumeAsync(session.OperationId, cancellationToken);
+            }
             reused = true;
         }
         else if (exists && registered)
@@ -101,6 +130,55 @@ public sealed class OpenGitBranchHandler
         }
         await _editor.OpenAsync(path, cancellationToken);
         return new OpenPullRequestResult(path, reused);
+    }
+
+    /// <summary>Opens an existing owner first, or explicitly acquires the selected released slot for a new branch.</summary>
+    public async Task<OpenPullRequestResult> HandleInReadySlotAsync(
+        GitBranchRequest request,
+        Guid slotId,
+        long expectedGeneration,
+        CancellationToken cancellationToken
+    )
+    {
+        if (!request.IsValid) throw new ArgumentException("Invalid Git clone URL or branch name.");
+        GitRepositoryRegistration repository = _catalog.Find(request)
+            ?? throw new InvalidOperationException("The Git repository must be configured first.");
+        if (!GitBranchRequest.OriginMatches(repository.CloneUrl, request.CloneUrl))
+        {
+            throw new InvalidOperationException("Repository registration does not match the requested Git URL.");
+        }
+        await VerifyOriginAsync(repository, cancellationToken);
+        if (await _store.FindAsync(request, cancellationToken) is not null)
+        {
+            return await HandleAsync(request, cancellationToken);
+        }
+        if (_ready is null)
+        {
+            throw new InvalidOperationException("Released-slot allocation is not configured.");
+        }
+        int reference = await _store.GetReferenceNumberAsync(request, cancellationToken);
+        OpenPullRequestResult result = await _ready.AcquireBranchAsync(
+            request, repository, reference, slotId, expectedGeneration, _fetch, cancellationToken
+        );
+        await _editor.OpenAsync(result.WorkspacePath, cancellationToken);
+        return result;
+    }
+
+    private static void ValidateOwnership(
+        GitBranchSession? previous,
+        GitRepositoryRegistration repository,
+        string path
+    )
+    {
+        StringComparison comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        if (!Path.GetDirectoryName(Path.GetFullPath(path))!.Equals(
+                Path.GetFullPath(repository.WorkspaceRoot), comparison)
+            || (previous is not null && !Path.GetFullPath(previous.SourcePath).Equals(
+                Path.GetFullPath(repository.LocalPath), comparison)))
+        {
+            throw new InvalidOperationException("Branch ownership does not match the configured source and workspace root.");
+        }
     }
 
     private async Task VerifyOriginAsync(GitRepositoryRegistration repository, CancellationToken cancellationToken)

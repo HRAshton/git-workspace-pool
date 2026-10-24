@@ -2,7 +2,7 @@
 
 A Windows tray application that opens configured Git repositories and branches, or GitHub pull requests, in local VS Code worktrees. A Tampermonkey userscript supplies the browser action.
 
-For Bitbucket Data Center 9 or another HTTPS Git server, use the [generic repo + branch workflow](docs/GIT_BRANCH_WORKSPACES.md). It requires no PR or provider API. Configure `GitRepositories`, then use **Open Git branch...** or the v2 browser link. Git handles username/password authentication through your existing credential helper.
+For Bitbucket Data Center 9 or another HTTPS Git server, use the [generic repo + branch workflow](docs/GIT_BRANCH_WORKSPACES.md). It requires no PR or provider API. Configure `GitRepositories`, then use **Open Git branch...** or the v2 browser link. Git handles username/password authentication through your existing credential helper. Generic branches also use the shared snapshot, parking, release, recovery and compatible npm-transfer lifecycle; [back up before the schema-v9 upgrade](docs/LIFECYCLE_UPGRADE.md).
 
 ## Status
 

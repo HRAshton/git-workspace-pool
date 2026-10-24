@@ -200,7 +200,11 @@ public sealed class SqliteWorkspaceSlotRegistry : IWorkspaceSlotRegistry, IWorks
             SELECT owner.operation_id, owner.repository_key, owner.pr_number,
                    owner.source_path, owner.workspace_path, owner.state,
                    owner.pinned_commit, owner.parking_path, owner.parking_head,
-                   lease.lease_id, lease.generation
+                   lease.lease_id, lease.generation,
+                   (SELECT branch FROM git_branch_subjects b WHERE b.repository_key = owner.repository_key
+                       AND b.subject_number = owner.pr_number) AS branch_name,
+                   (SELECT clone_url FROM git_branch_subjects b WHERE b.repository_key = owner.repository_key
+                       AND b.subject_number = owner.pr_number) AS clone_url
               FROM workspace_slots AS slot
               JOIN workspace_slot_leases AS lease
                 ON lease.slot_id = slot.slot_id AND lease.state = 'Held'
@@ -230,7 +234,9 @@ public sealed class SqliteWorkspaceSlotRegistry : IWorkspaceSlotRegistry, IWorks
             WorkspaceSessionState.Preparing,
             reader.IsDBNull(6) ? null : reader.GetString(6),
             reader.IsDBNull(7) ? null : reader.GetString(7),
-            reader.IsDBNull(8) ? null : reader.GetString(8)
+            reader.IsDBNull(8) ? null : reader.GetString(8),
+            reader.IsDBNull(11) ? null : reader.GetString(11),
+            reader.IsDBNull(12) ? null : reader.GetString(12)
         );
         WorkspaceSlotLease lease = new(
             Guid.Parse(reader.GetString(9)),
@@ -255,7 +261,11 @@ public sealed class SqliteWorkspaceSlotRegistry : IWorkspaceSlotRegistry, IWorks
             SELECT owner.operation_id, owner.repository_key, owner.pr_number,
                    owner.source_path, owner.workspace_path, owner.pinned_commit,
                    owner.parking_path, owner.parking_head,
-                   lease.lease_id, lease.slot_id, lease.generation
+                   lease.lease_id, lease.slot_id, lease.generation,
+                   (SELECT branch FROM git_branch_subjects b WHERE b.repository_key = owner.repository_key
+                       AND b.subject_number = owner.pr_number) AS branch_name,
+                   (SELECT clone_url FROM git_branch_subjects b WHERE b.repository_key = owner.repository_key
+                       AND b.subject_number = owner.pr_number) AS clone_url
               FROM workspace_slots AS slot
               JOIN workspace_slot_leases AS lease
                 ON lease.slot_id = slot.slot_id
@@ -291,7 +301,9 @@ public sealed class SqliteWorkspaceSlotRegistry : IWorkspaceSlotRegistry, IWorks
                 WorkspaceSessionState.Preparing,
                 reader.IsDBNull(5) ? null : reader.GetString(5),
                 reader.IsDBNull(6) ? null : reader.GetString(6),
-                reader.IsDBNull(7) ? null : reader.GetString(7)
+                reader.IsDBNull(7) ? null : reader.GetString(7),
+                reader.IsDBNull(11) ? null : reader.GetString(11),
+                reader.IsDBNull(12) ? null : reader.GetString(12)
             );
             WorkspaceSlotLease lease = new(
                 Guid.Parse(reader.GetString(8)),
