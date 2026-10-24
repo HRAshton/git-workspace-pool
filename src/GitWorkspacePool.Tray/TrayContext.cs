@@ -22,6 +22,10 @@ internal sealed class TrayContext : ApplicationContext
     private readonly OpenPullRequestHandler _open;
     private readonly OpenGitBranchHandler _openBranch;
     private readonly LocalOperationTimings _timings;
+    private readonly PlanGitBranchReuseService _reusePlan;
+    private readonly RefreshConfiguredBaselinesService _baselines;
+    private readonly System.Windows.Forms.Timer _baselineTimer;
+    private bool _baselineSettingsErrorShown;
     private readonly IGitBranchSessionStore _branchSessions;
     private readonly IWorkspaceSnapshotSessionStore _sessions;
     private readonly IWorkspaceRecoveryJournal _recoverySessions;
@@ -167,6 +171,23 @@ internal sealed class TrayContext : ApplicationContext
         branchRecovery.DropDownOpening += async (_, _) => await PopulateBranchRecoveryAsync(branchRecovery);
         menu.Items.Insert(2, branchRecovery);
 
+        _reusePlan = new PlanGitBranchReuseService(repositories, _branchSessions, git, git,
+            new VerifiedReuseCandidateCollector(slots, journal, git, new GitWorkspaceParkingOperations(git), new WorkspaceReadySlotSafety()));
+        _baselines = new RefreshConfiguredBaselinesService(git, git);
+        menu.Items.Insert(1, new ToolStripMenuItem("Open branch with reuse choices...", null, async (_, _) =>
+        {
+            try
+            {
+                GitBranchRequest? request = AskForGitBranch();
+                if (request is not null) await OpenBranchWithReuseAsync(request);
+            }
+            catch (Exception exception) { Notify("Could not open branch with reuse", exception.Message); }
+        }));
+        menu.Items.Add("Refresh configured baselines now...", null, async (_, _) => await RefreshBaselinesAsync(true));
+        ToolStripMenuItem baselineStatus = new("Configured baseline status...");
+        baselineStatus.DropDownOpening += (_, _) => PopulateBaselineStatus(baselineStatus);
+        menu.Items.Add(baselineStatus);
+
         ToolStripMenuItem snapshotsMenu = new("Snapshot active workspace...");
         snapshotsMenu.DropDownOpening += async (_, _) => await PopulateSnapshotsAsync(snapshotsMenu);
         menu.Items.Insert(1, snapshotsMenu);
@@ -232,6 +253,9 @@ internal sealed class TrayContext : ApplicationContext
             await PopulateInterruptedSlotRecoveryAsync(interruptedMenu);
         menu.Items.Insert(4, interruptedMenu);
 
+        _baselineTimer = new System.Windows.Forms.Timer { Interval = 60000 };
+        _baselineTimer.Tick += async (_, _) => await RefreshBaselinesAsync(false);
+        _baselineTimer.Start();
         _ = ListenAsync(_shutdown.Token);
         _ = AnnounceInterruptedAllocationsAsync();
 
@@ -243,6 +267,8 @@ internal sealed class TrayContext : ApplicationContext
 
     protected override void ExitThreadCore()
     {
+        _baselineTimer.Stop();
+        _baselineTimer.Dispose();
         _shutdown.Cancel();
         _icon.Visible = false;
         _icon.Dispose();
@@ -431,6 +457,10 @@ internal sealed class TrayContext : ApplicationContext
             {
                 Enabled = false,
             });
+            WorkspaceStorageWarningAssessment warning = WorkspaceStorageWarningPolicy.Assess(usage, SettingsStore.Read().StorageWarningLimits);
+            menu.DropDownItems.Add(new ToolStripMenuItem(warning.AnyExceeded
+                ? "Configured evidence warning threshold exceeded; review storage manually."
+                : "Within configured evidence warning thresholds.") { Enabled = false });
             menu.DropDownItems.Add(new ToolStripMenuItem(
                 "Read-only logical sizes; no cleanup or eviction."
             )
@@ -1533,6 +1563,19 @@ internal sealed class TrayContext : ApplicationContext
     {
         try
         {
+            if (SettingsStore.Read().OfferVerifiedBranchReuse)
+            {
+                await InvokeUiAsync(() => OpenBranchWithReuseAsync(request));
+            }
+            else await OpenGitBranchDirectAsync(request);
+        }
+        catch (Exception exception) { Notify("Could not open Git branch", exception.Message); }
+    }
+
+    private async Task OpenGitBranchDirectAsync(GitBranchRequest request)
+    {
+        try
+        {
             // SQLite inventory and filesystem preflight must not block the tray thread.
             OpenPullRequestResult result = await RunOperationAsync(WorkspaceOperation.OpenBranch, "Open Git branch",
                 token => _openBranch.HandleAsync(request, token));
@@ -1607,6 +1650,111 @@ internal sealed class TrayContext : ApplicationContext
         }
         catch (OperationCanceledException) { }
         catch (Exception exception) { Notify("Could not open branch in released slot", exception.Message); }
+    }
+
+    private Task InvokeUiAsync(Func<Task> action)
+    {
+        if (!_dispatcher.InvokeRequired) return action();
+        TaskCompletionSource<bool> done = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        _dispatcher.BeginInvoke((Action)(async () =>
+        {
+            try { await action(); done.TrySetResult(true); }
+            catch (Exception exception) { done.TrySetException(exception); }
+        }));
+        return done.Task;
+    }
+
+    private async Task OpenBranchWithReuseAsync(GitBranchRequest request)
+    {
+        try
+        {
+            GitBranchReusePlan plan = await RunOperationAsync(WorkspaceOperation.InspectPool, "Inspect verified reuse choices",
+                token => _reusePlan.PlanAsync(request, token));
+            if (plan.ExistingOwner)
+            {
+                await OpenGitBranchDirectAsync(request);
+                return;
+            }
+            using WorkspaceReuseChoiceForm choice = new(plan);
+            DialogResult answer = choice.ShowDialog();
+            if (answer == DialogResult.No)
+            {
+                await OpenGitBranchDirectAsync(request);
+                return;
+            }
+            VerifiedReuseCandidate? candidate = choice.SelectedCandidate;
+            if (answer != DialogResult.Yes || candidate is null) return;
+            bool copyNpm = choice.CopyNpm;
+            var opened = await RunOperationAsync(WorkspaceOperation.AcquireSlot, "Open selected branch workspace", async token =>
+            {
+                OpenPullRequestResult result = await _openBranch.HandleInReadySlotAsync(request, candidate.SlotId,
+                    candidate.Generation, token, plan.TargetCommit);
+                string? warning = null;
+                if (copyNpm && !result.Reused)
+                {
+                    try
+                    {
+                        GitBranchSession destination = await _branchSessions.FindAsync(request, token)
+                            ?? throw new InvalidOperationException("The destination owner could not be verified.");
+                        await _warmTransfer.TransferAsync(candidate.DonorSessionId, destination.OperationId, token);
+                    }
+                    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+                    {
+                        warning = "Checkout is ready, but dependency copying was refused or incomplete. "
+                            + "Inspect node_modules before using cached files. " + exception.Message;
+                    }
+                }
+                return (Result: result, Warning: warning);
+            });
+            Notify(opened.Warning is null ? "Branch workspace opened" : "Branch opened; inspect dependency copy",
+                opened.Warning ?? opened.Result.WorkspacePath);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception exception) { Notify("Could not open branch with reuse", exception.Message); }
+    }
+
+    private async Task RefreshBaselinesAsync(bool force)
+    {
+        try
+        {
+            AppSettings settings = SettingsStore.Read();
+            _baselineSettingsErrorShown = false;
+            if (!settings.GitRepositories.Any(repository => repository.BaselineBranches.Count != 0))
+            {
+                if (force) Notify("No baselines configured", "Add exact baseline branch names in Settings. No fetch was performed.");
+                return;
+            }
+            BaselineRefreshBatch batch = force
+                ? await RunOperationAsync(WorkspaceOperation.RefreshBaseline, "Refresh configured baselines",
+                    token => _baselines.RefreshDueAsync(settings.GitRepositories, settings.BaselineRefreshMinutes,
+                        DateTimeOffset.UtcNow, true, token))
+                : await Task.Run(() => _baselines.RefreshDueAsync(settings.GitRepositories, settings.BaselineRefreshMinutes,
+                    DateTimeOffset.UtcNow, false, _shutdown.Token), _shutdown.Token);
+            if (force) Notify("Baseline refresh", batch.AlreadyRunning ? "A refresh is already running."
+                : batch.Attempts.Count(status => status.Succeeded) + " ref(s) refreshed; "
+                    + batch.Attempts.Count(status => !status.Succeeded) + " failed. "
+                    + (batch.MoreDue ? "More configured refs will be refreshed in later bounded passes." : "No worktree was changed."));
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception exception)
+        {
+            if (force || !_baselineSettingsErrorShown) Notify("Baseline refresh unavailable", exception.Message);
+            _baselineSettingsErrorShown = true;
+        }
+    }
+
+    private void PopulateBaselineStatus(ToolStripMenuItem menu)
+    {
+        menu.DropDownItems.Clear();
+        IReadOnlyList<BaselineRefreshStatus> statuses = _baselines.Latest();
+        foreach (BaselineRefreshStatus status in statuses.Take(64))
+        {
+            menu.DropDownItems.Add(new ToolStripMenuItem(status.CloneUrl + " [" + status.Branch + "]: "
+                + (status.InProgress ? "refreshing..." : status.Succeeded ? status.Commit![..12] : "fetch failed; check Git authentication/origin"))
+            { Enabled = false, ToolTipText = "Last attempt: " + status.AttemptedAt.ToLocalTime().ToString("g") });
+        }
+        if (statuses.Count == 0) menu.DropDownItems.Add(new ToolStripMenuItem("No configured baseline has been attempted in this tray session.") { Enabled = false });
+        if (statuses.Count > 64) menu.DropDownItems.Add(new ToolStripMenuItem("Showing the first 64 baseline statuses.") { Enabled = false });
     }
 
     private async Task PopulateBranchRecoveryAsync(ToolStripMenuItem menu)

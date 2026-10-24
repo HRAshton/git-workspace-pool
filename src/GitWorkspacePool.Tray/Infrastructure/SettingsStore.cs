@@ -157,6 +157,9 @@ internal sealed class SettingsStore : IRepositoryCatalog, IGitBranchCatalog
     {
         if (settings.Repositories is null || settings.GitRepositories is null || settings.SnapshotLimits is null)
             throw new InvalidOperationException("Repository lists and snapshot limits cannot be null.");
+        if (settings.StorageWarningLimits is null) throw new InvalidOperationException("Storage warning settings cannot be null.");
+        settings.StorageWarningLimits.Validate();
+        RefreshConfiguredBaselinesService.Validate(settings.GitRepositories, settings.BaselineRefreshMinutes);
         if (settings.OperationTimeoutMinutes is < 1 or > 120)
             throw new InvalidOperationException("Operation timeout must be between 1 and 120 minutes.");
     }

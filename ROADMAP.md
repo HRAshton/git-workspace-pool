@@ -114,14 +114,14 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 ## P2 — Reusable warm pool
 
 - [x] Implement pure deterministic warm candidate ranking by exact HEAD, artifact invalidation and changed-path estimates; reject allocated, dirty, pinned, mismatched and recovery-required candidates.
-- [ ] Collect verified on-disk candidates, measure transition cost, and connect the allocator only after exclusive slot release and ownership transfer are proven.
+- [x] Collect bounded, verified on-disk Released/Ready candidates and connect ranked previews to generation-checked allocation with explicit user choice. Preserve existing owners first and bind selected checkout to the captured commit. Actual transition/installed latency benefit remains a separate measurement gate.
 - [x] Add manual, copy-only `node_modules` reuse from a Released parked PR into a verified Active PR in the exact former slot. Require matching npm manifests, matching durable Git owner/source/HEAD, ignored/untracked paths, no links or destination collisions, and bounded per-file integrity checks. Expose explicit tray consent, bytes, file counts, and wall-clock transfer duration.
 - [ ] Expand to configurable artifact classes (`bin`, `obj` etc.) only after a compatibility policy and safety tests; do not execute builds.
 - [ ] Safe fallback for unsupported paths/filesystems.
 - [ ] Optional ReFS block cloning where available.
 - [x] Offer bounded read-only logical disk accounting for app-owned snapshots and isolated recovery worktrees from the tray; refuse unknown, linked or excessive filesystem entries. This inventory never authorizes cleanup, eviction or reuse.
 - [ ] Disk budget and eviction based on size, usage, and recreation cost.
-- [ ] Explicitly configured baseline branches (`main`, `master`, `release/*`) refreshed in the background, without checkout.
+- [x] Explicit exact baseline branches (`main`, `master`, `release/9.0`) refreshed sequentially in bounded due-ref passes with per-ref deadlines, no checkout/pruning/project execution, and visible status. Empty lists disable background work.
 
 **Gate:** measured reduction in time-to-editor against cold checkout on representative large-file fixtures.
 

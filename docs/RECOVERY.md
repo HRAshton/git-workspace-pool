@@ -65,3 +65,7 @@ When an interrupted restore or snapshot is not verifiable, keep the original act
 ## Limits before automatic recovery or recycling
 
 Recovery inspection alone is **not** an operation journal for the restore lifecycle. Concurrent filesystem modifications, disk exhaustion, reparse-point races and unsupported Git features still require further hardening. No automatic release, recycle, eviction or snapshot pruning is enabled by this functionality.
+
+## Retained snapshot Git commits
+
+Keep the source clone and its internal `refs/git-workspace-pool/snapshots/*` refs together with snapshot payloads. New exports pin their captured commit before publication, so a later amend/reset and Git pruning do not remove the baseline required by restore. Pending publication can retain an unused ref; do not infer cleanup permission from an absent receipt. Source clone backups must include Git objects and these refs.

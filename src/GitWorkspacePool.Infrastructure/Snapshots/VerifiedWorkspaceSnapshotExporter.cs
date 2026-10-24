@@ -363,6 +363,17 @@ public sealed class VerifiedWorkspaceSnapshotExporter : IWorkspaceSnapshotExport
             }
         }
 
+        // A snapshot may capture a user commit created after the initial workspace allocation.
+        // Give that exact commit an independent durable ref before publishing its payload receipt.
+        // Otherwise an amend/reset plus ordinary Git pruning can make a valid snapshot unrestorable.
+        var pinned = await BoundedGitProcess.RunAsync(root,
+            ["update-ref", "--no-deref", "refs/git-workspace-pool/snapshots/" + snapshotId.ToString("N"),
+                before.Head, new string('0', before.Head.Length)], 1024, cancellationToken);
+        if (pinned.ExitCode != 0)
+        {
+            throw new InvalidOperationException("Snapshot commit could not be retained; pending evidence was preserved.");
+        }
+
         Directory.Move(staging, published);
         await CheckpointAsync(
             SnapshotCheckpoint.ExportPublished,

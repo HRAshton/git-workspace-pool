@@ -77,20 +77,26 @@ public sealed class AcquireExplicitReadySlotService
         Guid slotId,
         long expectedGeneration,
         IGitBranchFetcher fetcher,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        string? pinnedPreviewCommit = null
     )
     {
         if (!request.IsValid || !GitBranchRequest.OriginMatches(trustedRepository.CloneUrl, request.CloneUrl))
         {
             throw new InvalidOperationException("The branch does not belong to the trusted repository.");
         }
+        if (pinnedPreviewCommit is not null
+            && (pinnedPreviewCommit.Length is not (40 or 64) || !pinnedPreviewCommit.All(Uri.IsHexDigit)))
+        {
+            throw new ArgumentException("Preview commit must be a full immutable Git ID.");
+        }
         return AcquireCoreAsync(
             request.RepositoryIdentity, referenceNumber,
             trustedRepository.LocalPath, trustedRepository.WorkspaceRoot,
             slotId, expectedGeneration,
-            (operationId, token) => fetcher.FetchBranchCommitAsync(
-                trustedRepository.LocalPath, request.Branch, operationId, token
-            ), cancellationToken
+            (operationId, token) => pinnedPreviewCommit is not null
+                ? Task.FromResult(pinnedPreviewCommit)
+                : fetcher.FetchBranchCommitAsync(trustedRepository.LocalPath, request.Branch, operationId, token), cancellationToken
         );
     }
 

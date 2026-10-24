@@ -15,6 +15,11 @@ internal sealed class WorkspaceSettingsForm : Form
     private readonly NumericUpDown _snapshotBytes = new() { Minimum = 1, Maximum = 2147483648m, Width = 150, ThousandsSeparator = true };
     private readonly NumericUpDown _snapshotEntries = new() { Minimum = 1, Maximum = 50000, Width = 120 };
     private readonly CheckBox _timings = new() { AutoSize = true, Text = "Record local operation timings (no URLs, paths, branches or error text)" };
+    private readonly CheckBox _offerReuse = new() { AutoSize = true, Text = "Offer verified released-slot choices when opening a new Git branch" };
+    private readonly NumericUpDown _baselineMinutes = new() { Minimum = 15, Maximum = 1440, Width = 100 };
+    private readonly NumericUpDown _snapshotWarning = WarningInput();
+    private readonly NumericUpDown _recoveredWarning = WarningInput();
+    private readonly NumericUpDown _combinedWarning = WarningInput();
     private readonly CancellationTokenSource _lifetime = new();
     private bool _lifetimeDisposed;
     private AppSettings _original;
@@ -23,6 +28,13 @@ internal sealed class WorkspaceSettingsForm : Form
     public WorkspaceSettingsForm()
     {
         (_original, _fingerprint) = SettingsStore.ReadForEdit();
+        _git.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "Baselines", HeaderText = "Baseline branches (one per line)",
+            ToolTipText = "Optional exact branch names. Shift+Enter adds a line. Empty disables background fetches.",
+            DefaultCellStyle = new DataGridViewCellStyle { WrapMode = DataGridViewTriState.True },
+        });
+        _git.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.DisplayedCells;
         Text = "Git Workspace Pool settings";
         Width = 1000;
         Height = 650;
@@ -88,9 +100,14 @@ internal sealed class WorkspaceSettingsForm : Form
         return tab;
     }
 
+    private static NumericUpDown WarningInput() => new()
+    {
+        Minimum = 0, Maximum = 17592186044416m, Width = 180, ThousandsSeparator = true,
+    };
+
     private TabPage OptionsTab()
     {
-        TabPage tab = new("Editor and limits");
+        TabPage tab = new("Editor and limits") { AutoScroll = true };
         TableLayoutPanel layout = new()
         {
             Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(16), ColumnCount = 3,
@@ -109,6 +126,11 @@ internal sealed class WorkspaceSettingsForm : Form
         AddOption(layout, "Snapshot byte limit", _snapshotBytes);
         AddOption(layout, "Snapshot entry limit", _snapshotEntries);
         AddOption(layout, "Local diagnostics", _timings);
+        AddOption(layout, "Reuse choices", _offerReuse);
+        AddOption(layout, "Baseline interval (minutes)", _baselineMinutes);
+        AddOption(layout, "Snapshot warning bytes (0=off)", _snapshotWarning);
+        AddOption(layout, "Recovery warning bytes (0=off)", _recoveredWarning);
+        AddOption(layout, "Combined warning bytes (0=off)", _combinedWarning);
         Label notes = new()
         {
             AutoSize = true, MaximumSize = new Size(700, 0), Padding = new Padding(0, 14, 0, 0),
@@ -139,7 +161,8 @@ internal sealed class WorkspaceSettingsForm : Form
         _github.Rows.Clear();
         foreach (GitRepositoryRegistration repository in _original.GitRepositories)
         {
-            int index = _git.Rows.Add(repository.CloneUrl, repository.LocalPath, repository.WorkspaceRoot);
+            int index = _git.Rows.Add(repository.CloneUrl, repository.LocalPath, repository.WorkspaceRoot,
+                string.Join(Environment.NewLine, repository.BaselineBranches));
             _git.Rows[index].Tag = repository;
         }
         foreach (RepositoryRegistration repository in _original.Repositories)
@@ -152,6 +175,11 @@ internal sealed class WorkspaceSettingsForm : Form
         _snapshotBytes.Value = Math.Clamp(_original.SnapshotLimits.MaxBytes, 1, 2147483648L);
         _snapshotEntries.Value = Math.Clamp(_original.SnapshotLimits.MaxEntries, 1, 50000);
         _timings.Checked = _original.EnableLocalTimings;
+        _offerReuse.Checked = _original.OfferVerifiedBranchReuse;
+        _baselineMinutes.Value = Math.Clamp(_original.BaselineRefreshMinutes, 15, 1440);
+        _snapshotWarning.Value = _original.StorageWarningLimits.MaxSnapshotBytes ?? 0;
+        _recoveredWarning.Value = _original.StorageWarningLimits.MaxRecoveredBytes ?? 0;
+        _combinedWarning.Value = _original.StorageWarningLimits.MaxCombinedBytes ?? 0;
     }
 
     private static IEnumerable<DataGridViewRow> FilledRows(DataGridView grid)
@@ -174,10 +202,19 @@ internal sealed class WorkspaceSettingsForm : Form
                     { RepositoryKey = Cell(row, 0), LocalPath = Cell(row, 1), WorkspaceRoot = Cell(row, 2) }).ToList(),
                 GitRepositories = FilledRows(_git).Select(row =>
                     (row.Tag as GitRepositoryRegistration ?? new("", "", "")) with
-                    { CloneUrl = Cell(row, 0), LocalPath = Cell(row, 1), WorkspaceRoot = Cell(row, 2) }).ToList(),
+                    { CloneUrl = Cell(row, 0), LocalPath = Cell(row, 1), WorkspaceRoot = Cell(row, 2),
+                        BaselineBranches = Cell(row, 3).Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) }).ToList(),
                 EditorExecutable = string.IsNullOrWhiteSpace(_editor.Text) ? null : _editor.Text.Trim(),
                 OperationTimeoutMinutes = (int)_timeout.Value,
                 EnableLocalTimings = _timings.Checked,
+                OfferVerifiedBranchReuse = _offerReuse.Checked,
+                BaselineRefreshMinutes = (int)_baselineMinutes.Value,
+                StorageWarningLimits = new()
+                {
+                    MaxSnapshotBytes = _snapshotWarning.Value == 0 ? null : (long)_snapshotWarning.Value,
+                    MaxRecoveredBytes = _recoveredWarning.Value == 0 ? null : (long)_recoveredWarning.Value,
+                    MaxCombinedBytes = _combinedWarning.Value == 0 ? null : (long)_combinedWarning.Value,
+                },
                 SnapshotLimits = new SnapshotExportLimits
                 {
                     MaxBytes = (long)_snapshotBytes.Value,

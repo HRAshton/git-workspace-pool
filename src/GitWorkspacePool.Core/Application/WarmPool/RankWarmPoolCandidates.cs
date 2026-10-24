@@ -50,7 +50,7 @@ public static class RankWarmPoolCandidates
                 && (candidate.ObservedTransitionTime is null
                     || candidate.ObservedTransitionTime.Value >= TimeSpan.Zero)
             )
-            // No checkout is needed when this candidate already has the PR's HEAD.
+            // Prefer a matching captured head; an empty released slot still needs a fresh checkout.
             .OrderBy(candidate => !candidate.HeadCommitSha.Equals(
                 targetCommitSha, StringComparison.OrdinalIgnoreCase
             ))

@@ -19,6 +19,11 @@ public sealed class GitWorktreeSnapshotScanner
         CancellationToken cancellationToken
     )
     {
+        var filters = await BoundedGitProcess.RunAsync(workspacePath,
+            ["config", "--list", "--name-only", "--null"], 1024 * 1024, cancellationToken);
+        if (filters.ExitCode != 0) throw new InvalidOperationException("Cannot validate Git filters before reading status.");
+        GitProcessSafety.RejectExecutableFilters(filters.Output);
+
         string status = await RunAsync(
             workspacePath,
             [
@@ -132,55 +137,11 @@ public sealed class GitWorktreeSnapshotScanner
         CancellationToken cancellationToken
     )
     {
-        ProcessStartInfo startInfo = new("git")
+        var result = await BoundedGitProcess.RunAsync(workspacePath, arguments, 16 * 1024 * 1024, cancellationToken);
+        if (result.ExitCode != 0)
         {
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-            StandardOutputEncoding = new UTF8Encoding(false, true),
-            StandardErrorEncoding = Encoding.UTF8,
-        };
-        GitProcessSafety.Configure(startInfo);
-        startInfo.Environment["GIT_OPTIONAL_LOCKS"] = "0";
-        startInfo.ArgumentList.Add("-C");
-        startInfo.ArgumentList.Add(workspacePath);
-
-        foreach (string argument in arguments)
-        {
-            startInfo.ArgumentList.Add(argument);
+            throw new InvalidOperationException($"Git failed with exit code {result.ExitCode}: {result.Error.Trim()}");
         }
-
-        using Process process = Process.Start(startInfo)
-            ?? throw new InvalidOperationException("Failed to start Git status.");
-
-        Task<string> output = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        Task<string> error = process.StandardError.ReadToEndAsync(cancellationToken);
-
-        try
-        {
-            await process.WaitForExitAsync(cancellationToken);
-            string stdout = await output;
-            string stderr = await error;
-
-            if (process.ExitCode != 0)
-            {
-                throw new InvalidOperationException(
-                    $"Git workspace inspection failed ({process.ExitCode}): {stderr.Trim()}"
-                );
-            }
-
-            return stdout;
-        }
-        catch (OperationCanceledException)
-        {
-            if (!process.HasExited)
-            {
-                process.Kill(entireProcessTree: true);
-                await process.WaitForExitAsync(CancellationToken.None);
-            }
-
-            throw;
-        }
+        return result.Output;
     }
 }
