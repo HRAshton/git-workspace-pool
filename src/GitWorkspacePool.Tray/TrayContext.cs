@@ -1,13 +1,16 @@
 using System.Drawing;
+using System.Diagnostics;
 using GitWorkspacePool.Core.Application;
 using GitWorkspacePool.Core.Application.WarmPool;
 using GitWorkspacePool.Core.Domain;
 using GitWorkspacePool.Core.Domain.WarmPool;
 using GitWorkspacePool.Core.Protocol;
 using GitWorkspacePool.Infrastructure;
+using GitWorkspacePool.Infrastructure.Diagnostics;
 using GitWorkspacePool.Infrastructure.Snapshots;
 using GitWorkspacePool.Infrastructure.Transport;
 using GitWorkspacePool.Tray.Infrastructure;
+using GitWorkspacePool.Tray.Settings;
 
 namespace GitWorkspacePool.Tray;
 
@@ -18,6 +21,7 @@ internal sealed class TrayContext : ApplicationContext
     private readonly CancellationTokenSource _shutdown = new();
     private readonly OpenPullRequestHandler _open;
     private readonly OpenGitBranchHandler _openBranch;
+    private readonly LocalOperationTimings _timings;
     private readonly IGitBranchSessionStore _branchSessions;
     private readonly IWorkspaceSnapshotSessionStore _sessions;
     private readonly IWorkspaceRecoveryJournal _recoverySessions;
@@ -45,7 +49,8 @@ internal sealed class TrayContext : ApplicationContext
         _ = _dispatcher.Handle;
 
         ContextMenuStrip menu = new();
-        menu.Items.Add("Open settings", null, (_, _) => OpenSettings());
+        menu.Items.Add("Settings...", null, (_, _) => OpenSettings());
+        menu.Items.Add("Local operation timings...", null, (_, _) => OpenTimings());
         menu.Items.Add("Exit", null, (_, _) => ExitThread());
 
         _icon = new NotifyIcon
@@ -60,6 +65,7 @@ internal sealed class TrayContext : ApplicationContext
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "GitWorkspacePool"
         );
+        _timings = new LocalOperationTimings(Path.Combine(stateRoot, "diagnostics", "timings.jsonl"));
         GitCliWorkspaceGit git = new();
         SqliteWorkspaceSessionJournal journal = new(Path.Combine(stateRoot, "sessions.db"));
         FileWorkspaceOperationLock locks = new(Path.Combine(stateRoot, "locks"));
@@ -315,10 +321,8 @@ internal sealed class TrayContext : ApplicationContext
     {
         try
         {
-            WorkspaceSnapshotReceipt receipt = await _snapshot.CaptureAsync(
-                operationId,
-                _shutdown.Token
-            );
+            WorkspaceSnapshotReceipt receipt = await RunOperationAsync(WorkspaceOperation.Snapshot, "Snapshot workspace",
+                token => _snapshot.CaptureAsync(operationId, token));
             Notify("Workspace snapshot saved", receipt.Folder);
         }
         catch (OperationCanceledException)
@@ -388,7 +392,7 @@ internal sealed class TrayContext : ApplicationContext
 
         try
         {
-            string path = await _restore.RestoreAsync(snapshotId, _shutdown.Token);
+            string path = await RunOperationAsync(WorkspaceOperation.Restore, "Restore snapshot", token => _restore.RestoreAsync(snapshotId, token));
             Notify("Recovery worktree created", path);
         }
         catch (OperationCanceledException)
@@ -633,9 +637,10 @@ internal sealed class TrayContext : ApplicationContext
 
         try
         {
-            WorkspaceSession recovered = branchRepository is not null
-                ? await _reconcileSlot.ReconcileSelectedAsync(selected, branchRepository, _shutdown.Token)
-                : await _reconcileSlot.ReconcileSelectedAsync(selected, trusted!, _shutdown.Token);
+            WorkspaceSession recovered = await RunOperationAsync(WorkspaceOperation.RecoverSlot,
+                "Verify interrupted checkout", token => branchRepository is not null
+                    ? _reconcileSlot.ReconcileSelectedAsync(selected, branchRepository, token)
+                    : _reconcileSlot.ReconcileSelectedAsync(selected, trusted!, token));
             try
             {
                 await _editor.OpenAsync(recovered.WorkspacePath, _shutdown.Token);
@@ -715,7 +720,7 @@ internal sealed class TrayContext : ApplicationContext
 
         try
         {
-            string path = await _suspend.SuspendAsync(operationId, _shutdown.Token);
+            string path = await RunOperationAsync(WorkspaceOperation.Suspend, "Suspend workspace", token => _suspend.SuspendAsync(operationId, token));
             Notify("PR suspended; files preserved", path);
         }
         catch (OperationCanceledException)
@@ -788,9 +793,9 @@ internal sealed class TrayContext : ApplicationContext
 
         try
         {
-            string path = unpark
-                ? await _parking.UnparkAsync(id, _shutdown.Token)
-                : await _parking.ParkAsync(id, _shutdown.Token);
+            string path = await RunOperationAsync(unpark ? WorkspaceOperation.Unpark : WorkspaceOperation.Park,
+                unpark ? "Unpark workspace" : "Park workspace",
+                token => unpark ? _parking.UnparkAsync(id, token) : _parking.ParkAsync(id, token));
             Notify(unpark ? "Worktree returned" : "Worktree parked", path);
         }
         catch (OperationCanceledException)
@@ -889,12 +894,12 @@ internal sealed class TrayContext : ApplicationContext
 
         try
         {
-            WorkspaceSlotReleasePreparation prepared =
-                await _prepareRelease.PrepareAsync(operationId, _shutdown.Token);
-            WorkspaceSlotReleasePreparation finished =
-                await _finalizeRelease.FinalizeAsync(
-                    prepared.PreparationId, _shutdown.Token
-                );
+            WorkspaceSlotReleasePreparation finished = await RunOperationAsync(
+                WorkspaceOperation.ReleaseSlot, "Release parked slot", async token =>
+                {
+                    WorkspaceSlotReleasePreparation prepared = await _prepareRelease.PrepareAsync(operationId, token);
+                    return await _finalizeRelease.FinalizeAsync(prepared.PreparationId, token);
+                });
             Notify(
                 "Parked PR slot released",
                 "Slot " + finished.SlotId.ToString("N")[..8]
@@ -1044,9 +1049,8 @@ internal sealed class TrayContext : ApplicationContext
 
         try
         {
-            OpenPullRequestResult result = await _openInReadySlot.HandleAsync(
-                url, slotId, generation, _shutdown.Token
-            );
+            OpenPullRequestResult result = await RunOperationAsync(WorkspaceOperation.AcquireSlot, "Open workspace in released slot",
+                token => _openInReadySlot.HandleAsync(url, slotId, generation, token));
             Notify("PR opened in released slot", result.WorkspacePath);
         }
         catch (OperationCanceledException)
@@ -1301,9 +1305,8 @@ internal sealed class TrayContext : ApplicationContext
 
         try
         {
-            WarmArtifactTransferReceipt result = await _warmTransfer.TransferAsync(
-                releasedSessionId, activeSessionId, _shutdown.Token
-            );
+            WarmArtifactTransferReceipt result = await RunOperationAsync(WorkspaceOperation.TransferArtifacts, "Copy compatible dependencies",
+                token => _warmTransfer.TransferAsync(releasedSessionId, activeSessionId, token));
             Notify(
                 "npm dependency cache copied",
                 result.FileCount + " files / "
@@ -1399,12 +1402,86 @@ internal sealed class TrayContext : ApplicationContext
 
     private static void OpenSettings()
     {
-        System.Diagnostics.Process.Start(
-            new System.Diagnostics.ProcessStartInfo(SettingsStore.FilePath)
+        try
+        {
+            using WorkspaceSettingsForm settings = new();
+            settings.ShowDialog();
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(exception.Message, "Could not open settings", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private void OpenTimings()
+    {
+        try
+        {
+            using WorkspaceTimingsForm report = new(_timings);
+            report.ShowDialog();
+        }
+        catch (Exception exception) { Notify("Cannot read local timings", exception.Message); }
+    }
+
+    private Task<T> RunOperationAsync<T>(
+        WorkspaceOperation operation,
+        string title,
+        Func<CancellationToken, Task<T>> action
+    )
+    {
+        if (_dispatcher.IsDisposed) return Task.FromCanceled<T>(new CancellationToken(true));
+        if (_dispatcher.InvokeRequired)
+        {
+            TaskCompletionSource<T> result = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            _dispatcher.BeginInvoke((Action)(async () =>
             {
-                UseShellExecute = true,
+                try { result.TrySetResult(await RunOperationAsync(operation, title, action)); }
+                catch (OperationCanceledException) { result.TrySetCanceled(); }
+                catch (Exception exception) { result.TrySetException(exception); }
+            }));
+            return result.Task;
+        }
+        return RunOnUiThreadAsync(operation, title, action);
+    }
+
+    private async Task<T> RunOnUiThreadAsync<T>(
+        WorkspaceOperation operation,
+        string title,
+        Func<CancellationToken, Task<T>> action
+    )
+    {
+        AppSettings settings = SettingsStore.Read();
+        using CancellationTokenSource cancellation = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token);
+        cancellation.CancelAfter(TimeSpan.FromMinutes(settings.OperationTimeoutMinutes));
+        using WorkspaceOperationForm progress = new(title, cancellation);
+        progress.Show();
+        Stopwatch clock = Stopwatch.StartNew();
+        WorkspaceOperationOutcome outcome = WorkspaceOperationOutcome.Failed;
+        try
+        {
+            T value = await Task.Run(() => action(cancellation.Token), cancellation.Token);
+            outcome = WorkspaceOperationOutcome.Completed;
+            return value;
+        }
+        catch (OperationCanceledException)
+        {
+            outcome = WorkspaceOperationOutcome.Cancelled;
+            Notify("Operation cancelled", "Unfinished work and recovery evidence have been preserved.");
+            throw;
+        }
+        finally
+        {
+            clock.Stop();
+            progress.Complete();
+            if (settings.EnableLocalTimings)
+            {
+                try { await Task.Run(() => _timings.Record(operation, clock.Elapsed, outcome)); }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException)
+                {
+                    Notify("Local timing was not recorded", "The operation result is unchanged. Check access to the diagnostics folder.");
+                }
             }
-        );
+        }
     }
 
     private async Task ListenAsync(CancellationToken cancellationToken)
@@ -1435,10 +1512,8 @@ internal sealed class TrayContext : ApplicationContext
 
         try
         {
-            OpenPullRequestResult result = await _open.HandleAsync(
-                requestUrl,
-                _shutdown.Token
-            );
+            OpenPullRequestResult result = await RunOperationAsync(WorkspaceOperation.OpenPullRequest, "Open PR workspace",
+                token => _open.HandleAsync(requestUrl, token));
             Notify(
                 result.Reused ? "Reopened PR workspace" : "Created PR workspace",
                 result.WorkspacePath
@@ -1459,8 +1534,8 @@ internal sealed class TrayContext : ApplicationContext
         try
         {
             // SQLite inventory and filesystem preflight must not block the tray thread.
-            OpenPullRequestResult result = await Task.Run(
-                () => _openBranch.HandleAsync(request, _shutdown.Token), _shutdown.Token);
+            OpenPullRequestResult result = await RunOperationAsync(WorkspaceOperation.OpenBranch, "Open Git branch",
+                token => _openBranch.HandleAsync(request, token));
             Notify(result.Reused ? "Reopened branch workspace" : "Created branch workspace", result.WorkspacePath);
         }
         catch (OperationCanceledException) { }
@@ -1526,8 +1601,8 @@ internal sealed class TrayContext : ApplicationContext
                     + "? The previous owner's parked files are retained. Existing branch owners reopen in place.",
                 "Use released workspace slot", MessageBoxButtons.YesNo, MessageBoxIcon.Question,
                 MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
-            OpenPullRequestResult result = await Task.Run(() => _openBranch.HandleInReadySlotAsync(
-                request, slot.SlotId, slot.Generation, _shutdown.Token), _shutdown.Token);
+            OpenPullRequestResult result = await RunOperationAsync(WorkspaceOperation.AcquireSlot, "Open branch in released slot",
+                token => _openBranch.HandleInReadySlotAsync(request, slot.SlotId, slot.Generation, token));
             Notify("Branch workspace opened", result.WorkspacePath);
         }
         catch (OperationCanceledException) { }

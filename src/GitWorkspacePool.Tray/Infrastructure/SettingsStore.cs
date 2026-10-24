@@ -1,6 +1,8 @@
 using System.Text.Json;
 using GitWorkspacePool.Core.Application;
 using GitWorkspacePool.Core.Domain;
+using GitWorkspacePool.Infrastructure;
+using GitWorkspacePool.Infrastructure.Configuration;
 
 namespace GitWorkspacePool.Tray.Infrastructure;
 
@@ -24,17 +26,7 @@ internal sealed class SettingsStore : IRepositoryCatalog, IGitBranchCatalog
 
         if (!File.Exists(FilePath))
         {
-            AppSettings example = new()
-            {
-                Repositories =
-                [
-                    new RepositoryRegistration(
-                        "example/repo",
-                        @"C:\src\repo",
-                        @"C:\src\pr-workspaces"
-                    ),
-                ],
-            };
+            AppSettings example = new();
             File.WriteAllText(FilePath, JsonSerializer.Serialize(example, JsonOptions));
         }
     }
@@ -97,13 +89,15 @@ internal sealed class SettingsStore : IRepositoryCatalog, IGitBranchCatalog
         GitRepositoryRegistration[] matches = Read().GitRepositories
             .Where(repository => GitBranchRequest.OriginMatches(repository.CloneUrl, request.CloneUrl)).ToArray();
         if (matches.Length > 1) throw new InvalidOperationException("Duplicate Git clone URL registration.");
-        return matches.SingleOrDefault();
+        GitRepositoryRegistration? match = matches.SingleOrDefault();
+        if (match is not null) ValidatePaths(match.LocalPath, match.WorkspaceRoot);
+        return match;
     }
 
     public static AppSettings Read()
     {
         AppSettings? settings = JsonSerializer.Deserialize<AppSettings>(
-            File.ReadAllText(FilePath),
+            new AtomicConfigurationFile(FilePath).Read().Text,
             JsonOptions
         );
 
@@ -112,16 +106,67 @@ internal sealed class SettingsStore : IRepositoryCatalog, IGitBranchCatalog
             throw new InvalidOperationException("Invalid settings.json or SnapshotLimits.");
         }
 
+        ValidateLimits(settings);
         settings.SnapshotLimits.Validate();
         if (settings.GitRepositories is null) throw new InvalidOperationException("Invalid GitRepositories settings.");
         foreach (GitRepositoryRegistration repository in settings.GitRepositories)
         {
             _ = GitBranchRequest.NormalizeCloneUrl(repository.CloneUrl);
-            if (!Path.IsPathFullyQualified(repository.LocalPath) || !Path.IsPathFullyQualified(repository.WorkspaceRoot)
-                || !Directory.Exists(repository.LocalPath))
-                throw new InvalidOperationException("Git repository paths must be absolute and the clone must exist.");
         }
         return settings;
     }
+    public static (AppSettings Settings, string Fingerprint) ReadForEdit()
+    {
+        ConfigurationSnapshot snapshot = new AtomicConfigurationFile(FilePath).Read();
+        AppSettings settings = JsonSerializer.Deserialize<AppSettings>(snapshot.Text, JsonOptions)
+            ?? throw new InvalidOperationException("Settings must contain a JSON object.");
+        return (settings, snapshot.Fingerprint);
+    }
+
+    public static string Save(AppSettings settings, string expectedFingerprint)
+    {
+        ValidateLimits(settings);
+        settings.SnapshotLimits.Validate();
+        HashSet<string> urls = new(StringComparer.Ordinal);
+        foreach (GitRepositoryRegistration repository in settings.GitRepositories)
+        {
+            string url = GitBranchRequest.NormalizeCloneUrl(repository.CloneUrl);
+            if (!urls.Add(url)) throw new InvalidOperationException("Each Git clone URL must be registered once.");
+            ValidatePaths(repository.LocalPath, repository.WorkspaceRoot);
+        }
+        HashSet<string> keys = new(StringComparer.OrdinalIgnoreCase);
+        foreach (RepositoryRegistration repository in settings.Repositories)
+        {
+            if (!PullRequestReference.TryParse("https://github.com/" + repository.RepositoryKey + "/pull/1", out _)
+                || !keys.Add(repository.RepositoryKey))
+            {
+                throw new InvalidOperationException("GitHub registrations need a unique owner/repository key.");
+            }
+            ValidatePaths(repository.LocalPath, repository.WorkspaceRoot);
+        }
+        if (!string.IsNullOrWhiteSpace(settings.EditorExecutable)
+            && (!Path.IsPathFullyQualified(settings.EditorExecutable) || !File.Exists(settings.EditorExecutable)))
+        {
+            throw new InvalidOperationException("Choose the existing absolute path of VS Code Code.exe.");
+        }
+        return new AtomicConfigurationFile(FilePath).Save(
+            JsonSerializer.Serialize(settings, JsonOptions), expectedFingerprint).Fingerprint;
+    }
+
+    private static void ValidateLimits(AppSettings settings)
+    {
+        if (settings.Repositories is null || settings.GitRepositories is null || settings.SnapshotLimits is null)
+            throw new InvalidOperationException("Repository lists and snapshot limits cannot be null.");
+        if (settings.OperationTimeoutMinutes is < 1 or > 120)
+            throw new InvalidOperationException("Operation timeout must be between 1 and 120 minutes.");
+    }
+
+    private static void ValidatePaths(string source, string root)
+    {
+        if (!Path.IsPathFullyQualified(source) || !Path.IsPathFullyQualified(root) || !Directory.Exists(source))
+            throw new InvalidOperationException("Use absolute paths and an existing local clone.");
+        new WorkspaceReadySlotSafety().EnsureSafe(source, root, Path.Combine(root, "settings-preflight"));
+    }
+
 }
 

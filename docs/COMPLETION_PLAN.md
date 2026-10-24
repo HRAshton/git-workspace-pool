@@ -15,7 +15,7 @@ Optional ReFS acceleration and provider-specific API adapters remain extension w
 ## Progress
 
 - [x] Shared branch/PR lifecycle and upgrade tests implemented; merge remains gated on current-head Windows validation.
-- [ ] Settings, cancellation/progress and operational diagnostics.
+- [x] Settings, cancellation/progress and opt-in local timing diagnostics implemented; merge remains gated on Windows validation.
 - [ ] Verified pool selection and artifact policies.
 - [ ] Storage governance and safe recovery/retention policy.
 - [ ] Extended release validation and package evidence.
