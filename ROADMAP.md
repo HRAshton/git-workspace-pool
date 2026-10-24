@@ -134,8 +134,9 @@ This is a Windows tray app + Tampermonkey userscript. The application **never** 
 - [x] Add an unsigned, self-contained Windows x64 preview ZIP with versioned per-user installation, HKCU protocol registration, conservative unregistration, SHA-256 checksum, an included userscript, and a no-UI launch / idempotent-upgrade smoke in PR CI. Existing settings, snapshots, worktrees, and prior versions remain untouched.
 - [x] Ship an RC2 verified backup-first helper for closed SQLite journal/sidecars and settings: refuse overlapping/occupied destinations and reparse points, record SHA-256 evidence, and exercise an isolated older-profile fixture in Windows packaging smoke. **Manual full-profile migration/rollback remains outstanding.**
 - [ ] Provide signed MSI/MSIX or equivalent distribution, real Windows tray/browser/VS Code installed smoke, and supported upgrade/rollback from existing preview builds.
-- [ ] Multi-repository settings UI and user-friendly setup beyond JSON configuration.
-- [ ] Diagnostics, opt-in performance traces, reproducible benchmark suite.
+- [x] Multi-repository settings UI for generic Git and existing GitHub PR registrations, VS Code selection, snapshot limits, timeout and opt-in local timing diagnostics. Conflict-aware atomic settings publication retains the previous file.
+- [x] Cancellable progress windows for state-changing operations and configurable timeouts; opt-in bounded local timing records with operation/outcome/duration only.
+- [ ] Installed workflow measurements and broader reproducible reference benchmarks; local timing reports do not measure browser prompts or visible editor startup.
 - [x] Add RC2 read-only prerequisite diagnostics to check Windows, effective Git CLI version >=2.40.0 and configured VS Code executable path; fixture tests refuse missing tools, and Windows release smoke verifies the helper ships in the ZIP. This does not replace installed GUI smoke or certify Git support on every version.
 - [ ] Full Windows smoke test: installed userscript + browser + protocol handler + actual VS Code (separate slow CI/manual lane). The first preview ZIP validates only self-contained process launch and upgrade-safe staging; it is not a GUI smoke.
 

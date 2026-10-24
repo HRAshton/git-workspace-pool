@@ -2,7 +2,7 @@
 
 A Windows tray application that opens configured Git repositories and branches, or GitHub pull requests, in local VS Code worktrees. A Tampermonkey userscript supplies the browser action.
 
-For Bitbucket Data Center 9 or another HTTPS Git server, use the [generic repo + branch workflow](docs/GIT_BRANCH_WORKSPACES.md). It requires no PR or provider API. Configure `GitRepositories`, then use **Open Git branch...** or the v2 browser link. Git handles username/password authentication through your existing credential helper. Generic branches also use the shared snapshot, parking, release, recovery and compatible npm-transfer lifecycle; [back up before the schema-v9 upgrade](docs/LIFECYCLE_UPGRADE.md).
+For Bitbucket Data Center 9 or another HTTPS Git server, use the [generic repo + branch workflow](docs/GIT_BRANCH_WORKSPACES.md). It requires no PR or provider API. Use **Settings...** to add your trusted clone and separate workspace root, then use **Open Git branch...** or the v2 browser link. `GitRepositories` JSON configuration remains supported. Git handles username/password authentication through your existing credential helper. Generic branches also use the shared snapshot, parking, release, recovery and compatible npm-transfer lifecycle; [back up before the schema-v9 upgrade](docs/LIFECYCLE_UPGRADE.md).
 
 ## Status
 
@@ -56,6 +56,10 @@ Session ownership data is stored in `%LOCALAPPDATA%\\GitWorkspacePool\\sessions.
 The configured clone's actual `origin` must identify the GitHub repository in the PR URL (HTTPS or SSH). A mismatched clone is rejected before the session journal or filesystem is changed.
 
 No admin rights or background Windows service are required. The browser protocol is untrusted input: only recognized GitHub PR URLs matching configured repositories are accepted.
+
+## Operation controls and local diagnostics
+
+Long-running opens, snapshots, restores, parking, release and dependency transfers show a progress window with **Cancel** and a configurable timeout. Cancellation preserves journalled ownership and unfinished evidence. **Settings...** configures repositories, VS Code and limits; saves retain a previous copy and reject stale edits. Optional **Local operation timings...** reports local application durations without recording URLs, paths or branches. See [operation controls](docs/OPERATIONS.md).
 
 ## Snapshot resource limits
 

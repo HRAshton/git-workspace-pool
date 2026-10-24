@@ -6,7 +6,7 @@ Open a configured **HTTPS Git repository + branch** in a detached VS Code worktr
 
 Clone the repository normally with Git for Windows. Authenticate using your company's supported username/password flow and Git Credential Manager. For example, run `git ls-remote origin` from that clone in your own terminal and complete authentication before using the tray. Never put a password in a clone URL, protocol link or settings file. The app does not implement a second password store or API login.
 
-Add `GitRepositories` to `%APPDATA%\GitWorkspacePool\settings.json` alongside any existing settings, then restart the tray:
+Use **Settings... → Git repositories** to enter the clone URL, local clone and separate workspace root. **Check selected origin** verifies identity without fetching. Alternatively, add `GitRepositories` to `%APPDATA%\GitWorkspacePool\settings.json` alongside any existing settings, then restart the tray:
 
 ```json
 {
