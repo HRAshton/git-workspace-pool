@@ -11,6 +11,52 @@ if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     throw 'This package targets Windows only.'
 }
 
+& (Join-Path $PackageDirectory 'Test-PackageIntegrity.ps1') -PackageDirectory $PackageDirectory
+
+function Assert-NoLinkAncestors([string] $path) {
+    $walk = [System.IO.Path]::GetFullPath($path)
+    while ($null -ne $walk) {
+        if (Test-Path -LiteralPath $walk) {
+            $item = Get-Item -LiteralPath $walk -Force
+            if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw 'Install paths must not pass through links or junctions.'
+            }
+        }
+        $parent = [System.IO.Directory]::GetParent($walk)
+        $walk = if ($null -eq $parent) { $null } else { $parent.FullName }
+    }
+}
+
+$manifest = Get-Content -LiteralPath (Join-Path $PackageDirectory 'PACKAGE_MANIFEST.json') -Raw | ConvertFrom-Json
+function Assert-AppInventory([string] $directory) {
+    Assert-NoLinkAncestors $directory
+    $expected = [System.Collections.Generic.Dictionary[string,object]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($entry in $manifest.files | Where-Object { $_.path.StartsWith('app/', [StringComparison]::Ordinal) }) {
+        $expected.Add($entry.path.Substring(4), $entry)
+    }
+    if ($expected.Count -eq 0) { throw 'Package contains no application inventory.' }
+    $pending = [System.Collections.Generic.Stack[string]]::new()
+    $pending.Push($directory)
+    $directories = 0
+    while ($pending.Count -ne 0) {
+        if (++$directories -gt 1024) { throw 'Installed directory inventory exceeds its limit.' }
+        $current = $pending.Pop()
+        foreach ($item in Get-ChildItem -LiteralPath $current -Force) {
+            if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Installed release contains a link.' }
+            if ($item.PSIsContainer) { $pending.Push($item.FullName); continue }
+            $relative = $item.FullName.Substring($directory.TrimEnd([char[]] '\/').Length + 1).Replace('\', '/')
+            if (-not $expected.ContainsKey($relative)) { throw 'Installed release contains an unexpected file; no data was overwritten.' }
+            $entry = $expected[$relative]
+            if ($item.Length -ne [long] $entry.bytes -or
+                (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -ne $entry.sha256) {
+                throw 'Installed release differs from the package; no data was overwritten.'
+            }
+            $expected.Remove($relative) | Out-Null
+        }
+    }
+    if ($expected.Count -ne 0) { throw 'Installed release is missing files; no data was overwritten.' }
+}
+
 $source = [System.IO.Path]::GetFullPath((Join-Path $PackageDirectory 'app'))
 $sourceExe = Join-Path $source 'GitWorkspacePool.Tray.exe'
 if (-not (Test-Path -LiteralPath $sourceExe -PathType Leaf)) {
@@ -26,6 +72,7 @@ foreach ($entry in Get-ChildItem -LiteralPath $source -Recurse -Force) {
 
 $root = [System.IO.Path]::GetFullPath($InstallRoot)
 $versions = Join-Path $root 'versions'
+Assert-NoLinkAncestors $versions
 New-Item -ItemType Directory -Path $versions -Force | Out-Null
 
 $hash = (Get-FileHash -LiteralPath $sourceExe -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -35,6 +82,7 @@ $installedExe = Join-Path $destination 'GitWorkspacePool.Tray.exe'
 $created = $false
 
 if (Test-Path -LiteralPath $destination) {
+    Assert-AppInventory $destination
     if (-not (Test-Path -LiteralPath $installedExe -PathType Leaf) -or
         (Get-FileHash -LiteralPath $installedExe -Algorithm SHA256).Hash.ToLowerInvariant() -ne $hash) {
         throw "Existing release location differs; no files were overwritten: $destination"
@@ -45,6 +93,7 @@ if (Test-Path -LiteralPath $destination) {
     foreach ($entry in Get-ChildItem -LiteralPath $source -Force) {
         Copy-Item -LiteralPath $entry.FullName -Destination $stage -Recurse
     }
+    Assert-AppInventory $stage
 
     $stageExe = Join-Path $stage 'GitWorkspacePool.Tray.exe'
     if (-not (Test-Path -LiteralPath $stageExe -PathType Leaf) -or

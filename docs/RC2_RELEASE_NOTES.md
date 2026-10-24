@@ -4,11 +4,15 @@
 
 ## RC2-supported workflow
 
+- Open any explicitly configured HTTPS Git repository and short branch, including Bitbucket Data Center 9, through ordinary Git authentication. No provider API or PR is required. See the bundled `GIT_BRANCH_WORKSPACES.md` and `BITBUCKET_ACCEPTANCE.md`.
+- Generic branches share schema-v9 snapshot/restore, suspension, parking, retained reopening and explicit released-slot ownership. Settings, cancellation, opt-in local timings and verified released-slot choices are available. Real company/browser/editor acceptance remains pending.
+- Package manifests record the source commit/tree, SDK and every file hash; installation verifies complete inventories and refuses linked install paths. These unsigned artifacts are engineering candidates, not authenticated signed releases.
+
 - Install into the current user's profile without administrator rights; smoke-check staged executable before publishing the installed version and registering the current-user protocol.
 - Install the included Tampermonkey userscript, configure a trusted local GitHub.com clone and workspace root, then use **Open locally** on a GitHub pull request to open its commit-pinned Git worktree in VS Code.
 - Reopen the same PR without resetting staged, unstaged, untracked or ignored data. SQLite journal keeps exclusive session ownership.
 - Use the explicitly confirmed suspend, park/unpark, snapshot, side-by-side restore and read-only recovery diagnostics operations. Advanced manual slot-release and artifact-copy commands are experimental, not yet certified for general RC2 use.
-- Automatic worktree recycling, eviction, deletion, cleanup, speculative PR prediction, background baseline fetching and building/restoring dependencies from user projects remain disabled or unimplemented.
+- Automatic worktree recycling, eviction, deletion, cleanup, speculative PR prediction and building/restoring dependencies from user projects remain disabled or unimplemented. Exact baseline names can be explicitly configured for bounded sequential fetch into dedicated refs; none are configured by default, and no checked-out worktree is changed.
 
 ## New in RC2: verified backup-first migration
 

@@ -30,10 +30,11 @@ $extracted = Join-Path $root 'extracted'
 $install = Join-Path $root 'installed'
 New-Item -ItemType Directory -Path $extracted | Out-Null
 Expand-Archive -LiteralPath $PackagePath -DestinationPath $extracted
+& (Join-Path $extracted 'Test-PackageIntegrity.ps1') -PackageDirectory $extracted
 
 # A candidate archive must contain the documented user safety procedures;
 # validate the actual ZIP contents, not only repository file existence.
-foreach ($document in @($RequiredDocs) + @('git-branch-workspace.user.js', 'GIT_BRANCH_WORKSPACES.md', 'LIFECYCLE_UPGRADE.md', 'OPERATIONS.md', 'VERIFIED_REUSE.md')) {
+foreach ($document in @($RequiredDocs) + @('git-branch-workspace.user.js', 'GIT_BRANCH_WORKSPACES.md', 'LIFECYCLE_UPGRADE.md', 'OPERATIONS.md', 'VERIFIED_REUSE.md', 'BITBUCKET_ACCEPTANCE.md', 'RECOVERY.md', 'PACKAGE_MANIFEST.json', 'Test-PackageIntegrity.ps1', 'Test-RC2Prerequisites.ps1')) {
     if ([System.IO.Path]::GetFileName($document) -ne $document) {
         throw "Unsafe RC documentation name: $document"
     }
@@ -60,6 +61,11 @@ Set-Content -LiteralPath $unrelated -Value 'keep root data' -NoNewline
 
 & $installer -PackageDirectory $extracted -InstallRoot $install -SkipProtocolRegistration
 & $installer -PackageDirectory $extracted -InstallRoot $install -SkipProtocolRegistration
+
+# Installation should also work from the Windows inbox PowerShell, without
+# requiring the user's machine to have the SDK or PowerShell 7 installed.
+& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $installer -PackageDirectory $extracted -InstallRoot $install -SkipProtocolRegistration
+if ($LASTEXITCODE -ne 0) { throw 'Windows PowerShell package verification/reinstall failed.' }
 
 if ((Get-Content -LiteralPath $oldFile -Raw) -ne 'keep previous data' -or
     (Get-Content -LiteralPath $unrelated -Raw) -ne 'keep root data') {
@@ -106,3 +112,48 @@ if ($probe.ExitCode -ne 0 -or
 }
 
 Write-Host 'PASS: self-contained application launch, per-user install, idempotent upgrade and data preservation.'
+
+function Assert-Refused([scriptblock] $Action, [string] $Message) {
+    $refused = $false
+    try { & $Action } catch { $refused = $true }
+    if (-not $refused) { throw $Message }
+}
+
+# Negative fixtures alter only disposable extracted/install files. Retain
+# evidence on failure and restore the document before subsequent cases.
+$document = Join-Path $extracted 'GIT_BRANCH_WORKSPACES.md'
+$originalBytes = [System.IO.File]::ReadAllBytes($document)
+try {
+    [System.IO.File]::AppendAllText($document, 'unexpected change')
+    $refusedRoot = Join-Path $root 'corrupt-package-install'
+    Assert-Refused { & $installer -PackageDirectory $extracted -InstallRoot $refusedRoot -SkipProtocolRegistration } 'Installer accepted a corrupt package.'
+    if (Test-Path -LiteralPath $refusedRoot) { throw 'Corrupt package wrote to the install root.' }
+} finally { [System.IO.File]::WriteAllBytes($document, $originalBytes) }
+
+$manifestPath = Join-Path $extracted 'PACKAGE_MANIFEST.json'
+$manifestBytes = [System.IO.File]::ReadAllBytes($manifestPath)
+try {
+    $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    $manifest.files[0].path = '../outside.txt'
+    $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifestPath -Encoding utf8
+    Assert-Refused { & (Join-Path $extracted 'Test-PackageIntegrity.ps1') -PackageDirectory $extracted } 'Verifier accepted manifest path traversal.'
+} finally { [System.IO.File]::WriteAllBytes($manifestPath, $manifestBytes) }
+
+$packageLink = Join-Path $extracted 'unexpected-link'
+New-Item -ItemType Junction -Path $packageLink -Target (Join-Path $extracted 'app') | Out-Null
+try {
+    Assert-Refused { & $installer -PackageDirectory $extracted -InstallRoot (Join-Path $root 'linked-package-install') -SkipProtocolRegistration } 'Installer accepted a package junction.'
+} finally { [System.IO.Directory]::Delete($packageLink) }
+
+$extra = Join-Path $exes[0].DirectoryName 'unexpected.dll'
+[System.IO.File]::WriteAllText($extra, 'preserve this evidence')
+Assert-Refused { & $installer -PackageDirectory $extracted -InstallRoot $install -SkipProtocolRegistration } 'Reinstall accepted an unexpected application file.'
+if ([System.IO.File]::ReadAllText($extra) -ne 'preserve this evidence') { throw 'Reinstall changed unknown data.' }
+
+$linkedRoot = Join-Path $root 'linked-install'
+$linkTarget = Join-Path $root 'link-target'
+New-Item -ItemType Directory -Path $linkTarget | Out-Null
+New-Item -ItemType Junction -Path $linkedRoot -Target $linkTarget | Out-Null
+Assert-Refused { & $installer -PackageDirectory $extracted -InstallRoot $linkedRoot -SkipProtocolRegistration } 'Installer accepted a linked install root.'
+if (@(Get-ChildItem -LiteralPath $linkTarget -Force).Count -ne 0) { throw 'Installer wrote through a junction.' }
+Write-Host 'PASS: manifest corruption/traversal, occupied application inventory and package/install junction refusal.'

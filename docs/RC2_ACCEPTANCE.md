@@ -1,12 +1,13 @@
 # RC2 0.1.0-rc.2 — acceptance and safe upgrade checklist
 
-**Scope:** Windows 11 x64, configured GitHub.com pull requests to local VS Code. This is an unsigned engineering candidate until all mandatory acceptance gates pass. Do not check off a test merely because a workflow began.
+**Scope:** Windows 11 x64, configured HTTPS Git repository + branch (including Bitbucket DC 9), and existing GitHub.com pull requests to local VS Code. This is an unsigned engineering candidate until all mandatory acceptance gates pass. Do not check off a test merely because a workflow began. Use bundled `BITBUCKET_ACCEPTANCE.md` for company Git authentication, branch protocol and lifecycle checks.
 
 ## Automated gates: required for the exact tested candidate source
 
 - [ ] The normal PR Windows CI is green: restore, build, unit tests, fast real-Git E2E, release/slot crash tests, preview publish and per-user install smoke.
 - [ ] The dedicated **RC2 Windows candidate** run is green: userscript syntax, clean release build, `Category=SlowE2E` recovery/crash tests, versioned ZIP, SHA-256 verification and isolated two-pass per-user installer smoke. The backup fixture must also pass checksum, non-overwrite and source-isolation tests.
 - [ ] Record the tested Git SHA and run links, .NET SDK version, package SHA-256, test results, accepted waivers and downloadable artifacts. Compare the artifact's `RC2_BUILD_EVIDENCE.txt` to GitHub's actual candidate commit.
+- [ ] Verify `PACKAGE_MANIFEST.json` source/tree against build evidence and run `Test-PackageIntegrity.ps1`; corruption, unknown application files and package/install junction refusal fixtures pass. Unsigned checksums alone do not authenticate a publisher.
 - [ ] Confirm all checks ran against the current RC2 head (not an outdated workflow after a push or a cancelled attempt).
 
 ## Installed browser, editor and data safety: manual Windows gates
@@ -21,6 +22,8 @@
 - [ ] Confirm quit/restart never triggers eviction/recycling, automatic worktree cleanup, background install, user project build or PR speculation. Advanced manual released-slot handoff and `node_modules` copying are not certified beyond their isolated tests.
 
 ## Read-only storage diagnostics
+
+- [ ] In Settings, test disabled, equal, below and above snapshot/recovery/combined warning thresholds. Invalid settings or unknown usage must fail visibly; a warning must never delete, release, copy or recycle anything.
 
 - [ ] Inspect the RC2 tray's **Local disk usage (read-only)...** against a disposable snapshot and side-by-side restore; confirm counts are plausible and clicking it never touches snapshot, recovery or active workspace contents.
 - [ ] Under inaccessible/reparse-point or over-budget app-owned evidence, confirm it fails visibly rather than reporting zero freeable bytes or deleting files.

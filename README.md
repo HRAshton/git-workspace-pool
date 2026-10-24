@@ -6,6 +6,8 @@ For Bitbucket Data Center 9 or another HTTPS Git server, use the [generic repo +
 
 ## Status
 
+Follow the packaged [Bitbucket acceptance steps](docs/BITBUCKET_ACCEPTANCE.md) to verify the ZIP, install, check company Git authentication and exercise the browser/editor and recovery flow. Every package includes a source/tree/SDK manifest and file hashes; installation refuses corrupt inventories and linked install paths. Builds remain unsigned until a release owner signs them.
+
 Experimental Windows preview. Configured local repositories create or reopen a dedicated Git worktree per PR, backed by a durable SQLite journal and pinned commit identity. Separately confirmed parking, release, released-slot checkout, recovery and compatible npm file copying are available. **Automatic** worktree recycling, eviction, dependency installation, project builds and deleting user files remain out of scope.
 
 ## RC2 engineering candidate (0.1.0-rc.2)
@@ -37,11 +39,11 @@ A PR Windows CI run produces a **self-contained, unsigned win-x64 preview ZIP** 
 For maintainers, the same package can be built with:
 
 ```powershell
-.\scripts\Build-WindowsPackage.ps1 -OutputDirectory .\artifacts\preview-2026-10-22
-.\scripts\Test-WindowsPackage.ps1 -PackagePath .\artifacts\preview-2026-10-22\GitWorkspacePool-win-x64-preview.zip -TestRoot .\artifacts\isolated-install-smoke
+.\scripts\Build-WindowsPackage.ps1 -OutputDirectory C:\gwp-artifacts\preview-build
+.\scripts\Test-WindowsPackage.ps1 -PackagePath C:\gwp-artifacts\preview-build\GitWorkspacePool-win-x64-preview.zip -TestRoot C:\gwp-artifacts\isolated-install-smoke
 ```
 
-Both output and isolated smoke directories must be new. The smoke's `-SkipProtocolRegistration` path never changes HKCU registry associations.
+Build from a clean committed checkout; keep output outside the repository so provenance identifies the packaged source. Both output and isolated smoke directories must be new. The smoke's `-SkipProtocolRegistration` path never changes HKCU registry associations. `PACKAGE_MANIFEST.json` records provenance and file integrity, not byte-for-byte ZIP reproducibility or publisher authentication.
 
 ## Getting started (Windows, .NET 10 SDK)
 

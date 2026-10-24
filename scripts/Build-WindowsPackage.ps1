@@ -52,6 +52,10 @@ if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Install-PerUser.ps1') -Destination $package
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Unregister-PerUser.ps1') -Destination $package
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Backup-PerUserState.ps1') -Destination $package
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Test-PackageIntegrity.ps1') -Destination $package
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Test-RC2Prerequisites.ps1') -Destination $package
+Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/BITBUCKET_ACCEPTANCE.md') -Destination $package
+Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/RECOVERY.md') -Destination $package
 Copy-Item -LiteralPath (Join-Path $projectRoot 'userscript/git-workspace-pool.user.js') -Destination $package
 Copy-Item -LiteralPath (Join-Path $projectRoot 'userscript/git-branch-workspace.user.js') -Destination $package
 Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/GIT_BRANCH_WORKSPACES.md') -Destination $package
@@ -67,6 +71,33 @@ if ($PackageVersion) {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Test-RC2Prerequisites.ps1') -Destination $package
     }
 }
+
+$sourceCommit = (& git -C $projectRoot rev-parse HEAD | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or $sourceCommit -notmatch '^[a-f0-9]{40,64}$') { throw 'Cannot identify package source commit.' }
+$sourceTree = (& git -C $projectRoot rev-parse 'HEAD^{tree}' | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or $sourceTree -notmatch '^[a-f0-9]{40,64}$') { throw 'Cannot identify package source tree.' }
+$sourceChanges = & git -C $projectRoot status --porcelain --untracked-files=normal
+if ($LASTEXITCODE -ne 0 -or $sourceChanges) { throw 'Package provenance requires a clean committed source checkout. Put output outside the repository.' }
+$sdk = (& dotnet --version | Out-String).Trim()
+if ($LASTEXITCODE -ne 0) { throw 'Cannot capture SDK version.' }
+$files = @(Get-ChildItem -LiteralPath $package -Recurse -File -Force | Sort-Object FullName | ForEach-Object {
+    [ordered]@{
+        path = [System.IO.Path]::GetRelativePath($package, $_.FullName).Replace('\', '/')
+        bytes = $_.Length
+        sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+})
+[ordered]@{
+    schemaVersion = 1
+    sourceCommit = $sourceCommit
+    sourceTree = $sourceTree
+    sdk = $sdk
+    packageVersion = if ($PackageVersion) { $PackageVersion } else { 'preview' }
+    workflowRun = $env:GITHUB_RUN_ID
+    signing = 'unsigned'
+    files = $files
+} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $package 'PACKAGE_MANIFEST.json') -Encoding utf8
+& (Join-Path $package 'Test-PackageIntegrity.ps1') -PackageDirectory $package
 
 $zipName = "$PackageBaseName.zip"
 $zip = Join-Path $output $zipName
