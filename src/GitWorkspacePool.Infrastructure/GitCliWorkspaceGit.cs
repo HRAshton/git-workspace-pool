@@ -8,7 +8,7 @@ namespace GitWorkspacePool.Infrastructure;
 /// <summary>
 /// Runs bounded Git CLI commands without shell expansion.
 /// </summary>
-public sealed class GitCliWorkspaceGit : IWorkspaceGit, IGitRemoteReader, IGitBranchFetcher
+public sealed class GitCliWorkspaceGit : IWorkspaceGit, IGitRemoteReader, IGitBranchFetcher, IGitBranchPreview, IGitBaselineFetcher
 {
     /// <inheritdoc/>
     public async Task<bool> IsRegisteredWorktreeAsync(
@@ -57,14 +57,34 @@ public sealed class GitCliWorkspaceGit : IWorkspaceGit, IGitRemoteReader, IGitBr
         string repositoryPath, string branch, Guid operationId, CancellationToken cancellationToken
     )
     {
+        string targetRef = "refs/git-workspace-pool/branches/" + operationId.ToString("N");
+        return await FetchBranchToRefAsync(repositoryPath, branch, targetRef, cancellationToken);
+    }
+
+    /// <inheritdoc/>
+    public Task<string> FetchBranchPreviewAsync(string repositoryPath, string branch, CancellationToken cancellationToken)
+    {
+        string identity = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(branch)));
+        return FetchBranchToRefAsync(repositoryPath, branch, "refs/git-workspace-pool/previews/" + identity, cancellationToken);
+    }
+
+    /// <inheritdoc/>
+    public Task<string> FetchBaselineCommitAsync(string repositoryPath, string branch, CancellationToken cancellationToken)
+    {
+        string identity = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(branch)));
+        return FetchBranchToRefAsync(repositoryPath, branch, "refs/git-workspace-pool/baselines/" + identity, cancellationToken);
+    }
+
+    private async Task<string> FetchBranchToRefAsync(
+        string repositoryPath, string branch, string targetRef, CancellationToken cancellationToken
+    )
+    {
         if (!GitBranchRequest.IsSafeBranch(branch)) throw new ArgumentException("Invalid Git branch name.");
         await EnsureSafeFetchConfigurationAsync(repositoryPath, cancellationToken);
         string sourceRef = "refs/heads/" + branch;
         await RunAsync(repositoryPath, ["check-ref-format", sourceRef], cancellationToken);
-        string targetRef = "refs/git-workspace-pool/branches/" + operationId.ToString("N");
-        // Each durable operation has its own ref. Do not read shared FETCH_HEAD or a remote tracking branch.
         await RunAsync(repositoryPath,
-            ["-c", "http.followRedirects=false", "fetch", "--no-tags", "--no-recurse-submodules",
+            ["-c", "http.followRedirects=false", "fetch", "--no-tags", "--no-recurse-submodules", "--no-auto-maintenance", "--no-prune", "--refmap=",
                 "--no-write-fetch-head", "origin", $"+{sourceRef}:{targetRef}"], cancellationToken);
         return (await RunAsync(repositoryPath,
             ["rev-parse", "--verify", targetRef + "^{commit}"], cancellationToken)).Trim();
@@ -85,6 +105,10 @@ public sealed class GitCliWorkspaceGit : IWorkspaceGit, IGitRemoteReader, IGitBr
             [
                 "fetch",
                 "--no-tags",
+                "--no-auto-maintenance",
+                "--no-recurse-submodules",
+                "--no-prune",
+                "--refmap=",
                 "origin",
                 $"refs/pull/{pullRequestNumber}/head:refs/git-workspace-pool/pr/{pullRequestNumber}",
             ],
@@ -185,54 +209,11 @@ public sealed class GitCliWorkspaceGit : IWorkspaceGit, IGitRemoteReader, IGitBr
         CancellationToken cancellationToken
     )
     {
-        ProcessStartInfo startInfo = new("git")
+        var result = await BoundedGitProcess.RunAsync(repositoryPath, arguments, 16 * 1024 * 1024, cancellationToken);
+        if (result.ExitCode != 0)
         {
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-        };
-        GitProcessSafety.Configure(startInfo);
-        startInfo.ArgumentList.Add("-C");
-        startInfo.ArgumentList.Add(repositoryPath);
-
-        foreach (string argument in arguments)
-        {
-            startInfo.ArgumentList.Add(argument);
+            throw new InvalidOperationException($"Git failed with exit code {result.ExitCode}: {result.Error.Trim()}");
         }
-
-        using Process process = Process.Start(startInfo)
-            ?? throw new InvalidOperationException("Failed to launch Git.");
-
-        Task<string> outputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        Task<string> errorTask = process.StandardError.ReadToEndAsync(cancellationToken);
-
-        try
-        {
-            await process.WaitForExitAsync(cancellationToken);
-            string output = await outputTask;
-            string error = await errorTask;
-
-            if (process.ExitCode != 0)
-            {
-                throw new InvalidOperationException(
-                    $"Git failed with exit code {process.ExitCode}: {error.Trim()}"
-                );
-            }
-
-            return output;
-        }
-        catch (OperationCanceledException)
-        {
-            if (!process.HasExited)
-            {
-                process.Kill(entireProcessTree: true);
-                await process.WaitForExitAsync(CancellationToken.None);
-            }
-
-            throw;
-        }
+        return result.Output;
     }
 }

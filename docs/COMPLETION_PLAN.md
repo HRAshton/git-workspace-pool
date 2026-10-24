@@ -14,9 +14,9 @@ Optional ReFS acceleration and provider-specific API adapters remain extension w
 
 ## Progress
 
-- [x] Shared branch/PR lifecycle and upgrade tests implemented; merge remains gated on current-head Windows validation.
-- [x] Settings, cancellation/progress and opt-in local timing diagnostics implemented; merge remains gated on Windows validation.
-- [ ] Verified pool selection and artifact policies.
+- [x] Shared branch/PR lifecycle and upgrade tests merged after current-head Windows validation.
+- [x] Settings, cancellation/progress and opt-in local timing diagnostics merged after current-head Windows validation.
+- [x] Verified candidate collection/ranking, commit-bound user selection and existing copy-only npm policy implemented; broader artifact classes and measured automatic reuse remain gated.
 - [ ] Storage governance and safe recovery/retention policy.
 - [ ] Extended release validation and package evidence.
 - [ ] Installed environment acceptance and signing.

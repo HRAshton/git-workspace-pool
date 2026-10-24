@@ -137,7 +137,8 @@ public sealed class OpenGitBranchHandler
         GitBranchRequest request,
         Guid slotId,
         long expectedGeneration,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        string? pinnedPreviewCommit = null
     )
     {
         if (!request.IsValid) throw new ArgumentException("Invalid Git clone URL or branch name.");
@@ -158,7 +159,7 @@ public sealed class OpenGitBranchHandler
         }
         int reference = await _store.GetReferenceNumberAsync(request, cancellationToken);
         OpenPullRequestResult result = await _ready.AcquireBranchAsync(
-            request, repository, reference, slotId, expectedGeneration, _fetch, cancellationToken
+            request, repository, reference, slotId, expectedGeneration, _fetch, cancellationToken, pinnedPreviewCommit
         );
         await _editor.OpenAsync(result.WorkspacePath, cancellationToken);
         return result;

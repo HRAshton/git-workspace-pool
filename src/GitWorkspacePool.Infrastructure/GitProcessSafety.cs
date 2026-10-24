@@ -34,7 +34,31 @@ internal static class GitProcessSafety
         startInfo.ArgumentList.Add("-c");
         startInfo.ArgumentList.Add("filter.lfs.smudge=");
         startInfo.ArgumentList.Add("-c");
+        startInfo.ArgumentList.Add("filter.lfs.clean=");
+        startInfo.ArgumentList.Add("-c");
         startInfo.ArgumentList.Add("filter.lfs.required=false");
+
+        // A browser/protocol parent's repository or tracing environment must not redirect -C,
+        // replace the index/object store, inject Git configuration, or leak credentials to trace files.
+        foreach (string key in startInfo.Environment.Keys.ToArray())
+        {
+            string normalized = key.ToUpperInvariant();
+            if (normalized is "GIT_DIR" or "GIT_WORK_TREE" or "GIT_INDEX_FILE" or "GIT_COMMON_DIR"
+                or "GIT_OBJECT_DIRECTORY" or "GIT_ALTERNATE_OBJECT_DIRECTORIES" or "GIT_NAMESPACE"
+                or "GIT_CONFIG" or "GIT_CONFIG_PARAMETERS" or "GIT_CONFIG_COUNT"
+                or "GIT_CONFIG_GLOBAL" or "GIT_CONFIG_SYSTEM" or "GIT_CURL_VERBOSE"
+                or "GIT_EXTERNAL_DIFF" or "GIT_DIFF_OPTS" or "GIT_CEILING_DIRECTORIES"
+                or "GIT_EXEC_PATH" or "GIT_SSL_NO_VERIFY"
+                || key.StartsWith("GIT_CONFIG_KEY_", StringComparison.OrdinalIgnoreCase)
+                || key.StartsWith("GIT_CONFIG_VALUE_", StringComparison.OrdinalIgnoreCase)
+                || key.StartsWith("GIT_TRACE", StringComparison.OrdinalIgnoreCase))
+            {
+                startInfo.Environment.Remove(key);
+            }
+        }
+        startInfo.Environment["GIT_NO_REPLACE_OBJECTS"] = "1";
+        startInfo.ArgumentList.Add("-c");
+        startInfo.ArgumentList.Add("http.sslVerify=true");
 
         // A protocol launcher must not inherit shell-command overrides from
         // the browser/parent process. Standard SSH agent auth still works.

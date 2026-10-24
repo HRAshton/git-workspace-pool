@@ -86,7 +86,8 @@ public sealed class VerifiedWorkspaceSnapshotRestorer : IWorkspaceSnapshotRestor
             manifest.Files is null
             || manifest.StagedFiles is null
             || manifest.MissingPaths is null
-            || string.IsNullOrWhiteSpace(manifest.StatusBase64)
+            // A clean worktree has an empty status, whose valid Base64 representation is empty.
+            || manifest.StatusBase64 is null
             || !ValidSha256(manifest.GitIndexSha256)
         )
         {

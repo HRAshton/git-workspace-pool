@@ -57,6 +57,10 @@ The configured clone's actual `origin` must identify the GitHub repository in th
 
 No admin rights or background Windows service are required. The browser protocol is untrusted input: only recognized GitHub PR URLs matching configured repositories are accepted.
 
+## Verified branch reuse and baselines
+
+**Open branch with reuse choices...** previews verified empty released slots and retained donors for an exact fetched commit. Existing owners reopen first. Optional npm copying stays explicit and rechecks compatibility after checkout. Settings can offer the chooser for browser opens and configure exact baseline branches for bounded background fetches. [Details and limits](docs/VERIFIED_REUSE.md).
+
 ## Operation controls and local diagnostics
 
 Long-running opens, snapshots, restores, parking, release and dependency transfers show a progress window with **Cancel** and a configurable timeout. Cancellation preserves journalled ownership and unfinished evidence. **Settings...** configures repositories, VS Code and limits; saves retain a previous copy and reject stale edits. Optional **Local operation timings...** reports local application durations without recording URLs, paths or branches. See [operation controls](docs/OPERATIONS.md).
