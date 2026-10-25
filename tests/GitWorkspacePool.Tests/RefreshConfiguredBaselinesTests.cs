@@ -144,6 +144,47 @@ public sealed class RefreshConfiguredBaselinesTests
         Assert.Empty(BaselineBranchPolicy.Match([], ["master"]));
     }
 
+    [Fact]
+    public async Task LargeMatchSetDoesNotStarveWhenEarlyBranchesBecomeDueAgain()
+    {
+        Fetcher fetch = new();
+        fetch.Advertised.AddRange(Enumerable.Range(0, 200).Select(number => "2026r" + number.ToString("D3")));
+        RefreshConfiguredBaselinesService service = new(new Remote(), fetch);
+        GitRepositoryRegistration repository = new(Url, Path.Combine(Path.GetTempPath(), "source"), Path.Combine(Path.GetTempPath(), "root"))
+        { BaselinePatterns = [@"^20\d\d[rR]\d{3}$"] };
+        // 200 refs take 50 four-ref passes, exceeding the 15-minute interval.
+        // Previously the first 60 refs repeated forever and the remainder never ran.
+        for (int minute = 0; minute < 50; minute++)
+        {
+            BaselineRefreshBatch batch = await service.RefreshDueAsync([repository], 15, Now.AddMinutes(minute), false, CancellationToken.None);
+            Assert.Equal(4, batch.Attempts.Count);
+        }
+        Assert.Equal(200, fetch.Branches.Count);
+        Assert.Equal(200, fetch.Branches.Distinct(StringComparer.Ordinal).Count());
+        Assert.Contains("2026r199", fetch.Branches);
+    }
+
+    [Fact]
+    public async Task DiscoveryDoesNotStarveTheLastRepositoriesAtTheMinimumInterval()
+    {
+        Fetcher fetch = new();
+        RefreshConfiguredBaselinesService service = new(new EchoRemote(), fetch);
+        GitRepositoryRegistration[] repositories = Enumerable.Range(0, 64).Select(number =>
+            new GitRepositoryRegistration("https://example.com/team/repo" + number + ".git",
+                Path.Combine(Path.GetTempPath(), "source" + number), Path.Combine(Path.GetTempPath(), "root" + number))
+            { BaselinePatterns = [BaselineBranchPolicy.DefaultPattern] }).ToArray();
+        for (int minute = 0; minute < 16; minute++)
+            await service.RefreshDueAsync(repositories, 15, Now.AddMinutes(minute), false, CancellationToken.None);
+        Assert.Equal(64, fetch.Discoveries);
+        Assert.Equal(64, service.Latest().Select(status => status.CloneUrl).Distinct(StringComparer.Ordinal).Count());
+    }
+
+    private sealed class EchoRemote : IGitRemoteReader
+    {
+        public Task<string> GetOriginUrlAsync(string path, CancellationToken token) =>
+            Task.FromResult("https://example.com/team/repo" + Path.GetFileName(path)["source".Length..] + ".git");
+    }
+
     private sealed class Remote(string url = Url) : IGitRemoteReader
     {
         public Task<string> GetOriginUrlAsync(string repositoryPath, CancellationToken cancellationToken) => Task.FromResult(url);
