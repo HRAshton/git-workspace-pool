@@ -72,7 +72,7 @@ internal sealed class TrayContext : ApplicationContext
             {
                 if (new SettingsStore().Find(request) is null)
                 {
-                    using RepositoryRegistrationForm form = new(request.CloneUrl);
+                    using RepositoryRegistrationForm form = new(request.CloneUrl, request.Branch);
                     if (form.ShowDialog() != DialogResult.OK || form.Registration is not GitRepositoryRegistration repository)
                         return; // A cancelled trust prompt must not fetch or open anything.
                     await RepositoryOnboarding.RegisterAsync(repository, form.CreateBareClone, token);
@@ -158,7 +158,6 @@ internal sealed class TrayContext : ApplicationContext
         {
             _shutdown.Cancel();
             _icon.Visible = false; _icon.Dispose(); _dispatcher.Dispose();
-            _registrationGate.Dispose();
             // Do not dispose the token source while outstanding operations still use it.
             _ = _listener.ContinueWith(_ => _shutdown.Dispose(), TaskScheduler.Default);
         }
