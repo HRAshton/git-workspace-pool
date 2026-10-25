@@ -14,7 +14,7 @@ This is **not** a general-purpose snapshot manager, cache-copying service, or "n
 
 ## 1. User requirements and non-negotiable success criteria
 
-1. **Browser-first.** A versioned `prworkspace://` link carrying a trusted repository URL and short branch name starts the workflow without a provider REST API.
+1. **Browser-first.** A `prworkspace://` link carrying a trusted repository URL and short branch name starts the workflow without a provider REST API.
 2. **Minimal actual filesystem transition.** A repository can contain thousands of commits and files. Choose the closest safe *physical* warm worktree, then switch **in that same directory** rather than allocating an empty path and checking out everything anew. Commit count/graph distance alone is not a file-change or latency metric.
 3. **Keep existing artifacts.** Warm directories may already contain dependencies, restored packages, generated files, and incremental build outputs. Preserve non-conflicting ignored artifacts in place. Never silently delete, replace, or copy them as a normal transition.
 4. **Both donor types matter.** A warm worktree may come from this feature branch's previous work or from a nearby major/baseline branch. A single selection/transition algorithm handles both; do not build parallel "feature donor" and "major donor" engines.
@@ -41,8 +41,8 @@ Do not retain the old slot/release/park machinery merely to reuse its data model
 
 ### Browser open: ordered decisions
 
-1. Strictly parse `prworkspace://open/?v=2&repo=...&branch=...`.
-2. Resolve only an explicitly registered/trusted repo, source clone, workspace root, and editor.
+1. Strictly parse `prworkspace://open/?repo=...&branch=...`.
+2. Resolve an already trusted repository or show first-link registration requiring explicit approval of the URL, source clone, workspace root and editor. Never trust a browser URL automatically.
 3. Acquire an interprocess **repository-level coordination lock**; prohibit two application processes from selecting the same available donor concurrently. The lock must cover selection, transition, and publication. Other app entry points must use it too.
 4. If this repo/branch already has an **Assigned** worktree:
    - Verify identity, path, Git registry, and basic ownership consistency.
@@ -174,7 +174,7 @@ Old development databases are not migrated. **Do not overwrite existing state on
 
 ### Retain and adapt (inspect before modifying)
 
-- `src/GitWorkspacePool.Core/Domain/GitBranchRequest.cs` and `Core/Protocol/GitBranchProtocol.cs`: canonical request semantics and strict v2 protocol.
+- `src/GitWorkspacePool.Core/Domain/GitBranchRequest.cs` and `Core/Protocol/GitBranchProtocol.cs`: canonical request semantics and strict protocol.
 - `src/GitWorkspacePool.Infrastructure/GitCliWorkspaceGit.cs`: source clone validation, noninteractive fetch, worktree registration and pinned refs; **add** verified in-place transition operations.
 - `src/GitWorkspacePool.Infrastructure/GitProcessSafety.cs` / `BoundedGitProcess.cs`: security, process limits.
 - `src/GitWorkspacePool.Infrastructure/FileWorkspaceOperationLock.cs`: serialize operations, extend to repo scope as appropriate.
@@ -261,7 +261,7 @@ Prefer a small, directly testable service with a short happy path. Do not invent
 
 ### Phase 4: browser/tray integration
 
-- [ ] Keep v2 protocol contract and registration/origin trust checks.
+- [ ] Keep strict protocol parsing and registration/origin trust checks; prompt to approve unknown repositories before cloning or opening.
 - [ ] Wire browser click to existing Assigned reopen or safe in-place transition.
 - [ ] Simplify menus/forms. Offer clear errors for Quarantined, dirty release, missing source, authentication, unsupported cache contents.
 - [ ] Prevent reentrant clicks from allocating the same candidate; ensure single-instance and repo lock agree.
