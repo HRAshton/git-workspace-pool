@@ -32,10 +32,9 @@ for (const branch of ['feature/task', 'feature/a+b', 'feature/a&b', 'feature/日
     const link = new URL(links[0]);
     assert.equal(link.protocol, 'prworkspace:');
     assert.equal(link.hostname, 'open');
-    assert.equal(link.searchParams.get('v'), '2');
     assert.equal(link.searchParams.get('repo'), repo);
     assert.equal(link.searchParams.get('branch'), branch);
-    assert.deepEqual([...link.searchParams.keys()], ['v', 'repo', 'branch']);
+    assert.deepEqual([...link.searchParams.keys()], ['repo', 'branch']);
 }
 assert.deepEqual(fixture([null]), []);
 assert.deepEqual(fixture([repo, null]), []);
