@@ -4,5 +4,4 @@
   <Project Path="src/GitWorkspacePool.Tray/GitWorkspacePool.Tray.csproj" />
   <Project Path="tests/GitWorkspacePool.CrashProbe/GitWorkspacePool.CrashProbe.csproj" />
   <Project Path="tests/GitWorkspacePool.Tests/GitWorkspacePool.Tests.csproj" />
-  <Project Path="tests/GitWorkspacePool.LegacyTestSupport/GitWorkspacePool.LegacyTestSupport.csproj" />
 </Solution>

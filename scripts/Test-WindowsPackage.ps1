@@ -34,7 +34,7 @@ Expand-Archive -LiteralPath $PackagePath -DestinationPath $extracted
 
 # A candidate archive must contain the documented user safety procedures;
 # validate the actual ZIP contents, not only repository file existence.
-foreach ($document in @($RequiredDocs) + @('git-branch-workspace.user.js', 'GIT_BRANCH_WORKSPACES.md', 'LIFECYCLE_UPGRADE.md', 'OPERATIONS.md', 'VERIFIED_REUSE.md', 'BITBUCKET_ACCEPTANCE.md', 'RECOVERY.md', 'PACKAGE_MANIFEST.json', 'Test-PackageIntegrity.ps1', 'Test-RC2Prerequisites.ps1', 'ATTESTATION.md')) {
+foreach ($document in @($RequiredDocs) + @('git-branch-workspace.user.js', 'RECOVERY.md', 'PACKAGE_MANIFEST.json', 'Test-PackageIntegrity.ps1', 'Test-RC2Prerequisites.ps1', 'ATTESTATION.md')) {
     if ([System.IO.Path]::GetFileName($document) -ne $document) {
         throw "Unsafe RC documentation name: $document"
     }
@@ -121,7 +121,7 @@ function Assert-Refused([scriptblock] $Action, [string] $Message) {
 
 # Negative fixtures alter only disposable extracted/install files. Retain
 # evidence on failure and restore the document before subsequent cases.
-$document = Join-Path $extracted 'GIT_BRANCH_WORKSPACES.md'
+$document = Join-Path $extracted 'RECOVERY.md'
 $originalBytes = [System.IO.File]::ReadAllBytes($document)
 try {
     [System.IO.File]::AppendAllText($document, 'unexpected change')

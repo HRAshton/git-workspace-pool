@@ -29,6 +29,8 @@ New-Item -ItemType Directory -Path $settings -Force | Out-Null
 [System.IO.File]::WriteAllBytes((Join-Path $state 'sessions.db'), [byte[]]@(0, 255, 1, 42))
 [System.IO.File]::WriteAllBytes((Join-Path $state 'sessions.db-wal'), [byte[]]@(10, 11))
 [System.IO.File]::WriteAllBytes((Join-Path $state 'sessions.db-shm'), [byte[]]@(12, 13))
+New-Item -ItemType Directory -Path (Join-Path $state 'warm-v1') -Force | Out-Null
+[System.IO.File]::WriteAllBytes((Join-Path $state 'warm-v1/workspaces.db'), [byte[]]@(8, 9, 10))
 Set-Content -LiteralPath (Join-Path $settings 'settings.json') -Value '{"repo":"keep"}' -NoNewline
 
 & $script -BackupDirectory $backup -StateRoot $state -SettingsRoot $settings
@@ -38,7 +40,7 @@ if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
 }
 
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-if ($manifest.result -ne 'verified' -or @($manifest.files).Count -ne 4) {
+if ($manifest.result -ne 'verified' -or @($manifest.files).Count -ne 5) {
     throw 'Backup manifest does not list the expected closed SQLite state and settings.'
 }
 

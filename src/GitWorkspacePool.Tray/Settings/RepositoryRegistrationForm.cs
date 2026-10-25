@@ -1,4 +1,3 @@
-using GitWorkspacePool.Core.Application;
 using GitWorkspacePool.Core.Domain;
 using GitWorkspacePool.Infrastructure;
 
@@ -10,7 +9,7 @@ internal sealed class RepositoryRegistrationForm : Form
     private readonly TextBox _url = new() { Dock = DockStyle.Fill };
     private readonly TextBox _source = new() { Dock = DockStyle.Fill };
     private readonly TextBox _workspaces = new() { Dock = DockStyle.Fill };
-    private readonly TextBox _patterns = new() { Dock = DockStyle.Fill, Multiline = true, Height = 70, Text = BaselineBranchPolicy.DefaultPattern };
+    private readonly TextBox _patterns = new() { Dock = DockStyle.Fill, Multiline = true, Height = 70, Text = "main" };
     private readonly CheckBox _create = new() { AutoSize = true, Checked = true, Text = "Create a new bare clone (Git object store, no working files)" };
 
     public RepositoryRegistrationForm(string? cloneUrl)
@@ -32,12 +31,12 @@ internal sealed class RepositoryRegistrationForm : Form
         Add(layout, "Source clone", _source, true);
         Add(layout, "Workspace root", _workspaces, true);
         Add(layout, "Clone mode", _create);
-        Add(layout, "Baseline regexes", _patterns);
+        Add(layout, "Manual warm branches", _patterns);
         Label note = new() { AutoSize = true, MaximumSize = new(650, 0), Text =
             "To use an existing normal or bare clone, clear Create a new bare clone and select its folder. "
             + "SSH uses your configured agent and known_hosts; establish trust in a terminal first. "
             + "HTTPS uses your Git credential helper. No passwords are stored here. "
-            + "Confirming registers this repository and permits baseline fetches for matching branches." };
+            + "Confirming registers this repository and allows explicit branch preparation; no background fetches run." };
         int row = layout.RowCount++;
         layout.Controls.Add(note, 0, row); layout.SetColumnSpan(note, 3);
         FlowLayoutPanel actions = new() { Dock = DockStyle.Bottom, Height = 50, FlowDirection = FlowDirection.RightToLeft };
@@ -76,12 +75,12 @@ internal sealed class RepositoryRegistrationForm : Form
             string source = _source.Text.Trim();
             string root = _workspaces.Text.Trim();
             if (!Path.IsPathFullyQualified(source) || !Path.IsPathFullyQualified(root)) throw new InvalidOperationException("Select absolute source and workspace paths.");
-            new WorkspaceReadySlotSafety().EnsureSafe(source, root, Path.Combine(root, "registration-preflight"));
+            new ManagedWorkspacePaths().EnsureSafe(source, root, Path.Combine(root, "registration-preflight"));
             if (CreateBareClone ? Directory.Exists(source) || File.Exists(source) : !Directory.Exists(source))
                 throw new InvalidOperationException(CreateBareClone ? "Choose a new, absent clone folder. Nothing will be overwritten." : "Choose an existing normal or bare clone.");
             string[] patterns = _patterns.Text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            _ = BaselineBranchPolicy.Compile(patterns);
-            Registration = new GitRepositoryRegistration(url, source, root) { BaselinePatterns = patterns };
+            if (patterns.Any(branch => !GitBranchRequest.IsSafeBranch(branch))) throw new InvalidOperationException("Use literal short branch names.");
+            Registration = new GitRepositoryRegistration(url, source, root) { BaselineBranches = patterns };
             DialogResult = DialogResult.OK; Close();
         }
         catch (Exception exception) { MessageBox.Show(this, exception.Message, "Repository was not registered", MessageBoxButtons.OK, MessageBoxIcon.Warning); }

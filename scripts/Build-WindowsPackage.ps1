@@ -7,8 +7,7 @@ param(
 
     [string] $PackageVersion = '',
 
-    [ValidateSet('RC1', 'RC2')]
-    [string] $ReleaseDocsPrefix = 'RC1'
+    [string] $ReleaseDocsPrefix = ''
 )
 
 Set-StrictMode -Version Latest
@@ -54,28 +53,14 @@ Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Unregister-PerUser.ps1') -Desti
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Backup-PerUserState.ps1') -Destination $package
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Test-PackageIntegrity.ps1') -Destination $package
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Test-RC2Prerequisites.ps1') -Destination $package
-Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/BITBUCKET_ACCEPTANCE.md') -Destination $package
 Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/RECOVERY.md') -Destination $package
-Copy-Item -LiteralPath (Join-Path $projectRoot 'userscript/git-branch-workspace.user.js') -Destination $package
-Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/GIT_BRANCH_WORKSPACES.md') -Destination $package
-Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/LIFECYCLE_UPGRADE.md') -Destination $package
-Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/OPERATIONS.md') -Destination $package
-Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/VERIFIED_REUSE.md') -Destination $package
 Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/ATTESTATION.md') -Destination $package
+Copy-Item -LiteralPath (Join-Path $projectRoot 'userscript/git-branch-workspace.user.js') -Destination $package
 
 # Preserve relative links in the bundled guides as well as flat compatibility copies.
 Copy-Item -LiteralPath (Join-Path $projectRoot 'README.md') -Destination $package
 Copy-Item -LiteralPath (Join-Path $projectRoot 'ROADMAP.md') -Destination $package
 Copy-Item -LiteralPath (Join-Path $projectRoot 'docs') -Destination $package -Recurse
-
-if ($PackageVersion) {
-    Copy-Item -LiteralPath (Join-Path $projectRoot ("docs/" + $ReleaseDocsPrefix + "_RELEASE_NOTES.md")) -Destination $package
-    Copy-Item -LiteralPath (Join-Path $projectRoot ("docs/" + $ReleaseDocsPrefix + "_ACCEPTANCE.md")) -Destination $package
-    if ($ReleaseDocsPrefix -eq 'RC2') {
-        Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/RECOVERY.md') -Destination $package
-        Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Test-RC2Prerequisites.ps1') -Destination $package
-    }
-}
 
 $sourceCommit = (& git -C $projectRoot rev-parse HEAD | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or $sourceCommit -notmatch '^[a-f0-9]{40,64}$') { throw 'Cannot identify package source commit.' }

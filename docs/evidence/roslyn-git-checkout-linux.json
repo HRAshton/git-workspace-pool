@@ -1,0 +1,68 @@
+{
+  "scope": "Git-only checkout on disposable clone; excludes .NET, SQLite, preflight, network, browser and editor latency",
+  "platform": "Linux-6.18.55-x86_64-with-glibc2.39",
+  "gitVersion": "git version 2.51.1",
+  "baseline": "5ef5dd924195165589a9349b809b20b9b9a89f78",
+  "target": "e3c31f15b79e226656e3b082a921d4d60127b1fa",
+  "iterations": 5,
+  "samples": [
+    {
+      "iteration": 0,
+      "freshCheckoutMs": 6616.153294000014,
+      "warmCheckoutMs": 72.95350399999734,
+      "targetTrackedFiles": 35440,
+      "treeDelta": 58,
+      "targetFilesWithNewMtime": 56,
+      "retainedArtifactBytes": 16777216,
+      "sameDirectoryInode": true
+    },
+    {
+      "iteration": 1,
+      "freshCheckoutMs": 5771.442239999942,
+      "warmCheckoutMs": 82.00891999990745,
+      "targetTrackedFiles": 35440,
+      "treeDelta": 58,
+      "targetFilesWithNewMtime": 56,
+      "retainedArtifactBytes": 16777216,
+      "sameDirectoryInode": true
+    },
+    {
+      "iteration": 2,
+      "freshCheckoutMs": 6538.403074999906,
+      "warmCheckoutMs": 101.57429400010187,
+      "targetTrackedFiles": 35440,
+      "treeDelta": 58,
+      "targetFilesWithNewMtime": 56,
+      "retainedArtifactBytes": 16777216,
+      "sameDirectoryInode": true
+    },
+    {
+      "iteration": 3,
+      "freshCheckoutMs": 6725.563803000114,
+      "warmCheckoutMs": 76.25295000002552,
+      "targetTrackedFiles": 35440,
+      "treeDelta": 58,
+      "targetFilesWithNewMtime": 56,
+      "retainedArtifactBytes": 16777216,
+      "sameDirectoryInode": true
+    },
+    {
+      "iteration": 4,
+      "freshCheckoutMs": 2641.29799300008,
+      "warmCheckoutMs": 77.32827700010603,
+      "targetTrackedFiles": 35440,
+      "treeDelta": 58,
+      "targetFilesWithNewMtime": 56,
+      "retainedArtifactBytes": 16777216,
+      "sameDirectoryInode": true
+    }
+  ],
+  "fresh": {
+    "medianMs": 6538.403074999906,
+    "p95Ms": 6725.563803000114
+  },
+  "warm": {
+    "medianMs": 77.32827700010603,
+    "p95Ms": 101.57429400010187
+  }
+}

@@ -1,29 +1,14 @@
-# Git-only RC roadmap
+# In-place rewrite status
 
-This RC opens an HTTPS/SSH Git repository and branch in an owned VS Code worktree. No provider APIs, provider PR URLs or Authenticode signing are required. Historical aspirational work is archived in [the earlier roadmap](docs/HISTORICAL_ROADMAP.md); it is not a claim that those features were implemented.
+Implemented: minimal physical worktree ownership, isolated schema, repo locks, durable intent/quarantine, safe detached transitions, explicit release/preparation, tree-delta ranking, optional literal artifact-input fingerprints, browser/tray integration and removal of snapshots/parking/slots/copying/background scheduling.
 
-## Implementation in this step
+Validation in progress: Windows PR CI, disposable integration/crash tests and synthetic timing distributions. See [evidence](docs/REWRITE_EVIDENCE.md) for actual results and limitations.
 
-- [x] Provider-independent repo/branch flow, exact commit pinning and edit-preserving reopen.
-- [x] HTTPS and SSH/scp-style URL validation, origin matching, safe noninteractive authentication and strict SSH known-host checking.
-- [x] Explicit unknown-repository registration, existing normal/bare source selection or creation of a new bare source clone.
-- [x] Baseline regexes over bounded advertised remote heads, default `^master$`, including `^20\d\d[rR]\d{3}$`, interval/backoff and no checkout.
-- [x] Regrouped tray menu, embedded multi-size app icon and default `code.exe` resolution.
-- [x] Shared snapshot/restore, suspend, park/unpark, explicit released-slot handoff and copy-only compatible npm reuse.
-- [x] Settings, cancellation, read-only storage warnings, opt-in timings and retained recovery evidence.
-- [x] Trusted-main attestation workflow and verification policy implemented. Actual attestation execution remains a gate below.
+Remaining acceptance work:
 
-## Evidence needed to complete this RC step
+- Measure representative real repositories, repeated fresh/warm/reopen median and p95, browser request to ready and click to visible editor on Windows.
+- Real process-kill tests now include actual mid-checkout interruption with a retained index.lock.
+- Perform installed browser/tray/VS Code acceptance with HTTPS and SSH authentication on a target Windows machine.
+- Investigate measured bottlenecks before adding prediction, weighting or automation. No cache-copying or background warm-up is planned for v1.
 
-- [ ] Current-head normal Windows CI and extended crash/package/backup validation pass, with no unresolved blocking findings.
-- [ ] Trusted-main candidate build succeeds and its in-toto/SLSA attestation verifies for the exact source commit and ZIP digest. Archive ZIP, checksum, manifest, bundle and run/test evidence.
-- [ ] On your Windows machine, prove actual company Git authentication and host trust, registration/create-bare and existing-clone flows, browser protocol consent and VS Code startup.
-- [ ] Prove staged/unstaged/untracked/ignored data and local commits survive reopen/restart, snapshot/restore and explicit lifecycle operations in a disposable repo.
-- [ ] Exercise a backed-up actual prior profile upgrade and matching-state rollback; confirm interrupted/error/locked-file/low-space behavior retains originals and evidence.
-- [ ] Record representative latency/storage results and real AV/filesystem behavior; accept remaining limitations and approve this exact candidate.
-
-No signing certificate is needed. These checks define RC acceptance, not a universal security certification. Automated output must not be substituted for live authentication or GUI acceptance. See [acceptance procedure](docs/BITBUCKET_ACCEPTANCE.md) and [attestation verification](docs/ATTESTATION.md).
-
-## Outside this RC
-
-Automatic deletion/eviction/recycling, generic build-artifact policies (`bin`/`obj`), predictive warming, project execution, ReFS acceleration and provider PR integrations. The app never installs dependencies, runs a project build/test, deletes original work or silently adopts unknown worktrees. Retention remains explicit and conservative; disk warnings do not authorize cleanup.
+This is unreleased development software. Legacy data preservation remains mandatory.
