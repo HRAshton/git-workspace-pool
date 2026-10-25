@@ -16,7 +16,7 @@
     // openBranch(repo, branch) directly, using short names such as feature/task.
     function openBranch(repo, branch) {
         const target = new URL('prworkspace://open/');
-        target.search = 'v=2&repo=' + encodeURIComponent(repo) +
+        target.search = 'repo=' + encodeURIComponent(repo) +
             '&branch=' + encodeURIComponent(branch);
         window.location.assign(target.href);
     }

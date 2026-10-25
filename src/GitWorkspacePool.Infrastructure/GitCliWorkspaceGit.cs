@@ -86,7 +86,7 @@ public sealed class GitCliWorkspaceGit
     }
 
     /// <summary>Creates a new bare source clone only at an absent, independently selected path.</summary>
-    public async Task CloneBareAsync(string cloneUrl, string destination, CancellationToken cancellationToken)
+    public async Task CloneBareAsync(string cloneUrl, string destination, CancellationToken cancellationToken, IProgress<string>? progress = null)
     {
         _ = GitBranchRequest.NormalizeCloneUrl(cloneUrl);
         string path = Path.GetFullPath(destination);
@@ -95,7 +95,7 @@ public sealed class GitCliWorkspaceGit
         if (Directory.Exists(path) || File.Exists(path)) throw new InvalidOperationException("Clone destination is occupied; nothing was overwritten.");
         Directory.CreateDirectory(parent);
         await EnsureSafeFetchConfigurationAsync(parent, cancellationToken);
-        await RunAsync(parent, ["-c", "http.followRedirects=false", "clone", "--bare", "--no-hardlinks", "--", cloneUrl, path], cancellationToken);
+        await RunAsync(parent, ["-c", "http.followRedirects=false", "clone", "--progress", "--bare", "--no-hardlinks", "--", cloneUrl, path], cancellationToken, progress);
         if (!GitBranchRequest.OriginMatches(await GetOriginUrlAsync(path, cancellationToken), cloneUrl))
             throw new InvalidOperationException("New clone origin did not match; clone evidence retained.");
     }
@@ -169,10 +169,11 @@ public sealed class GitCliWorkspaceGit
     private static async Task<string> RunAsync(
         string repositoryPath,
         IReadOnlyList<string> arguments,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        IProgress<string>? progress = null
     )
     {
-        var result = await BoundedGitProcess.RunAsync(repositoryPath, arguments, 16 * 1024 * 1024, cancellationToken);
+        var result = await BoundedGitProcess.RunAsync(repositoryPath, arguments, 16 * 1024 * 1024, cancellationToken, progress);
         if (result.ExitCode != 0)
         {
             throw new InvalidOperationException($"Git failed with exit code {result.ExitCode}: {result.Error.Trim()}");

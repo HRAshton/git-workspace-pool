@@ -19,6 +19,7 @@ internal sealed class TrayContext : ApplicationContext
     private readonly WarmWorkspacePool _pool;
     private readonly OpenGitBranchHandler _open;
     private readonly Task _listener;
+    private readonly SemaphoreSlim _registrationGate = new(1, 1);
 
     public TrayContext(string? initialRequest)
     {
@@ -61,16 +62,34 @@ internal sealed class TrayContext : ApplicationContext
 
     private Task OpenProtocolAsync(string raw) => RunAsync(async token =>
     {
-        if (!GitBranchProtocol.TryParse(raw, out GitBranchRequest? request)) throw new InvalidOperationException("Expected a version 2 prworkspace link.");
+        if (!GitBranchProtocol.TryParse(raw, out GitBranchRequest? request))
+            throw new InvalidOperationException("Expected prworkspace://open/?repo=...&branch=...");
+        if (new SettingsStore().Find(request) is null)
+        {
+            // Two browser clicks must not race through two independent registration dialogs.
+            await _registrationGate.WaitAsync(token);
+            try
+            {
+                if (new SettingsStore().Find(request) is null)
+                {
+                    using RepositoryRegistrationForm form = new(request.CloneUrl, request.Branch);
+                    if (form.ShowDialog() != DialogResult.OK || form.Registration is not GitRepositoryRegistration repository)
+                        return; // A cancelled trust prompt must not fetch or open anything.
+                    await RepositoryOnboarding.RegisterAsync(repository, form.CreateBareClone, token);
+                }
+            }
+            finally { _registrationGate.Release(); }
+        }
         await _open.HandleAsync(request, token);
-    });
+    }, allowLongClone: true);
 
-    private async Task RunAsync(Func<CancellationToken, Task> action)
+    private async Task RunAsync(Func<CancellationToken, Task> action, bool allowLongClone = false)
     {
         using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token);
         try
         {
-            timeout.CancelAfter(TimeSpan.FromMinutes(SettingsStore.Read().OperationTimeoutMinutes));
+            int configured = SettingsStore.Read().OperationTimeoutMinutes;
+            timeout.CancelAfter(TimeSpan.FromMinutes(allowLongClone ? Math.Max(60, configured) : configured));
             await action(timeout.Token);
         }
         catch (OperationCanceledException) { if (!_shutdown.IsCancellationRequested) Notify("Operation stopped", "Any interrupted transition is retained for manual recovery."); }

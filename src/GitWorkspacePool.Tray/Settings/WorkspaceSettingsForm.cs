@@ -36,13 +36,11 @@ internal sealed class WorkspaceSettingsForm : Form
             register.Enabled = false;
             try
             {
-                using CancellationTokenSource timeout = new(TimeSpan.FromMinutes(15));
-                if (form.CreateBareClone) await new GitWorkspacePool.Infrastructure.GitCliWorkspaceGit().CloneBareAsync(repository.CloneUrl, repository.LocalPath, timeout.Token);
-                await new GitWorkspacePool.Infrastructure.WarmWorktreeGit().VerifySourceAsync(repository, timeout.Token);
-                AppSettings edited = JsonSerializer.Deserialize<AppSettings>(_json.Text) ?? throw new InvalidOperationException("Expected settings object.");
-                edited.GitRepositories.Add(repository);
-                _fingerprint = SettingsStore.Save(edited, _fingerprint);
-                _json.Text = JsonSerializer.Serialize(edited, new JsonSerializerOptions { WriteIndented = true });
+                using CancellationTokenSource timeout = new(TimeSpan.FromMinutes(Math.Max(60, SettingsStore.Read().OperationTimeoutMinutes)));
+                await RepositoryOnboarding.RegisterAsync(repository, form.CreateBareClone, timeout.Token);
+                var updated = SettingsStore.ReadForEdit();
+                _fingerprint = updated.Fingerprint;
+                _json.Text = JsonSerializer.Serialize(updated.Settings, new JsonSerializerOptions { WriteIndented = true });
             }
             catch (Exception exception) { MessageBox.Show(this, exception.Message, "Repository not registered"); }
             finally { register.Enabled = true; }

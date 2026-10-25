@@ -3,7 +3,7 @@
 A Windows tray application that opens a trusted Git repository and branch in VS Code from a browser link:
 
 ```text
-prworkspace://open/?v=2&repo=https%3A%2F%2Fexample.com%2Fteam%2Frepo.git&branch=feature%2Ftask
+prworkspace://open/?repo=https%3A%2F%2Fexample.com%2Fteam%2Frepo.git&branch=feature%2Ftask
 ```
 
 The same C#/.NET WinForms application now manages populated worktrees directly. Existing assignments reopen unchanged, including local commits, staged changes and untracked files. New branches prefer a safe available worktree and switch it in place. Ignored dependencies and build outputs remain in that directory. If no donor is safe, the application creates a fresh detached worktree at a new path.
@@ -13,7 +13,7 @@ The same C#/.NET WinForms application now manages populated worktrees directly. 
 1. Build the existing solution with the SDK in `global.json` on Windows: `dotnet build GitWorkspacePool.slnx -c Release`.
 2. Start the tray and open **Settings**. Register an existing normal/bare source clone or explicitly create a new bare clone. Use a separate workspace root. Authentication uses your Git credential helper or SSH agent and existing known_hosts.
 3. Choose **Prepare warm workspace**, select the repository and enter a literal baseline branch such as `main`. The operation creates an Available checkout. Install dependencies manually in that directory if desired. Keep tracked files clean and user files ignored by an intentional repository policy.
-4. Use **Open branch** or install the [userscript](userscript/git-branch-workspace.user.js) for supported browser pages. Unknown URLs must first be registered in Settings; a browser link cannot grant trust.
+4. Use **Open branch** or install the [userscript](userscript/git-branch-workspace.user.js) for supported browser pages. On a first link for an unknown repository, review the repository URL and approve registration. The app can clone a new bare source with visible progress or use an existing trusted source clone. A browser link cannot grant trust without confirmation.
 5. Use **List workspaces / release** to explicitly return an assignment to Available. Release refuses changed HEADs, local branches, tracked changes, untracked files and unfinished Git operations. No cleanup or parking occurs.
 
 Settings remain in `%APPDATA%/GitWorkspacePool/settings.json`. New state is `%LOCALAPPDATA%/GitWorkspacePool/warm-v1/workspaces.db`. Existing `sessions.db`, snapshots and old worktrees are never migrated or adopted. Read [preservation and validation evidence](docs/REWRITE_EVIDENCE.md) before using an existing development profile.

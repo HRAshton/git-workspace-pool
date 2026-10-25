@@ -10,7 +10,8 @@ internal static class BoundedGitProcess
         string directory,
         IReadOnlyList<string> arguments,
         int maxCharacters,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        IProgress<string>? stderrProgress = null
     )
     {
         ProcessStartInfo start = new("git")
@@ -26,7 +27,9 @@ internal static class BoundedGitProcess
         foreach (string argument in arguments) start.ArgumentList.Add(argument);
         using Process process = Process.Start(start) ?? throw new InvalidOperationException("Git did not start.");
         Task<string> output = ReadBoundedAsync(process.StandardOutput, maxCharacters, process, cancellationToken);
-        Task<string> error = ReadBoundedAsync(process.StandardError, 1024 * 1024, process, cancellationToken);
+        // Git emits both progress and harmless SSH/server warnings on stderr, even when successful.
+        // Do not buffer an entire years-long clone's progress stream or mistake its size for failure.
+        Task<string> error = ReadStderrAsync(process.StandardError, stderrProgress, process, cancellationToken);
         try
         {
             await Task.WhenAll(output, error, process.WaitForExitAsync(cancellationToken));
@@ -36,6 +39,50 @@ internal static class BoundedGitProcess
         {
             Stop(process);
             await process.WaitForExitAsync(CancellationToken.None);
+            throw;
+        }
+    }
+
+    private static async Task<string> ReadStderrAsync(
+        StreamReader reader, IProgress<string>? progress, Process process, CancellationToken cancellationToken)
+    {
+        const int retainedLimit = 64 * 1024;
+        const int lineLimit = 4096;
+        try
+        {
+            StringBuilder retained = new();
+            StringBuilder line = new();
+            char[] buffer = new char[4096];
+            int count;
+            while ((count = await reader.ReadAsync(buffer.AsMemory(), cancellationToken)) != 0)
+            {
+                if (count > retainedLimit - retained.Length)
+                    retained.Remove(0, count - (retainedLimit - retained.Length));
+                retained.Append(buffer, 0, count);
+                if (progress is null) continue;
+                for (int i = 0; i < count; i++)
+                {
+                    char character = buffer[i];
+                    if (character is '\r' or '\n')
+                    {
+                        if (line.Length > 0)
+                        {
+                            progress.Report(line.ToString().Trim());
+                            line.Clear();
+                        }
+                    }
+                    else if (!char.IsControl(character) && line.Length < lineLimit)
+                    {
+                        line.Append(character);
+                    }
+                }
+            }
+            if (progress is not null && line.Length > 0) progress.Report(line.ToString().Trim());
+            return retained.ToString();
+        }
+        catch
+        {
+            Stop(process);
             throw;
         }
     }
@@ -51,7 +98,7 @@ internal static class BoundedGitProcess
             int count;
             while ((count = await reader.ReadAsync(buffer.AsMemory(), cancellationToken)) != 0)
             {
-                if (count > limit - text.Length) throw new InvalidOperationException("Git preview output exceeded its safety limit.");
+                if (count > limit - text.Length) throw new InvalidOperationException("Git output exceeded its safety limit.");
                 text.Append(buffer, 0, count);
             }
             return text.ToString();
