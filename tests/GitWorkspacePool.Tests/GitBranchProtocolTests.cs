@@ -51,15 +51,15 @@ public sealed class GitBranchProtocolTests
     [Theory]
     [InlineData("&repo=duplicate")]
     [InlineData("&branch=main")]
-    [InlineData("&v=2")]
+    [InlineData("&extra=1")]
     [InlineData("&command=delete")]
     [InlineData("#fragment")]
     public void Protocol_RejectsDuplicateUnknownOrFragmentFields(string suffix) =>
         Assert.False(GitBranchProtocol.TryParse(Link(Repo, "main") + suffix, out _));
 
     [Theory]
-    [InlineData("prworkspace://open:123/?v=2&repo=x&branch=main")]
-    [InlineData("prworkspace://user@open/?v=2&repo=x&branch=main")]
+    [InlineData("prworkspace://open:123/?repo=x&branch=main")]
+    [InlineData("prworkspace://user@open/?repo=x&branch=main")]
     [InlineData("prworkspace://open/path?v=2&repo=x&branch=main")]
     public void Protocol_RejectsAlteredEndpoint(string link) =>
         Assert.False(GitBranchProtocol.TryParse(link, out _));
@@ -109,5 +109,5 @@ public sealed class GitBranchProtocolTests
     }
 
     public static string Link(string repo, string branch) =>
-        "prworkspace://open/?v=2&repo=" + Uri.EscapeDataString(repo) + "&branch=" + Uri.EscapeDataString(branch);
+        "prworkspace://open/?repo=" + Uri.EscapeDataString(repo) + "&branch=" + Uri.EscapeDataString(branch);
 }
