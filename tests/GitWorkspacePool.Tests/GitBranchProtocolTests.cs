@@ -25,7 +25,6 @@ public sealed class GitBranchProtocolTests
     [Theory]
     [InlineData("http://bitbucket.example.com/scm/team/repo.git")]
     [InlineData("file:///tmp/repo.git")]
-    [InlineData("ssh://git@bitbucket.example.com/team/repo.git")]
     [InlineData("https://user:password@bitbucket.example.com/scm/team/repo.git")]
     [InlineData("https://user@bitbucket.example.com/scm/team/repo.git")]
     [InlineData("https://bitbucket.example.com/scm/team/repo.git?token=secret")]
@@ -77,6 +76,37 @@ public sealed class GitBranchProtocolTests
         Assert.True(GitBranchRequest.OriginMatches(Repo.Replace("https://", "https://alice@"), Repo));
         Assert.False(GitBranchRequest.OriginMatches(Repo.Replace("https://", "https://alice%3Asecret@"), Repo));
         Assert.False(GitBranchRequest.OriginMatches(Repo.Replace("example.com", "example.com.evil"), Repo));
+    }
+
+    [Theory]
+    [InlineData("ssh://git@bitbucket.example.com:7999/team/repo.git")]
+    [InlineData("git@bitbucket.example.com:team/repo.git")]
+    public void Protocol_RoundTripsSshAndKeepsUserAndPathIdentity(string repo)
+    {
+        Assert.True(GitBranchProtocol.TryParse(Link(repo, "feature/work"), out GitBranchRequest? request));
+        Assert.Equal(repo, request.CloneUrl);
+        Assert.True(GitBranchRequest.OriginMatches(repo, repo));
+        Assert.False(GitBranchRequest.OriginMatches(repo.Replace("git@", "other@"), repo));
+    }
+
+    [Theory]
+    [InlineData("ssh://git:password@host/team/repo.git")]
+    [InlineData("ssh://-option@host/team/repo.git")]
+    [InlineData("git@host:repo;command")]
+    [InlineData("git@host:-option")]
+    [InlineData("ssh://git@host/repo%0a")]
+    public void Protocol_RejectsUnsafeSsh(string repo)
+    {
+        Assert.False(new GitBranchRequest(repo, "main").IsValid);
+    }
+
+    [Fact]
+    public void SshIdentityDoesNotEquateConfiguredPortWithExplicitPort22()
+    {
+        const string configured = "ssh://git@host/team/repo.git";
+        const string explicitPort = "ssh://git@host:22/team/repo.git";
+        Assert.NotEqual(GitBranchRequest.GetRepositoryIdentity(configured), GitBranchRequest.GetRepositoryIdentity(explicitPort));
+        Assert.False(GitBranchRequest.OriginMatches(configured, explicitPort));
     }
 
     public static string Link(string repo, string branch) =>

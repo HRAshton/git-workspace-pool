@@ -1,5 +1,6 @@
 using System.Drawing;
 using GitWorkspacePool.Core.Domain;
+using GitWorkspacePool.Core.Application;
 using GitWorkspacePool.Infrastructure;
 using GitWorkspacePool.Infrastructure.Snapshots;
 using GitWorkspacePool.Tray.Infrastructure;
@@ -8,8 +9,7 @@ namespace GitWorkspacePool.Tray.Settings;
 
 internal sealed class WorkspaceSettingsForm : Form
 {
-    private readonly DataGridView _git = RepositoryGrid("HTTPS clone URL");
-    private readonly DataGridView _github = RepositoryGrid("GitHub owner/repository");
+    private readonly DataGridView _git = RepositoryGrid("Git clone URL (HTTPS or SSH)");
     private readonly TextBox _editor = new() { Dock = DockStyle.Fill };
     private readonly NumericUpDown _timeout = new() { Minimum = 1, Maximum = 120, Width = 100 };
     private readonly NumericUpDown _snapshotBytes = new() { Minimum = 1, Maximum = 2147483648m, Width = 150, ThousandsSeparator = true };
@@ -30,10 +30,11 @@ internal sealed class WorkspaceSettingsForm : Form
         (_original, _fingerprint) = SettingsStore.ReadForEdit();
         _git.Columns.Add(new DataGridViewTextBoxColumn
         {
-            Name = "Baselines", HeaderText = "Baseline branches (one per line)",
-            ToolTipText = "Optional exact branch names. Shift+Enter adds a line. Empty disables background fetches.",
+            Name = "Baselines", HeaderText = "Baseline regexes (one per line)",
+            ToolTipText = "Regexes matched against remote short branch names. Default ^master$; example ^20\\d\\d[rR]\\d{3}$. Empty disables refresh.",
             DefaultCellStyle = new DataGridViewCellStyle { WrapMode = DataGridViewTriState.True },
         });
+        _git.DefaultValuesNeeded += (_, args) => args.Row.Cells["Baselines"].Value = BaselineBranchPolicy.DefaultPattern;
         _git.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.DisplayedCells;
         Text = "Git Workspace Pool settings";
         Width = 1000;
@@ -42,7 +43,6 @@ internal sealed class WorkspaceSettingsForm : Form
         StartPosition = FormStartPosition.CenterScreen;
         TabControl tabs = new() { Dock = DockStyle.Fill };
         tabs.TabPages.Add(RepositoryTab("Git repositories", _git, true));
-        tabs.TabPages.Add(RepositoryTab("GitHub PR repositories", _github, false));
         tabs.TabPages.Add(OptionsTab());
         FlowLayoutPanel buttons = new()
         {
@@ -73,7 +73,7 @@ internal sealed class WorkspaceSettingsForm : Form
             RowHeadersWidth = 30, AccessibleName = identityHeader + " registrations",
         };
         grid.Columns.Add("Identity", identityHeader);
-        grid.Columns.Add("Source", "Existing local clone folder");
+        grid.Columns.Add("Source", "Local Git object store (normal or bare clone)");
         grid.Columns.Add("Root", "Separate workspace root");
         return grid;
     }
@@ -85,8 +85,8 @@ internal sealed class WorkspaceSettingsForm : Form
         Label help = new()
         {
             Text = generic
-                ? "One row per trusted clone. Authentication uses Git Credential Manager; never enter passwords here."
-                : "Optional existing GitHub PR workflow. Remove any unused example row before saving.",
+                ? "HTTPS or SSH Git clones. The local clone owns Git objects and worktrees; no source working files are required."
+                : "Authentication uses Git; never enter passwords here.",
             AutoSize = true, Padding = new Padding(4, 8, 4, 0),
         };
         actions.Controls.Add(help);
@@ -134,7 +134,7 @@ internal sealed class WorkspaceSettingsForm : Form
         Label notes = new()
         {
             AutoSize = true, MaximumSize = new Size(700, 0), Padding = new Padding(0, 14, 0, 0),
-            Text = "Blank editor path uses the current user's standard VS Code installation. "
+            Text = "Blank editor uses code.exe from PATH. "
                 + "Cancel or timeout preserves unfinished ownership and recovery evidence. "
                 + "Existing worktrees are never moved by changing settings. "
                 + "Snapshot limit changes apply after restarting the tray. Local timing samples exclude browser prompts and visible-editor startup.",
@@ -158,19 +158,13 @@ internal sealed class WorkspaceSettingsForm : Form
     private void LoadValues()
     {
         _git.Rows.Clear();
-        _github.Rows.Clear();
         foreach (GitRepositoryRegistration repository in _original.GitRepositories)
         {
             int index = _git.Rows.Add(repository.CloneUrl, repository.LocalPath, repository.WorkspaceRoot,
-                string.Join(Environment.NewLine, repository.BaselineBranches));
+                string.Join(Environment.NewLine, repository.BaselinePatterns ?? repository.BaselineBranches.Select(branch => "^" + System.Text.RegularExpressions.Regex.Escape(branch) + "$").ToArray()));
             _git.Rows[index].Tag = repository;
         }
-        foreach (RepositoryRegistration repository in _original.Repositories)
-        {
-            int index = _github.Rows.Add(repository.RepositoryKey, repository.LocalPath, repository.WorkspaceRoot);
-            _github.Rows[index].Tag = repository;
-        }
-        _editor.Text = _original.EditorExecutable ?? "";
+        _editor.Text = _original.EditorExecutable ?? "code.exe";
         _timeout.Value = Math.Clamp(_original.OperationTimeoutMinutes, 1, 120);
         _snapshotBytes.Value = Math.Clamp(_original.SnapshotLimits.MaxBytes, 1, 2147483648L);
         _snapshotEntries.Value = Math.Clamp(_original.SnapshotLimits.MaxEntries, 1, 50000);
@@ -197,14 +191,11 @@ internal sealed class WorkspaceSettingsForm : Form
         {
             AppSettings edited = new()
             {
-                Repositories = FilledRows(_github).Select(row =>
-                    (row.Tag as RepositoryRegistration ?? new("", "", "")) with
-                    { RepositoryKey = Cell(row, 0), LocalPath = Cell(row, 1), WorkspaceRoot = Cell(row, 2) }).ToList(),
                 GitRepositories = FilledRows(_git).Select(row =>
                     (row.Tag as GitRepositoryRegistration ?? new("", "", "")) with
                     { CloneUrl = Cell(row, 0), LocalPath = Cell(row, 1), WorkspaceRoot = Cell(row, 2),
-                        BaselineBranches = Cell(row, 3).Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) }).ToList(),
-                EditorExecutable = string.IsNullOrWhiteSpace(_editor.Text) ? null : _editor.Text.Trim(),
+                        BaselineBranches = [], BaselinePatterns = Cell(row, 3).Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) }).ToList(),
+                EditorExecutable = string.IsNullOrWhiteSpace(_editor.Text) ? "code.exe" : _editor.Text.Trim(),
                 OperationTimeoutMinutes = (int)_timeout.Value,
                 EnableLocalTimings = _timings.Checked,
                 OfferVerifiedBranchReuse = _offerReuse.Checked,
@@ -267,10 +258,7 @@ internal sealed class WorkspaceSettingsForm : Form
             using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
             timeout.CancelAfter(TimeSpan.FromSeconds(20));
             string origin = await Task.Run(() => new GitCliWorkspaceGit().GetOriginUrlAsync(source, timeout.Token));
-            bool matches = generic
-                ? GitBranchRequest.OriginMatches(origin, identity)
-                : PullRequestReference.TryParse("https://github.com/" + identity + "/pull/1", out PullRequestReference? request)
-                    && GitHubRemoteIdentity.Matches(origin, request);
+            bool matches = GitBranchRequest.OriginMatches(origin, identity);
             MessageBox.Show(this, matches ? "Origin matches. No fetch or checkout was performed."
                 : "Origin does not match this registration. No files were changed.", "Repository origin",
                 MessageBoxButtons.OK, matches ? MessageBoxIcon.Information : MessageBoxIcon.Warning);

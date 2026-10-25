@@ -41,36 +41,8 @@ public sealed class AcquireExplicitReadySlotService
         _checkpoints = checkpoints;
     }
 
-    /// <summary>
-    /// Acquires the exact requested Ready slot only. All interruptions leave
-    /// the durable Preparing/Reserved lease for explicit recovery, never cleanup.
-    /// </summary>
-    public async Task<OpenPullRequestResult> AcquireAsync(
-        PullRequestReference request,
-        RepositoryRegistration trustedRepository,
-        Guid slotId,
-        long expectedGeneration,
-        CancellationToken cancellationToken
-    )
-    {
-        if (!request.RepositoryKey.Equals(trustedRepository.RepositoryKey, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException("The request does not belong to the trusted repository.");
-        }
-        return await AcquireCoreAsync(
-            request.Provider + ":" + request.RepositoryKey, request.Number,
-            trustedRepository.LocalPath, trustedRepository.WorkspaceRoot,
-            slotId, expectedGeneration,
-            async (_, token) =>
-            {
-                await _git.FetchPullRequestAsync(trustedRepository.LocalPath, request.Number, token);
-                return await _git.GetPullRequestCommitAsync(trustedRepository.LocalPath, request.Number, token);
-            }, cancellationToken
-        );
-    }
-
     /// <summary>Acquires a released slot for an ordinary Git branch using the same generation and ownership rules.</summary>
-    public Task<OpenPullRequestResult> AcquireBranchAsync(
+    public Task<OpenWorkspaceResult> AcquireBranchAsync(
         GitBranchRequest request,
         GitRepositoryRegistration trustedRepository,
         int referenceNumber,
@@ -100,7 +72,9 @@ public sealed class AcquireExplicitReadySlotService
         );
     }
 
-    private async Task<OpenPullRequestResult> AcquireCoreAsync(
+    internal IWorkspaceGit Git => _git;
+
+    internal async Task<OpenWorkspaceResult> AcquireCoreAsync(
         string repositoryKey,
         int referenceNumber,
         string sourcePath,
@@ -270,6 +244,6 @@ public sealed class AcquireExplicitReadySlotService
         }
 
         // A reused location has a new Git checkout, not recycled build files.
-        return new OpenPullRequestResult(slot.WorkspacePath, false);
+        return new OpenWorkspaceResult(slot.WorkspacePath, false);
     }
 }

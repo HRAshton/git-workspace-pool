@@ -6,4 +6,5 @@
         <ProjectReference Include="../GitWorkspacePool.Core/GitWorkspacePool.Core.csproj" />
         <PackageReference Include="Microsoft.Data.Sqlite" />
     </ItemGroup>
+    <ItemGroup><InternalsVisibleTo Include="GitWorkspacePool.LegacyTestSupport" /></ItemGroup>
 </Project>

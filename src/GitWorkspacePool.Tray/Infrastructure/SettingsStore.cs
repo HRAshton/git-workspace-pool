@@ -6,7 +6,7 @@ using GitWorkspacePool.Infrastructure.Configuration;
 
 namespace GitWorkspacePool.Tray.Infrastructure;
 
-internal sealed class SettingsStore : IRepositoryCatalog, IGitBranchCatalog
+internal sealed class SettingsStore : IGitBranchCatalog
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -29,59 +29,6 @@ internal sealed class SettingsStore : IRepositoryCatalog, IGitBranchCatalog
             AppSettings example = new();
             File.WriteAllText(FilePath, JsonSerializer.Serialize(example, JsonOptions));
         }
-    }
-
-    public RepositoryRegistration? Find(PullRequestReference request)
-    {
-        AppSettings settings = Read();
-        RepositoryRegistration[] matches = settings
-            .Repositories.Where(repository =>
-                repository.RepositoryKey.Equals(
-                    request.RepositoryKey,
-                    StringComparison.OrdinalIgnoreCase
-                )
-            )
-            .ToArray();
-
-        if (matches.Length > 1)
-        {
-            throw new InvalidOperationException("Duplicate repository registration.");
-        }
-
-        RepositoryRegistration? registration = matches.SingleOrDefault();
-
-        if (registration is not null)
-        {
-            if (
-                !Path.IsPathFullyQualified(registration.LocalPath)
-                || !Path.IsPathFullyQualified(registration.WorkspaceRoot)
-                || !Directory.Exists(registration.LocalPath)
-            )
-            {
-                throw new InvalidOperationException(
-                    "The registered repository paths must be absolute, and the local clone must exist."
-                );
-            }
-
-            string repositoryPath = Path.GetFullPath(registration.LocalPath);
-            string workspaceRoot = Path.GetFullPath(registration.WorkspaceRoot);
-
-            if (
-                workspaceRoot.Equals(repositoryPath, StringComparison.OrdinalIgnoreCase)
-                || workspaceRoot.StartsWith(
-                    repositoryPath.TrimEnd(Path.DirectorySeparatorChar)
-                        + Path.DirectorySeparatorChar,
-                    StringComparison.OrdinalIgnoreCase
-                )
-            )
-            {
-                throw new InvalidOperationException(
-                    "The managed workspace root cannot be inside the source clone."
-                );
-            }
-        }
-
-        return registration;
     }
 
     public GitRepositoryRegistration? Find(GitBranchRequest request)
@@ -134,20 +81,11 @@ internal sealed class SettingsStore : IRepositoryCatalog, IGitBranchCatalog
             if (!urls.Add(url)) throw new InvalidOperationException("Each Git clone URL must be registered once.");
             ValidatePaths(repository.LocalPath, repository.WorkspaceRoot);
         }
-        HashSet<string> keys = new(StringComparer.OrdinalIgnoreCase);
-        foreach (RepositoryRegistration repository in settings.Repositories)
-        {
-            if (!PullRequestReference.TryParse("https://github.com/" + repository.RepositoryKey + "/pull/1", out _)
-                || !keys.Add(repository.RepositoryKey))
-            {
-                throw new InvalidOperationException("GitHub registrations need a unique owner/repository key.");
-            }
-            ValidatePaths(repository.LocalPath, repository.WorkspaceRoot);
-        }
         if (!string.IsNullOrWhiteSpace(settings.EditorExecutable)
+            && !settings.EditorExecutable.Equals("code.exe", StringComparison.OrdinalIgnoreCase)
             && (!Path.IsPathFullyQualified(settings.EditorExecutable) || !File.Exists(settings.EditorExecutable)))
         {
-            throw new InvalidOperationException("Choose the existing absolute path of VS Code Code.exe.");
+            throw new InvalidOperationException("Use code.exe from PATH or choose an existing absolute VS Code executable.");
         }
         return new AtomicConfigurationFile(FilePath).Save(
             JsonSerializer.Serialize(settings, JsonOptions), expectedFingerprint).Fingerprint;
@@ -155,7 +93,7 @@ internal sealed class SettingsStore : IRepositoryCatalog, IGitBranchCatalog
 
     private static void ValidateLimits(AppSettings settings)
     {
-        if (settings.Repositories is null || settings.GitRepositories is null || settings.SnapshotLimits is null)
+        if (settings.GitRepositories is null || settings.SnapshotLimits is null)
             throw new InvalidOperationException("Repository lists and snapshot limits cannot be null.");
         if (settings.StorageWarningLimits is null) throw new InvalidOperationException("Storage warning settings cannot be null.");
         settings.StorageWarningLimits.Validate();

@@ -16,7 +16,7 @@ public sealed class OpenPullRequestHandlerTests
         fixture.Git.Registered = true;
         await fixture.SeedActiveAsync();
 
-        OpenPullRequestResult result = await fixture.Handler.HandleAsync(
+        OpenWorkspaceResult result = await fixture.Handler.HandleAsync(
             Request,
             CancellationToken.None
         );
@@ -32,7 +32,7 @@ public sealed class OpenPullRequestHandlerTests
     {
         Fixture fixture = new();
 
-        OpenPullRequestResult result = await fixture.Handler.HandleAsync(
+        OpenWorkspaceResult result = await fixture.Handler.HandleAsync(
             Request,
             CancellationToken.None
         );
@@ -94,7 +94,7 @@ public sealed class OpenPullRequestHandlerTests
         Assert.Equal(WorkspaceSessionState.Preparing, (await fixture.LoadSessionAsync()).State);
         fixture.Git.FailAfterCreation = false;
 
-        OpenPullRequestResult result = await fixture.Handler.HandleAsync(
+        OpenWorkspaceResult result = await fixture.Handler.HandleAsync(
             Request,
             CancellationToken.None
         );
@@ -312,7 +312,7 @@ public sealed class OpenPullRequestHandlerTests
         }
     }
 
-    private sealed class FakeGit : IWorkspaceGit
+    private sealed class FakeGit : IWorkspaceGit, ILegacyWorkspaceGit
     {
         public int Fetches { get; private set; }
 

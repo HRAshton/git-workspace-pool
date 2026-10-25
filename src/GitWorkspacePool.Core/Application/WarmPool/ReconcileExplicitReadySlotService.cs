@@ -35,35 +35,6 @@ public sealed class ReconcileExplicitReadySlotService
         _locks = locks;
     }
 
-    /// <summary>
-    /// Activates only an exactly matching, clean, registered checkout that
-    /// already exists. Missing, dirty, altered or unpinned worktrees retain
-    /// their Reserved/Preparing ownership for manual recovery.
-    /// </summary>
-    public Task<WorkspaceSession> ReconcileAsync(
-        Guid slotId,
-        RepositoryRegistration trustedRepository,
-        CancellationToken cancellationToken
-    ) => ReconcileCoreAsync(slotId, null, "github:" + trustedRepository.RepositoryKey,
-        trustedRepository.LocalPath, trustedRepository.WorkspaceRoot, cancellationToken);
-
-    /// <summary>
-    /// Explicit UI recovery for the exact reservation the user selected.
-    /// Rejects a stale lease, generation, PR or pinned commit before activation.
-    /// </summary>
-    public Task<WorkspaceSession> ReconcileSelectedAsync(
-        WorkspaceReadySlotReservation selected,
-        RepositoryRegistration trustedRepository,
-        CancellationToken cancellationToken
-    )
-    {
-        ArgumentNullException.ThrowIfNull(selected);
-        return ReconcileCoreAsync(
-            selected.Lease.SlotId, selected, "github:" + trustedRepository.RepositoryKey,
-            trustedRepository.LocalPath, trustedRepository.WorkspaceRoot, cancellationToken
-        );
-    }
-
     /// <summary>Verifies an explicitly selected generic branch reservation under the same generation lease.</summary>
     public Task<WorkspaceSession> ReconcileSelectedAsync(
         WorkspaceReadySlotReservation selected,
@@ -74,7 +45,7 @@ public sealed class ReconcileExplicitReadySlotService
         trustedRepository.LocalPath, trustedRepository.WorkspaceRoot, cancellationToken
     );
 
-    private async Task<WorkspaceSession> ReconcileCoreAsync(
+    internal async Task<WorkspaceSession> ReconcileCoreAsync(
         Guid slotId,
         WorkspaceReadySlotReservation? selected,
         string repositoryKey,

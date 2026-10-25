@@ -32,7 +32,7 @@ public sealed class OpenPullRequestInReadySlotHandler
     /// Verifies the URL, registered repository and Git origin before reserving
     /// the specifically selected slot. Launches the editor only after success.
     /// </summary>
-    public async Task<OpenPullRequestResult> HandleAsync(
+    public async Task<OpenWorkspaceResult> HandleAsync(
         string requestUrl,
         Guid slotId,
         long expectedGeneration,
@@ -54,7 +54,7 @@ public sealed class OpenPullRequestInReadySlotHandler
             );
 
         await _originVerifier.VerifyAsync(request, registration, cancellationToken);
-        OpenPullRequestResult result = await _acquisition.AcquireAsync(
+        OpenWorkspaceResult result = await _acquisition.AcquireAsync(
             request, registration, slotId, expectedGeneration, cancellationToken
         );
         await _editor.OpenAsync(result.WorkspacePath, cancellationToken);

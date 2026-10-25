@@ -19,7 +19,6 @@ internal sealed class TrayContext : ApplicationContext
     private readonly NotifyIcon _icon;
     private readonly Control _dispatcher;
     private readonly CancellationTokenSource _shutdown = new();
-    private readonly OpenPullRequestHandler _open;
     private readonly OpenGitBranchHandler _openBranch;
     private readonly LocalOperationTimings _timings;
     private readonly PlanGitBranchReuseService _reusePlan;
@@ -43,7 +42,6 @@ internal sealed class TrayContext : ApplicationContext
     private readonly IWorkspaceSlotReleasePreparationJournal _releasePreparations;
     private readonly PrepareWorkspaceSlotReleaseService _prepareRelease;
     private readonly FinalizeWorkspaceSlotReleaseService _finalizeRelease;
-    private readonly OpenPullRequestInReadySlotHandler _openInReadySlot;
     private readonly ReconcileExplicitReadySlotService _reconcileSlot;
     private readonly IEditorLauncher _editor;
 
@@ -59,7 +57,7 @@ internal sealed class TrayContext : ApplicationContext
 
         _icon = new NotifyIcon
         {
-            Icon = SystemIcons.Application,
+            Icon = Icon.ExtractAssociatedIcon(Environment.ProcessPath!) ?? SystemIcons.Application,
             Text = "Git Workspace Pool",
             ContextMenuStrip = menu,
             Visible = true,
@@ -132,14 +130,7 @@ internal sealed class TrayContext : ApplicationContext
             git,
             slots
         );
-        WorkspaceAcquisitionService acquisition = new(
-            git,
-            new WorkspaceDirectories(),
-            journal,
-            locks
-        );
         SettingsStore repositories = new();
-        GitHubOriginVerifier originVerifier = new(git);
         VsCodeLauncher editor = new();
         _editor = editor;
         _reconcileSlot = new ReconcileExplicitReadySlotService(
@@ -149,17 +140,10 @@ internal sealed class TrayContext : ApplicationContext
         _openRetained = new OpenReleasedParkedWorkspaceService(
             journal, locks, new GitWorkspaceParkingOperations(git), editor
         );
-        _open = new OpenPullRequestHandler(
-            repositories, originVerifier, acquisition, editor, journal, _openRetained
-        );
         AcquireExplicitReadySlotService readyAcquisition = new(
             slots, slots, new WorkspaceReadySlotSafety(), git,
             new WorkspaceDirectories(), journal, locks
         );
-        _openInReadySlot = new OpenPullRequestInReadySlotHandler(
-            repositories, originVerifier, readyAcquisition, editor
-        );
-
         _branchSessions = new SqliteGitBranchSessionStore(Path.Combine(stateRoot, "sessions.db"));
         _openBranch = new OpenGitBranchHandler(
             repositories, git, git, git, _branchSessions, locks, new WorkspaceDirectories(),
@@ -253,6 +237,28 @@ internal sealed class TrayContext : ApplicationContext
             await PopulateInterruptedSlotRecoveryAsync(interruptedMenu);
         menu.Items.Insert(4, interruptedMenu);
 
+        ToolStripItem[] items = menu.Items.Cast<ToolStripItem>().ToArray();
+        menu.Items.Clear();
+        ToolStripMenuItem workspaces = new("Workspaces");
+        ToolStripMenuItem pool = new("Reuse and baselines");
+        ToolStripMenuItem recovery = new("Snapshots and recovery");
+        ToolStripMenuItem diagnostics = new("Diagnostics");
+        foreach (ToolStripItem item in items)
+        {
+            if (item.Text.StartsWith("Open Git branch", StringComparison.Ordinal)) menu.Items.Add(item);
+            else if (item.Text is "Settings..." or "Exit") continue;
+            else if (item == snapshotsMenu || item == restoreMenu || item == recoveryMenu || item == interruptedMenu
+                || item == branchRecovery || item == cancelReleaseMenu) recovery.DropDownItems.Add(item);
+            else if (item == diskUsageMenu || item.Text.StartsWith("Local operation timings", StringComparison.Ordinal)) diagnostics.DropDownItems.Add(item);
+            else if (item == parkMenu || item == unparkMenu || item == suspendMenu || item == retainedMenu) workspaces.DropDownItems.Add(item);
+            else pool.DropDownItems.Add(item);
+        }
+        menu.Items.Add("Register repository...", null, async (_, _) => await RegisterRepositoryAsync(null));
+        menu.Items.AddRange([workspaces, pool, recovery, diagnostics, new ToolStripSeparator()]);
+        menu.Items.Add(items.Single(item => item.Text == "Settings..."));
+        menu.Items.Add(items.Single(item => item.Text == "Exit"));
+        _icon.DoubleClick += async (_, _) => await OpenGitBranchFromTrayAsync();
+
         _baselineTimer = new System.Windows.Forms.Timer { Interval = 60000 };
         _baselineTimer.Tick += async (_, _) => await RefreshBaselinesAsync(false);
         _baselineTimer.Start();
@@ -289,7 +295,7 @@ internal sealed class TrayContext : ApplicationContext
             {
                 Notify(
                     "PR slot recovery required",
-                    pending.Count + " reserved PR slot checkout(s) need inspection. "
+                    pending.Count + " reserved workspace slot checkout(s) need inspection. "
                         + "See Recovery diagnostics; no files were changed."
                 );
             }
@@ -380,7 +386,7 @@ internal sealed class TrayContext : ApplicationContext
                 return;
             }
 
-            foreach (WorkspaceSnapshotRecord record in snapshots)
+            foreach (WorkspaceSnapshotRecord record in snapshots.Where(item => item.Session.BranchName is not null))
             {
                 ToolStripMenuItem item = new(
                     $"{record.Session.DisplayName} "
@@ -405,7 +411,7 @@ internal sealed class TrayContext : ApplicationContext
     {
         DialogResult decision = MessageBox.Show(
             "Restore this snapshot into a separate, new Git worktree? "
-                + "Existing PR sessions will not be changed.",
+                + "Existing workspaces will not be changed.",
             "Restore workspace snapshot",
             MessageBoxButtons.YesNo,
             MessageBoxIcon.Question
@@ -541,14 +547,11 @@ internal sealed class TrayContext : ApplicationContext
             IReadOnlyList<WorkspaceReadySlotReservation> pending =
                 await _pendingSlotInventory.ListReservedAsync(_shutdown.Token);
             AppSettings settings = SettingsStore.Read();
-            IReadOnlyList<RepositoryRegistration> configured = settings.Repositories;
             int shown = 0;
             foreach (WorkspaceReadySlotReservation selected in pending.Take(101))
             {
-                RepositoryRegistration? trusted =
-                    FindTrustedRecoveryRepository(selected, configured);
                 GitRepositoryRegistration? branchRepository = FindTrustedBranchRepository(selected, settings.GitRepositories);
-                if (trusted is null && branchRepository is null)
+                if (branchRepository is null)
                 {
                     continue;
                 }
@@ -568,8 +571,7 @@ internal sealed class TrayContext : ApplicationContext
                         + (selected.Session.PinnedCommitSha ?? "(not pinned)"),
                 };
                 WorkspaceReadySlotReservation choice = selected;
-                RepositoryRegistration? repository = trusted;
-                item.Click += (_, _) => _ = FinishInterruptedSlotAsync(choice, repository, branchRepository);
+                item.Click += (_, _) => _ = FinishInterruptedSlotAsync(choice, branchRepository);
                 menu.DropDownItems.Add(item);
             }
 
@@ -597,31 +599,6 @@ internal sealed class TrayContext : ApplicationContext
         }
     }
 
-    private static RepositoryRegistration? FindTrustedRecoveryRepository(
-        WorkspaceReadySlotReservation reservation,
-        IReadOnlyList<RepositoryRegistration> configured
-    )
-    {
-        StringComparison comparison = OperatingSystem.IsWindows()
-            ? StringComparison.OrdinalIgnoreCase
-            : StringComparison.Ordinal;
-        RepositoryRegistration[] matches = configured.Where(repository =>
-            Path.IsPathFullyQualified(repository.LocalPath)
-            && Path.IsPathFullyQualified(repository.WorkspaceRoot)
-            && Directory.Exists(repository.LocalPath)
-            && reservation.Session.RepositoryKey.Equals(
-                "github:" + repository.RepositoryKey,
-                StringComparison.OrdinalIgnoreCase
-            )
-            && Path.GetFullPath(reservation.Session.SourcePath).Equals(
-                Path.GetFullPath(repository.LocalPath), comparison
-            )
-            && Path.GetDirectoryName(Path.GetFullPath(reservation.Session.WorkspacePath))!
-                .Equals(Path.GetFullPath(repository.WorkspaceRoot), comparison)
-        ).ToArray();
-        return matches.Length == 1 ? matches[0] : null;
-    }
-
     private static GitRepositoryRegistration? FindTrustedBranchRepository(
         WorkspaceReadySlotReservation reservation,
         IReadOnlyList<GitRepositoryRegistration> configured
@@ -640,8 +617,7 @@ internal sealed class TrayContext : ApplicationContext
 
     private async Task FinishInterruptedSlotAsync(
         WorkspaceReadySlotReservation selected,
-        RepositoryRegistration? trusted,
-        GitRepositoryRegistration? branchRepository = null
+        GitRepositoryRegistration branchRepository
     )
     {
         DialogResult confirmed = MessageBox.Show(
@@ -655,7 +631,7 @@ internal sealed class TrayContext : ApplicationContext
                 + "registered Git worktree at the pinned commit can become Active. "
                 + "If any check fails, the existing reservation and files stay untouched. "
                 + "No checkout, reset, cleanup or deletion will be attempted.",
-            "Finish verified PR checkout",
+            "Finish verified workspace checkout",
             MessageBoxButtons.YesNo,
             MessageBoxIcon.Question,
             MessageBoxDefaultButton.Button2
@@ -668,17 +644,15 @@ internal sealed class TrayContext : ApplicationContext
         try
         {
             WorkspaceSession recovered = await RunOperationAsync(WorkspaceOperation.RecoverSlot,
-                "Verify interrupted checkout", token => branchRepository is not null
-                    ? _reconcileSlot.ReconcileSelectedAsync(selected, branchRepository, token)
-                    : _reconcileSlot.ReconcileSelectedAsync(selected, trusted!, token));
+                "Verify interrupted checkout", token => _reconcileSlot.ReconcileSelectedAsync(selected, branchRepository, token));
             try
             {
                 await _editor.OpenAsync(recovered.WorkspacePath, _shutdown.Token);
-                Notify("Interrupted PR checkout completed", recovered.WorkspacePath);
+                Notify("Interrupted workspace checkout completed", recovered.WorkspacePath);
             }
             catch (Exception exception)
             {
-                Notify("PR recovered, but editor did not open",
+                Notify("Workspace recovered, but editor did not open",
                     recovered.WorkspacePath + " — " + exception.Message);
             }
         }
@@ -688,7 +662,7 @@ internal sealed class TrayContext : ApplicationContext
         }
         catch (Exception exception)
         {
-            Notify("PR checkout was not recovered",
+            Notify("workspace checkout was not recovered",
                 exception.Message + " No automatic cleanup or deletion was attempted.");
         }
     }
@@ -712,7 +686,7 @@ internal sealed class TrayContext : ApplicationContext
                 return;
             }
 
-            foreach (WorkspaceSession session in sessions)
+            foreach (WorkspaceSession session in sessions.Where(item => item.BranchName is not null))
             {
                 ToolStripMenuItem item = new(
                     session.DisplayName
@@ -735,10 +709,10 @@ internal sealed class TrayContext : ApplicationContext
     private async Task SuspendFromMenuAsync(Guid operationId)
     {
         DialogResult result = MessageBox.Show(
-            "Suspend this PR session? Its existing worktree and all changes will stay "
+            "Suspend this workspace session? Its existing worktree and all changes will stay "
                 + "exactly where they are. This will NOT free disk space or make "
-                + "the slot available for reuse. Opening the PR again resumes it.",
-            "Suspend PR session",
+                + "the slot available for reuse. Opening the workspace again resumes it.",
+            "Suspend workspace session",
             MessageBoxButtons.YesNo,
             MessageBoxIcon.Question
         );
@@ -782,7 +756,7 @@ internal sealed class TrayContext : ApplicationContext
                 return;
             }
 
-            foreach (WorkspaceSession session in sessions)
+            foreach (WorkspaceSession session in sessions.Where(item => item.BranchName is not null))
             {
                 Guid id = session.OperationId;
                 ToolStripMenuItem item = new(
@@ -808,10 +782,10 @@ internal sealed class TrayContext : ApplicationContext
             unpark
                 ? "Return the parked Git worktree to its original path? "
                     + "Occupied destinations will never be overwritten."
-                : "Move the complete PR worktree into private parking under the "
+                : "Move the complete workspace worktree into private parking under the "
                     + "same workspace root? All changes are preserved in the moved "
                     + "directory. Nothing is deleted.",
-            unpark ? "Unpark PR worktree" : "Park PR worktree",
+            unpark ? "Unpark workspace worktree" : "Park workspace worktree",
             MessageBoxButtons.YesNo,
             MessageBoxIcon.Question
         );
@@ -851,7 +825,7 @@ internal sealed class TrayContext : ApplicationContext
             if (eligible.Length == 0)
             {
                 menu.DropDownItems.Add(new ToolStripMenuItem(
-                    "Park a PR worktree first; nothing is releasable."
+                    "Park a workspace worktree first; nothing is releasable."
                 ) { Enabled = false });
                 return;
             }
@@ -875,7 +849,7 @@ internal sealed class TrayContext : ApplicationContext
         }
         catch (Exception exception)
         {
-            Notify("Cannot list parked PRs", exception.Message);
+            Notify("Cannot list parked workspaces", exception.Message);
         }
     }
 
@@ -888,7 +862,7 @@ internal sealed class TrayContext : ApplicationContext
             if (session is null || session.State != WorkspaceSessionState.Parked)
             {
                 throw new InvalidOperationException(
-                    "The selected PR is no longer parked. Nothing was released."
+                    "The selected workspace is no longer parked. Nothing was released."
                 );
             }
         }
@@ -904,15 +878,15 @@ internal sealed class TrayContext : ApplicationContext
 
         DialogResult confirmed = MessageBox.Show(
             "Release the original slot of " + session.RepositoryKey
-                + " PR #" + session.PullRequestNumber + "?\n\n"
+                + " [" + session.BranchName + "]" + "?\n\n"
                 + "Its entire parked Git worktree, edits, staged changes and snapshots "
                 + "remain at:\n" + session.ParkingPath + "\n\n"
-                + "Another PR may then use its FORMER workspace path. "
-                + "You cannot unpark this PR back into that slot. "
-                + "Use the Open retained released PR menu to edit its parked "
+                + "Another workspace may then use its FORMER workspace path. "
+                + "You cannot unpark this workspace back into that slot. "
+                + "Use the Open retained released workspace menu to edit its parked "
                 + "worktree in place, without reclaiming the slot.\n\n"
                 + "Continue with this irreversible ownership handoff?",
-            "Release parked PR slot",
+            "Release parked workspace slot",
             MessageBoxButtons.YesNo,
             MessageBoxIcon.Warning,
             MessageBoxDefaultButton.Button2
@@ -931,9 +905,9 @@ internal sealed class TrayContext : ApplicationContext
                     return await _finalizeRelease.FinalizeAsync(prepared.PreparationId, token);
                 });
             Notify(
-                "Parked PR slot released",
+                "Parked workspace slot released",
                 "Slot " + finished.SlotId.ToString("N")[..8]
-                    + " is Ready. Parked PR files and snapshots remain preserved."
+                    + " is Ready. Parked workspace files and snapshots remain preserved."
             );
         }
         catch (OperationCanceledException)
@@ -962,17 +936,7 @@ internal sealed class TrayContext : ApplicationContext
                 ? StringComparison.OrdinalIgnoreCase
                 : StringComparison.Ordinal;
             WorkspaceSlot[] trusted = slots.Where(slot =>
-                settings.Repositories.Any(repository =>
-                    slot.RepositoryKey.Equals(
-                        "github:" + repository.RepositoryKey,
-                        StringComparison.OrdinalIgnoreCase
-                    )
-                    && Path.GetFullPath(repository.LocalPath).Equals(
-                        Path.GetFullPath(slot.SourcePath), comparison
-                    )
-                    && Path.GetDirectoryName(Path.GetFullPath(slot.WorkspacePath))!
-                        .Equals(Path.GetFullPath(repository.WorkspaceRoot), comparison)
-                ) || settings.GitRepositories.Any(repository =>
+                settings.GitRepositories.Any(repository =>
                     slot.RepositoryKey.Equals(repository.RepositoryIdentity, StringComparison.Ordinal)
                     && Path.GetFullPath(repository.LocalPath).Equals(Path.GetFullPath(slot.SourcePath), comparison)
                     && Path.GetDirectoryName(Path.GetFullPath(slot.WorkspacePath))!
@@ -999,9 +963,7 @@ internal sealed class TrayContext : ApplicationContext
                 };
                 Guid slotId = slot.SlotId;
                 long generation = slot.Generation;
-                item.Click += (_, _) => _ = slot.RepositoryKey.StartsWith("git:", StringComparison.Ordinal)
-                    ? OpenBranchInSelectedSlotAsync(slot)
-                    : OpenInSelectedSlotAsync(slotId, generation);
+                item.Click += (_, _) => _ = OpenBranchInSelectedSlotAsync(slot);
                 menu.DropDownItems.Add(item);
             }
         }
@@ -1013,136 +975,6 @@ internal sealed class TrayContext : ApplicationContext
         {
             Notify("Cannot list released slots", exception.Message);
         }
-    }
-
-    private async Task OpenInSelectedSlotAsync(Guid slotId, long generation)
-    {
-        string? url = AskForPullRequestUrl();
-        if (url is null)
-        {
-            return;
-        }
-
-        if (!PullRequestReference.TryParse(url, out PullRequestReference? request)
-            || request is null)
-        {
-            Notify("Invalid pull request URL", "Enter a supported GitHub HTTPS PR URL.");
-            return;
-        }
-
-        WorkspaceSlot? slot;
-        try
-        {
-            // The selection is advisory; the service verifies state, generation,
-            // source, Git registration and path safety again under the OS lock.
-            slot = await _slotRegistry.FindSlotAsync(
-                slotId, _shutdown.Token
-            );
-            if (slot is null || slot.State != WorkspaceSlotState.Ready
-                || slot.Generation != generation
-                || !slot.RepositoryKey.Equals(
-                    request.Provider + ":" + request.RepositoryKey,
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                throw new InvalidOperationException(
-                    "The selected slot is stale or belongs to a different repository."
-                );
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            return;
-        }
-        catch (Exception exception)
-        {
-            Notify("Cannot use selected slot", exception.Message);
-            return;
-        }
-
-        DialogResult confirmed = MessageBox.Show(
-            "Open " + request.RepositoryKey + " PR #" + request.Number
-                + " in this explicitly released slot?\n\n"
-                + slot.WorkspacePath + "\n\n"
-                + "The previous PR remains parked elsewhere. This action reserves "
-                + "a new exclusive lease and creates a fresh Git checkout. "
-                + "It does not reuse build artifacts or delete files. "
-                + "If interrupted, manual recovery may be required.",
-            "Use released PR slot",
-            MessageBoxButtons.YesNo,
-            MessageBoxIcon.Question,
-            MessageBoxDefaultButton.Button2
-        );
-        if (confirmed != DialogResult.Yes)
-        {
-            return;
-        }
-
-        try
-        {
-            OpenPullRequestResult result = await RunOperationAsync(WorkspaceOperation.AcquireSlot, "Open workspace in released slot",
-                token => _openInReadySlot.HandleAsync(url, slotId, generation, token));
-            Notify("PR opened in released slot", result.WorkspacePath);
-        }
-        catch (OperationCanceledException)
-        {
-            // An interrupted reservation stays durable, never automatically freed.
-        }
-        catch (Exception exception)
-        {
-            Notify(
-                "PR slot allocation not completed",
-                exception.Message + " Recovery diagnostics will preserve any "
-                    + "unfinished allocation; no automatic cleanup is performed."
-            );
-        }
-    }
-
-    private static string? AskForPullRequestUrl()
-    {
-        using Form dialog = new()
-        {
-            Text = "Open PR in released slot",
-            Width = 580,
-            Height = 185,
-            StartPosition = FormStartPosition.CenterScreen,
-            FormBorderStyle = FormBorderStyle.FixedDialog,
-            MaximizeBox = false,
-            MinimizeBox = false,
-        };
-        Label prompt = new()
-        {
-            Text = "GitHub pull request URL (HTTPS):",
-            Left = 16,
-            Top = 16,
-            Width = 520,
-            Height = 22,
-        };
-        TextBox input = new()
-        {
-            Left = 16,
-            Top = 42,
-            Width = 530,
-        };
-        Button open = new()
-        {
-            Text = "Continue",
-            Left = 340,
-            Top = 86,
-            Width = 100,
-            DialogResult = DialogResult.OK,
-        };
-        Button cancel = new()
-        {
-            Text = "Cancel",
-            Left = 450,
-            Top = 86,
-            Width = 95,
-            DialogResult = DialogResult.Cancel,
-        };
-        dialog.Controls.AddRange([prompt, input, open, cancel]);
-        dialog.AcceptButton = open;
-        dialog.CancelButton = cancel;
-        return dialog.ShowDialog() == DialogResult.OK ? input.Text.Trim() : null;
     }
 
     private async Task PopulatePendingReleasesAsync(ToolStripMenuItem menu)
@@ -1190,7 +1022,7 @@ internal sealed class TrayContext : ApplicationContext
     {
         if (MessageBox.Show(
             "Cancel this pending slot release? The original slot remains "
-                + "Protected, and the PR stays parked. No files are moved.",
+                + "Protected, and the workspace stays parked. No files are moved.",
             "Cancel pending release",
             MessageBoxButtons.YesNo,
             MessageBoxIcon.Question,
@@ -1209,7 +1041,7 @@ internal sealed class TrayContext : ApplicationContext
                 );
             }
 
-            Notify("Release preparation cancelled", "The parked PR retains its original slot.");
+            Notify("Release preparation cancelled", "The parked workspace retains its original slot.");
         }
         catch (OperationCanceledException)
         {
@@ -1235,7 +1067,7 @@ internal sealed class TrayContext : ApplicationContext
             int added = 0;
             foreach (WorkspaceSession current in active)
             {
-                // Historical released PRs are still parked. Match exclusively
+                // Historical released workspaces are still parked. Match exclusively
                 // the old slot identity and trusted source, not similar names.
                 foreach (WorkspaceSession donor in allParked.Where(x =>
                     x.State == WorkspaceSessionState.Released
@@ -1273,7 +1105,7 @@ internal sealed class TrayContext : ApplicationContext
             if (added == 0)
             {
                 menu.DropDownItems.Add(new ToolStripMenuItem(
-                    "No active PR with a released donor at its workspace slot."
+                    "No active workspace with a released donor at its workspace slot."
                 ) { Enabled = false });
             }
         }
@@ -1342,7 +1174,7 @@ internal sealed class TrayContext : ApplicationContext
                 result.FileCount + " files / "
                     + (result.CopiedBytes / (1024 * 1024.0)).ToString("F1")
                     + " MiB in " + result.Elapsed.TotalSeconds.ToString("F2")
-                    + " s. Original parked PR unchanged."
+                    + " s. Original parked workspace unchanged."
             );
         }
         catch (OperationCanceledException)
@@ -1366,13 +1198,13 @@ internal sealed class TrayContext : ApplicationContext
             IReadOnlyList<WorkspaceSession> sessions =
                 await _recoverySessions.ListRecoveryParkingSessionsAsync(_shutdown.Token);
             WorkspaceSession[] retained = sessions.Where(
-                session => session.State == WorkspaceSessionState.Released
+                session => session.BranchName is not null && session.State == WorkspaceSessionState.Released
             ).Take(101).ToArray();
 
             if (retained.Length == 0)
             {
                 menu.DropDownItems.Add(new ToolStripMenuItem(
-                    "No explicitly released PRs with retained worktrees."
+                    "No explicitly released workspaces with retained worktrees."
                 ) { Enabled = false });
                 return;
             }
@@ -1393,7 +1225,7 @@ internal sealed class TrayContext : ApplicationContext
             if (retained.Length > 100)
             {
                 menu.DropDownItems.Add(new ToolStripMenuItem(
-                    "Showing first 100 PRs; review additional records in diagnostics."
+                    "Showing first 100 workspaces; review additional records in diagnostics."
                 ) { Enabled = false });
             }
         }
@@ -1403,7 +1235,7 @@ internal sealed class TrayContext : ApplicationContext
         }
         catch (Exception exception)
         {
-            Notify("Could not list retained PRs", exception.Message);
+            Notify("Could not list retained workspaces", exception.Message);
         }
     }
 
@@ -1413,7 +1245,7 @@ internal sealed class TrayContext : ApplicationContext
         {
             string path = await _openRetained.OpenAsync(operationId, _shutdown.Token);
             Notify(
-                "Released PR opened from retained parking",
+                "Released workspace opened from retained parking",
                 "Opened " + path + ". Original slot ownership was not changed."
             );
         }
@@ -1424,7 +1256,7 @@ internal sealed class TrayContext : ApplicationContext
         catch (Exception exception)
         {
             Notify(
-                "Retained PR was not opened",
+                "Retained workspace was not opened",
                 exception.Message + " No files or slot leases were changed."
             );
         }
@@ -1534,35 +1366,17 @@ internal sealed class TrayContext : ApplicationContext
             await OpenGitBranchAsync(branch);
             return;
         }
-        if (!OpenRequestProtocol.TryExtract(raw, out string requestUrl))
-        {
-            Notify("Rejected URL", "Use a configured Git repo/branch v2 link or GitHub PR v1 link.");
-            return;
-        }
-
-        try
-        {
-            OpenPullRequestResult result = await RunOperationAsync(WorkspaceOperation.OpenPullRequest, "Open PR workspace",
-                token => _open.HandleAsync(requestUrl, token));
-            Notify(
-                result.Reused ? "Reopened PR workspace" : "Created PR workspace",
-                result.WorkspacePath
-            );
-        }
-        catch (OperationCanceledException)
-        {
-            // Normal application shutdown.
-        }
-        catch (Exception exception)
-        {
-            Notify("Could not open PR", exception.Message);
-        }
+        Notify("Rejected URL", "Use a Git repository + branch v2 link. Provider-specific workspace links are no longer supported.");
     }
 
     private async Task OpenGitBranchAsync(GitBranchRequest request)
     {
         try
         {
+            if (!request.IsValid) throw new InvalidOperationException("Enter a valid Git clone URL and short branch name.");
+            bool registered = false;
+            await InvokeUiAsync(async () => { registered = await EnsureRegisteredAsync(request); });
+            if (!registered) return;
             if (SettingsStore.Read().OfferVerifiedBranchReuse)
             {
                 await InvokeUiAsync(() => OpenBranchWithReuseAsync(request));
@@ -1577,7 +1391,7 @@ internal sealed class TrayContext : ApplicationContext
         try
         {
             // SQLite inventory and filesystem preflight must not block the tray thread.
-            OpenPullRequestResult result = await RunOperationAsync(WorkspaceOperation.OpenBranch, "Open Git branch",
+            OpenWorkspaceResult result = await RunOperationAsync(WorkspaceOperation.OpenBranch, "Open Git branch",
                 token => _openBranch.HandleAsync(request, token));
             Notify(result.Reused ? "Reopened branch workspace" : "Created branch workspace", result.WorkspacePath);
         }
@@ -1602,31 +1416,26 @@ internal sealed class TrayContext : ApplicationContext
     {
         GitRepositoryRegistration[] configured = selectedRepository is null
             ? SettingsStore.Read().GitRepositories.ToArray() : [selectedRepository];
-        if (configured.Length == 0)
-        {
-            Notify("Configure a repository first", "Add a repository in Settings before opening a branch.");
-            return null;
-        }
         using Form dialog = new()
         {
             Text = "Open Git branch", Width = 650, Height = 245,
             StartPosition = FormStartPosition.CenterScreen, FormBorderStyle = FormBorderStyle.FixedDialog,
             MaximizeBox = false, MinimizeBox = false,
         };
-        ComboBox repository = new() { Left = 16, Top = 42, Width = 600, DropDownStyle = ComboBoxStyle.DropDownList };
+        ComboBox repository = new() { Left = 16, Top = 42, Width = 600, DropDownStyle = ComboBoxStyle.DropDown };
         repository.Items.AddRange(configured.Select(r => r.CloneUrl).Cast<object>().ToArray());
-        repository.SelectedIndex = 0;
+        if (configured.Length != 0) repository.SelectedIndex = 0;
         TextBox branch = new() { Left = 16, Top = 106, Width = 600 };
         Button open = new() { Text = "Open", Left = 400, Top = 150, Width = 100, DialogResult = DialogResult.OK };
         Button cancel = new() { Text = "Cancel", Left = 510, Top = 150, Width = 100, DialogResult = DialogResult.Cancel };
         dialog.Controls.AddRange([
-            new Label { Text = "Configured HTTPS Git clone URL:", Left = 16, Top = 16, Width = 600 }, repository,
+            new Label { Text = "Git clone URL (HTTPS or SSH; new URLs open registration):", Left = 16, Top = 16, Width = 600 }, repository,
             new Label { Text = "Source branch (for example feature/my-task):", Left = 16, Top = 80, Width = 600 }, branch,
             open, cancel,
         ]);
         dialog.AcceptButton = open; dialog.CancelButton = cancel;
         return dialog.ShowDialog() == DialogResult.OK
-            ? new GitBranchRequest((string)repository.SelectedItem!, branch.Text.Trim()) : null;
+            ? new GitBranchRequest(repository.Text.Trim(), branch.Text.Trim()) : null;
     }
 
     private async Task OpenBranchInSelectedSlotAsync(WorkspaceSlot slot)
@@ -1644,7 +1453,7 @@ internal sealed class TrayContext : ApplicationContext
                     + "? The previous owner's parked files are retained. Existing branch owners reopen in place.",
                 "Use released workspace slot", MessageBoxButtons.YesNo, MessageBoxIcon.Question,
                 MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
-            OpenPullRequestResult result = await RunOperationAsync(WorkspaceOperation.AcquireSlot, "Open branch in released slot",
+            OpenWorkspaceResult result = await RunOperationAsync(WorkspaceOperation.AcquireSlot, "Open branch in released slot",
                 token => _openBranch.HandleInReadySlotAsync(request, slot.SlotId, slot.Generation, token));
             Notify("Branch workspace opened", result.WorkspacePath);
         }
@@ -1668,6 +1477,8 @@ internal sealed class TrayContext : ApplicationContext
     {
         try
         {
+            if (!request.IsValid) throw new InvalidOperationException("Enter a valid Git repository and branch.");
+            if (!await EnsureRegisteredAsync(request)) return;
             GitBranchReusePlan plan = await RunOperationAsync(WorkspaceOperation.InspectPool, "Inspect verified reuse choices",
                 token => _reusePlan.PlanAsync(request, token));
             if (plan.ExistingOwner)
@@ -1687,7 +1498,7 @@ internal sealed class TrayContext : ApplicationContext
             bool copyNpm = choice.CopyNpm;
             var opened = await RunOperationAsync(WorkspaceOperation.AcquireSlot, "Open selected branch workspace", async token =>
             {
-                OpenPullRequestResult result = await _openBranch.HandleInReadySlotAsync(request, candidate.SlotId,
+                OpenWorkspaceResult result = await _openBranch.HandleInReadySlotAsync(request, candidate.SlotId,
                     candidate.Generation, token, plan.TargetCommit);
                 string? warning = null;
                 if (copyNpm && !result.Reused)
@@ -1719,8 +1530,10 @@ internal sealed class TrayContext : ApplicationContext
         {
             AppSettings settings = SettingsStore.Read();
             _baselineSettingsErrorShown = false;
-            if (!settings.GitRepositories.Any(repository => repository.BaselineBranches.Count != 0))
+            if (!settings.GitRepositories.Any(repository => repository.BaselinePatterns is not null
+                    ? repository.BaselinePatterns.Count != 0 : repository.BaselineBranches.Count != 0))
             {
+                await _baselines.RefreshDueAsync([], settings.BaselineRefreshMinutes, DateTimeOffset.UtcNow, false, _shutdown.Token);
                 if (force) Notify("No baselines configured", "Add exact baseline branch names in Settings. No fetch was performed.");
                 return;
             }
@@ -1750,11 +1563,43 @@ internal sealed class TrayContext : ApplicationContext
         foreach (BaselineRefreshStatus status in statuses.Take(64))
         {
             menu.DropDownItems.Add(new ToolStripMenuItem(status.CloneUrl + " [" + status.Branch + "]: "
-                + (status.InProgress ? "refreshing..." : status.Succeeded ? status.Commit![..12] : "fetch failed; check Git authentication/origin"))
+                + (status.InProgress ? "refreshing..." : status.Succeeded ? (status.Commit is null ? "remote heads inspected" : status.Commit[..12]) : "fetch failed; check Git authentication/origin"))
             { Enabled = false, ToolTipText = "Last attempt: " + status.AttemptedAt.ToLocalTime().ToString("g") });
         }
         if (statuses.Count == 0) menu.DropDownItems.Add(new ToolStripMenuItem("No configured baseline has been attempted in this tray session.") { Enabled = false });
         if (statuses.Count > 64) menu.DropDownItems.Add(new ToolStripMenuItem("Showing the first 64 baseline statuses.") { Enabled = false });
+    }
+
+    private async Task<bool> EnsureRegisteredAsync(GitBranchRequest request)
+    {
+        if (new SettingsStore().Find(request) is not null) return true;
+        return await RegisterRepositoryAsync(request.CloneUrl);
+    }
+
+    private async Task<bool> RegisterRepositoryAsync(string? cloneUrl)
+    {
+        try
+        {
+            using RepositoryRegistrationForm form = new(cloneUrl);
+            if (form.ShowDialog() != DialogResult.OK || form.Registration is not GitRepositoryRegistration registration) return false;
+            bool createBareClone = form.CreateBareClone;
+            await RunOperationAsync(WorkspaceOperation.RegisterRepository, "Register Git repository", async token =>
+            {
+                GitCliWorkspaceGit git = new();
+                if (createBareClone) await git.CloneBareAsync(registration.CloneUrl, registration.LocalPath, token);
+                string origin = await git.GetOriginUrlAsync(registration.LocalPath, token);
+                if (!GitBranchRequest.OriginMatches(origin, registration.CloneUrl)) throw new InvalidOperationException("Clone origin does not match the requested repository.");
+                var (settings, fingerprint) = SettingsStore.ReadForEdit();
+                if (settings.GitRepositories.Any(item => GitBranchRequest.OriginMatches(item.CloneUrl, registration.CloneUrl)))
+                    throw new InvalidOperationException("Repository was registered elsewhere while this window was open. Reopen the branch.");
+                settings.GitRepositories.Add(registration);
+                SettingsStore.Save(settings, fingerprint);
+                return true;
+            });
+            return true;
+        }
+        catch (OperationCanceledException) { return false; }
+        catch (Exception exception) { Notify("Repository was not registered", exception.Message + " Any incomplete clone remains for inspection."); return false; }
     }
 
     private async Task PopulateBranchRecoveryAsync(ToolStripMenuItem menu)

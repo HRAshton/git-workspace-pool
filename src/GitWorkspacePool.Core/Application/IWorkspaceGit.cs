@@ -19,31 +19,6 @@ public interface IWorkspaceGit
     );
 
     /// <summary>
-    /// Fetches a specific PR head to an internal Git ref.
-    /// </summary>
-    /// <param name="repositoryPath">The trusted source clone.</param>
-    /// <param name="pullRequestNumber">The PR number.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    Task FetchPullRequestAsync(
-        string repositoryPath,
-        int pullRequestNumber,
-        CancellationToken cancellationToken
-    );
-
-    /// <summary>
-    /// Returns the full commit ID of the fetched PR head.
-    /// </summary>
-    /// <param name="repositoryPath">The trusted source clone.</param>
-    /// <param name="pullRequestNumber">The PR number.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The fetched immutable commit ID.</returns>
-    Task<string> GetPullRequestCommitAsync(
-        string repositoryPath,
-        int pullRequestNumber,
-        CancellationToken cancellationToken
-    );
-
-    /// <summary>
     /// Gets the full checked-out commit ID for safe recovery reconciliation.
     /// </summary>
     /// <param name="workspacePath">The registered worktree.</param>

@@ -32,7 +32,7 @@ public sealed class GitWorkspaceE2ETests
             + "&v=1";
 
         Assert.True(OpenRequestProtocol.TryExtract(protocolUrl, out string requestUrl));
-        OpenPullRequestResult result = await fixture.OpenAsync(requestUrl);
+        OpenWorkspaceResult result = await fixture.OpenAsync(requestUrl);
 
         Assert.True(await fixture.IsRegisteredWorktreeAsync(result.WorkspacePath));
         Assert.Equal(result.WorkspacePath, Assert.Single(fixture.Editor.OpenedPaths));
@@ -44,7 +44,7 @@ public sealed class GitWorkspaceE2ETests
     {
         using Fixture fixture = await Fixture.CreateAsync();
         using CancellationTokenSource shutdown = new(TimeSpan.FromSeconds(15));
-        TaskCompletionSource<OpenPullRequestResult> completed = new(
+        TaskCompletionSource<OpenWorkspaceResult> completed = new(
             TaskCreationOptions.RunContinuationsAsynchronously
         );
 
@@ -83,7 +83,7 @@ public sealed class GitWorkspaceE2ETests
                 protocolUrl,
                 shutdown.Token
             );
-            OpenPullRequestResult result = await completed.Task.WaitAsync(shutdown.Token);
+            OpenWorkspaceResult result = await completed.Task.WaitAsync(shutdown.Token);
 
             Assert.False(result.Reused);
             Assert.True(await fixture.IsRegisteredWorktreeAsync(result.WorkspacePath));
@@ -102,7 +102,7 @@ public sealed class GitWorkspaceE2ETests
     {
         using Fixture fixture = await Fixture.CreateAsync();
 
-        OpenPullRequestResult result = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult result = await fixture.OpenAsync(PullRequestUrl);
 
         Assert.False(result.Reused);
         Assert.Equal("feature for pr 17", File.ReadAllText(Path.Combine(result.WorkspacePath, "feature.txt")));
@@ -120,7 +120,7 @@ public sealed class GitWorkspaceE2ETests
         using Fixture fixture = await Fixture.CreateAsync();
         await fixture.ConfigureFailingCheckoutHookAsync();
 
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
 
         Assert.True(await fixture.IsRegisteredWorktreeAsync(opened.WorkspacePath));
         Assert.Equal(
@@ -255,7 +255,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Restore_RefusesCustomSmudgeDriverBeforeCheckout()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string changed = Path.Combine(opened.WorkspacePath, "feature.txt");
         File.WriteAllText(changed, "preserve original");
         WorkspaceSnapshotReceipt snapshot = await fixture.SnapshotAsync();
@@ -283,7 +283,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task OpenPullRequest_ReopensWithoutOverwritingLocalChanges()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult first = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult first = await fixture.OpenAsync(PullRequestUrl);
         string changedPath = Path.Combine(first.WorkspacePath, "feature.txt");
         string untrackedPath = Path.Combine(first.WorkspacePath, "notes.local");
         string binaryPath = Path.Combine(first.WorkspacePath, "image.local");
@@ -292,7 +292,7 @@ public sealed class GitWorkspaceE2ETests
         File.WriteAllText(untrackedPath, "never delete me");
         File.WriteAllBytes(binaryPath, binary);
 
-        OpenPullRequestResult second = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult second = await fixture.OpenAsync(PullRequestUrl);
 
         Assert.True(second.Reused);
         Assert.Equal(first.WorkspacePath, second.WorkspacePath);
@@ -307,7 +307,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Session_SuspendAndResumeRetainTrackedStagedUntrackedAndIgnoredFiles()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         WorkspaceSession owner = await fixture.OwnedSessionAsync();
 
         string changed = Path.Combine(opened.WorkspacePath, "feature.txt");
@@ -331,7 +331,7 @@ public sealed class GitWorkspaceE2ETests
             () => fixture.SuspendAsync(owner.OperationId)
         );
 
-        OpenPullRequestResult reopened = await fixture.OpenWithFreshHandlerAsync(PullRequestUrl);
+        OpenWorkspaceResult reopened = await fixture.OpenWithFreshHandlerAsync(PullRequestUrl);
         Assert.True(reopened.Reused);
         Assert.Equal(opened.WorkspacePath, reopened.WorkspacePath);
         Assert.Equal(
@@ -353,7 +353,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Session_RecoveryRequiredNeverReactivatesAutomatically()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         WorkspaceSession owner = await fixture.OwnedSessionAsync();
         SqliteWorkspaceSessionJournal journal = new(fixture.DatabasePath);
         await journal.RequireRecoveryAsync(owner.OperationId, CancellationToken.None);
@@ -375,7 +375,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Parking_RoundTripPreservesStagedUnstagedIgnoredAndUntrackedFiles()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         WorkspaceSession session = await fixture.OwnedSessionAsync();
         string changed = Path.Combine(opened.WorkspacePath, "feature.txt");
         File.WriteAllText(changed, "stage one");
@@ -419,7 +419,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Parking_InterruptedJournalAndMoveCanBeSafelyRetried()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         WorkspaceSession session = await fixture.OwnedSessionAsync();
         File.WriteAllText(Path.Combine(opened.WorkspacePath, "notes.local"), "do not lose");
 
@@ -479,7 +479,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Parking_RealProcessKillAtAllMoveBoundariesRetainsUserData()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         WorkspaceSession owner = await fixture.OwnedSessionAsync();
         string userFile = Path.Combine(opened.WorkspacePath, "notes.local");
         File.WriteAllText(userFile, "must survive real crashes");
@@ -609,7 +609,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Parking_RefusesUntrackedNestedGitRepositoryWithoutJournalIntent()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         WorkspaceSession session = await fixture.OwnedSessionAsync();
         string nested = Path.Combine(opened.WorkspacePath, "local-tools");
         Directory.CreateDirectory(nested);
@@ -634,7 +634,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Unparking_RefusesNestedGitRepositoryWithoutReturnIntent()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         WorkspaceSession session = await fixture.OwnedSessionAsync();
         string parked = await fixture.ParkAsync(session.OperationId);
         string nested = Path.Combine(parked, "local-tools");
@@ -661,7 +661,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Parking_SubmoduleIndexEntryIsRefusedBeforeMoveIntent()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         WorkspaceSession session = await fixture.OwnedSessionAsync();
         string head = await new GitCliWorkspaceGit().GetWorktreeCommitAsync(
             opened.WorkspacePath, CancellationToken.None
@@ -695,7 +695,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task ReleasePreflight_RejectsActiveAndApprovesOnlyVerifiedParkedOwner()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         WorkspaceSession owner = await fixture.OwnedSessionAsync();
         File.WriteAllText(Path.Combine(opened.WorkspacePath, "notes.local"), "keep this");
 
@@ -734,7 +734,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task ReleasePreparation_JournalSurvivesRestartAndUnparkRequiresCancellation()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         WorkspaceSession owner = await fixture.OwnedSessionAsync();
         File.WriteAllText(Path.Combine(opened.WorkspacePath, "notes.local"), "unique local data");
         string parked = await fixture.ParkAsync(owner.OperationId);
@@ -791,7 +791,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task ReleaseCommit_PreservesParkedUserDataAndFreesOriginalSlot()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         WorkspaceSession owner = await fixture.OwnedSessionAsync();
         File.WriteAllText(Path.Combine(opened.WorkspacePath, "feature.txt"), "staged");
         await fixture.GitInWorkspaceAsync("add", "feature.txt");
@@ -834,7 +834,7 @@ public sealed class GitWorkspaceE2ETests
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => fixture.UnparkAsync(owner.OperationId)
         );
-        OpenPullRequestResult reopened = await fixture.OpenWithFreshHandlerAsync(PullRequestUrl);
+        OpenWorkspaceResult reopened = await fixture.OpenWithFreshHandlerAsync(PullRequestUrl);
         Assert.True(reopened.Reused);
         Assert.Equal(parked, reopened.WorkspacePath);
         Assert.Equal("precious data", File.ReadAllText(Path.Combine(parked, "notes.local")));
@@ -849,7 +849,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task ReadySlot_ExplicitSecondPrCheckoutRetainsFirstPrParkedData()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult first = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult first = await fixture.OpenAsync(PullRequestUrl);
         WorkspaceSession firstOwner = await fixture.OwnedSessionAsync();
         File.WriteAllText(Path.Combine(first.WorkspacePath, "feature.txt"), "stage protected");
         await fixture.GitInWorkspaceAsync("add", "feature.txt");
@@ -875,7 +875,7 @@ public sealed class GitWorkspaceE2ETests
                 && candidate.Generation == slot.Generation
         );
 
-        OpenPullRequestResult second = await fixture.OpenInReadySlotWithHandlerAsync(
+        OpenWorkspaceResult second = await fixture.OpenInReadySlotWithHandlerAsync(
             "https://github.com/owner/repo/pull/18",
             slot.SlotId,
             slot.Generation
@@ -912,7 +912,7 @@ public sealed class GitWorkspaceE2ETests
         Assert.Empty(await registry.ListReadyAsync(CancellationToken.None));
         Assert.Empty(await registry.AuditAsync(CancellationToken.None));
 
-        OpenPullRequestResult reopened = await fixture.OpenWithFreshHandlerAsync(
+        OpenWorkspaceResult reopened = await fixture.OpenWithFreshHandlerAsync(
             "https://github.com/owner/repo/pull/18"
         );
         Assert.True(reopened.Reused);
@@ -927,7 +927,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task ReleasedPR_ReopenRetainedParkingAfterSecondPrClaimsFormerSlot()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult first = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult first = await fixture.OpenAsync(PullRequestUrl);
         WorkspaceSession original = await fixture.OwnedSessionAsync();
         File.WriteAllText(Path.Combine(first.WorkspacePath, "feature.txt"), "staged old PR");
         await fixture.GitInWorkspaceAsync("add", "feature.txt");
@@ -940,7 +940,7 @@ public sealed class GitWorkspaceE2ETests
         );
         _ = await fixture.FinalizeReleaseAsync(prepared.PreparationId);
         await fixture.CreatePullRequestAsync(18);
-        OpenPullRequestResult second = await fixture.OpenInReadySlotAsync(
+        OpenWorkspaceResult second = await fixture.OpenInReadySlotAsync(
             "https://github.com/owner/repo/pull/18",
             prepared.SlotId,
             prepared.Generation
@@ -954,7 +954,7 @@ public sealed class GitWorkspaceE2ETests
 
         // Browser URL -> trusted PR handler -> retained original PR
         // must not touch the second PR's leased former slot.
-        OpenPullRequestResult fromBrowser = await fixture.OpenWithFreshHandlerAsync(
+        OpenWorkspaceResult fromBrowser = await fixture.OpenWithFreshHandlerAsync(
             PullRequestUrl
         );
         Assert.True(fromBrowser.Reused);
@@ -1001,7 +1001,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task ReleasedPR_RetainedOpenRejectsUnreleasedAndMissingGitTree()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult first = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult first = await fixture.OpenAsync(PullRequestUrl);
         WorkspaceSession original = await fixture.OwnedSessionAsync();
         File.WriteAllText(Path.Combine(first.WorkspacePath, "private.local"), "preserve me");
         string parked = await fixture.ParkAsync(original.OperationId);
@@ -1043,7 +1043,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task WarmNpm_ExplicitCopyReusesIgnoredDependenciesAndPreservesFormerPr()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult first = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult first = await fixture.OpenAsync(PullRequestUrl);
         WorkspaceSession oldOwner = await fixture.OwnedSessionAsync();
         string original = first.WorkspacePath;
         File.WriteAllText(Path.Combine(original, ".gitignore"), "node_modules/\n");
@@ -1060,7 +1060,7 @@ public sealed class GitWorkspaceE2ETests
         WorkspaceSlotReleasePreparation prepared = await fixture.PrepareReleaseAsync(oldOwner.OperationId);
         _ = await fixture.FinalizeReleaseAsync(prepared.PreparationId);
         await fixture.CreatePullRequestAsync(18);
-        OpenPullRequestResult second = await fixture.OpenInReadySlotAsync(
+        OpenWorkspaceResult second = await fixture.OpenInReadySlotAsync(
             "https://github.com/owner/repo/pull/18", prepared.SlotId, prepared.Generation
         );
         WorkspaceSession newOwner = await fixture.OwnedSessionAsync();
@@ -1112,7 +1112,7 @@ public sealed class GitWorkspaceE2ETests
     {
         using Fixture fixture = await Fixture.CreateAsync();
         System.Diagnostics.Stopwatch cold = System.Diagnostics.Stopwatch.StartNew();
-        OpenPullRequestResult first = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult first = await fixture.OpenAsync(PullRequestUrl);
         cold.Stop();
         WorkspaceSession original = await fixture.OwnedSessionAsync();
         File.WriteAllText(Path.Combine(first.WorkspacePath, ".gitignore"), "node_modules/\n");
@@ -1133,7 +1133,7 @@ public sealed class GitWorkspaceE2ETests
         _ = await fixture.FinalizeReleaseAsync(released.PreparationId);
         await fixture.CreatePullRequestAsync(18);
         System.Diagnostics.Stopwatch nextCheckout = System.Diagnostics.Stopwatch.StartNew();
-        OpenPullRequestResult second = await fixture.OpenInReadySlotAsync(
+        OpenWorkspaceResult second = await fixture.OpenInReadySlotAsync(
             "https://github.com/owner/repo/pull/18",
             released.SlotId, released.Generation
         );
@@ -1194,7 +1194,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task WarmNpm_MismatchedManifestAndForeignDestinationAreNeverOverwritten()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult first = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult first = await fixture.OpenAsync(PullRequestUrl);
         WorkspaceSession oldOwner = await fixture.OwnedSessionAsync();
         File.WriteAllText(Path.Combine(first.WorkspacePath, ".gitignore"), "node_modules/\n");
         File.WriteAllText(Path.Combine(first.WorkspacePath, "package.json"), "{\"name\":\"fixture\"}");
@@ -1206,7 +1206,7 @@ public sealed class GitWorkspaceE2ETests
         WorkspaceSlotReleasePreparation prepared = await fixture.PrepareReleaseAsync(oldOwner.OperationId);
         _ = await fixture.FinalizeReleaseAsync(prepared.PreparationId);
         await fixture.CreatePullRequestAsync(18);
-        OpenPullRequestResult second = await fixture.OpenInReadySlotAsync(
+        OpenWorkspaceResult second = await fixture.OpenInReadySlotAsync(
             "https://github.com/owner/repo/pull/18", prepared.SlotId, prepared.Generation
         );
         WorkspaceSession newOwner = await fixture.OwnedSessionAsync();
@@ -1388,7 +1388,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Release_RealProcessKillAtBothDurableBoundariesNeverLosesParkedUserWork()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         WorkspaceSession owner = await fixture.OwnedSessionAsync();
         File.WriteAllText(Path.Combine(opened.WorkspacePath, "notes.local"), "must survive release crash");
         File.WriteAllText(Path.Combine(opened.WorkspacePath, "feature.txt"), "staged original");
@@ -1464,7 +1464,7 @@ public sealed class GitWorkspaceE2ETests
         foreach (WorkspaceSlotHandoffCheckpoint point in points)
         {
             using Fixture fixture = await Fixture.CreateAsync();
-            OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+            OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
             WorkspaceSession original = await fixture.OwnedSessionAsync();
             File.WriteAllText(
                 Path.Combine(opened.WorkspacePath, "notes.local"), "precious old PR data"
@@ -1499,7 +1499,7 @@ public sealed class GitWorkspaceE2ETests
             {
                 Assert.Equal(WorkspaceSlotState.Protected, slot.State);
                 Assert.Empty(await registry.ListReservedAsync(CancellationToken.None));
-                OpenPullRequestResult reopened = await fixture.OpenWithFreshHandlerAsync(
+                OpenWorkspaceResult reopened = await fixture.OpenWithFreshHandlerAsync(
                     "https://github.com/owner/repo/pull/18"
                 );
                 Assert.True(reopened.Reused);
@@ -1559,7 +1559,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task ReadySlot_InterruptedVerifiedCheckoutCanActivateAfterRestart()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult first = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult first = await fixture.OpenAsync(PullRequestUrl);
         WorkspaceSession owner = await fixture.OwnedSessionAsync();
         File.WriteAllText(Path.Combine(first.WorkspacePath, "private.local"), "important old data");
         string parked = await fixture.ParkAsync(owner.OperationId);
@@ -1638,7 +1638,7 @@ public sealed class GitWorkspaceE2ETests
         Assert.Equal("feature for pr 18", File.ReadAllText(
             Path.Combine(recovered.WorkspacePath, "feature.txt")
         ));
-        OpenPullRequestResult reopened = await fixture.OpenWithFreshHandlerAsync(
+        OpenWorkspaceResult reopened = await fixture.OpenWithFreshHandlerAsync(
             "https://github.com/owner/repo/pull/18"
         );
         Assert.True(reopened.Reused);
@@ -1940,7 +1940,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task SlotAudit_RecoveryDiagnosticsFlagsConflictingLeaseWithoutMovingUserData()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string userFile = Path.Combine(opened.WorkspacePath, "notes.local");
         File.WriteAllText(userFile, "preserve");
 
@@ -1976,7 +1976,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Parking_UnparkRefusesOccupiedDestinationWithoutChangingEitherTree()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         WorkspaceSession session = await fixture.OwnedSessionAsync();
         File.WriteAllText(Path.Combine(opened.WorkspacePath, "notes.local"), "parked data");
         string parked = await fixture.ParkAsync(session.OperationId);
@@ -2038,7 +2038,7 @@ public sealed class GitWorkspaceE2ETests
     {
         using Fixture fixture = await Fixture.CreateAsync();
 
-        OpenPullRequestResult[] results = await Task.WhenAll(
+        OpenWorkspaceResult[] results = await Task.WhenAll(
             fixture.OpenAsync(PullRequestUrl),
             fixture.OpenAsync(PullRequestUrl)
         );
@@ -2058,7 +2058,7 @@ public sealed class GitWorkspaceE2ETests
         string workspacePath = fixture.WorkspacePath(17);
         File.WriteAllText(Path.Combine(workspacePath, "notes.local"), "saved user notes");
 
-        OpenPullRequestResult result = await fixture.OpenWithFreshHandlerAsync(PullRequestUrl);
+        OpenWorkspaceResult result = await fixture.OpenWithFreshHandlerAsync(PullRequestUrl);
 
         Assert.True(result.Reused);
         Assert.Equal("saved user notes", File.ReadAllText(Path.Combine(workspacePath, "notes.local")));
@@ -2071,7 +2071,7 @@ public sealed class GitWorkspaceE2ETests
     {
         using Fixture fixture = await Fixture.CreateAsync();
 
-        OpenPullRequestResult[] results = await Task.WhenAll(
+        OpenWorkspaceResult[] results = await Task.WhenAll(
             fixture.OpenAsync(PullRequestUrl),
             fixture.OpenWithFreshHandlerAsync(PullRequestUrl)
         );
@@ -2106,7 +2106,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Snapshot_PreservesIndexStagedUnstagedBinaryIgnoredAndDeletions()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string worktree = opened.WorkspacePath;
 
         File.WriteAllText(Path.Combine(worktree, "feature.txt"), "staged contents");
@@ -2151,7 +2151,7 @@ public sealed class GitWorkspaceE2ETests
         string stagedBlob = await fixture.ReadStagedFeatureAsync();
         Assert.Equal("staged contents", stagedBlob);
 
-        OpenPullRequestResult reopened = await fixture.OpenWithFreshHandlerAsync(PullRequestUrl);
+        OpenWorkspaceResult reopened = await fixture.OpenWithFreshHandlerAsync(PullRequestUrl);
         Assert.True(reopened.Reused);
         Assert.Equal("unstaged contents", File.ReadAllText(Path.Combine(worktree, "feature.txt")));
     }
@@ -2161,7 +2161,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Snapshot_RestoreIntoNewWorktreePreservesIndexAndWorkingFiles()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string source = opened.WorkspacePath;
         File.WriteAllText(Path.Combine(source, "feature.txt"), "staged version");
         await fixture.GitInWorkspaceAsync("add", "feature.txt");
@@ -2196,7 +2196,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task RestoreJournal_DistinguishesInterruptedAndVerifiedRecoveries()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         File.WriteAllText(Path.Combine(opened.WorkspacePath, "feature.txt"), "retain me");
         WorkspaceSnapshotReceipt snapshot = await fixture.SnapshotAsync();
 
@@ -2241,7 +2241,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Restore_RejectsNewFileHiddenInsideAlreadyIgnoredDirectory()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string source = opened.WorkspacePath;
         File.WriteAllText(Path.Combine(source, ".gitignore"), "generated/\n");
         Directory.CreateDirectory(Path.Combine(source, "generated"));
@@ -2282,7 +2282,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Restore_PreservesIgnoredEmptyDirectoryMetadata()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string source = opened.WorkspacePath;
         File.WriteAllText(Path.Combine(source, ".gitignore"), "generated/\n");
         string ignoredFolder = Path.Combine(source, "generated");
@@ -2310,7 +2310,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Snapshot_TamperedPayloadIsRejectedBeforeNewWorktree()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         File.WriteAllText(Path.Combine(opened.WorkspacePath, "feature.txt"), "original");
 
         WorkspaceSnapshotReceipt saved = await fixture.SnapshotAsync();
@@ -2329,7 +2329,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Snapshot_PathTraversalManifestIsRejectedBeforeCheckout()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         File.WriteAllText(Path.Combine(opened.WorkspacePath, "feature.txt"), "preserve this");
 
         WorkspaceSnapshotReceipt saved = await fixture.SnapshotAsync();
@@ -2364,7 +2364,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Snapshot_UnsafeWindowsAliasInManifestIsRejectedBeforeAllocation(string unsafePath)
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string original = Path.Combine(opened.WorkspacePath, "feature.txt");
         File.WriteAllText(original, "preserve user edits");
 
@@ -2396,7 +2396,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Snapshot_CaseAliasedPathsAreRejectedBeforeAllocation()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string original = Path.Combine(opened.WorkspacePath, "feature.txt");
         File.WriteAllText(original, "preserve case-sensitive user data");
         WorkspaceSnapshotReceipt receipt = await fixture.SnapshotAsync();
@@ -2425,7 +2425,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Snapshot_ReparsePointMetadataIsRejectedBeforeAllocation()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string original = Path.Combine(opened.WorkspacePath, "feature.txt");
         File.WriteAllText(original, "original stays");
         WorkspaceSnapshotReceipt receipt = await fixture.SnapshotAsync();
@@ -2456,7 +2456,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Snapshot_FileAncestorCollisionIsRejectedBeforeAllocation()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string sourceFile = Path.Combine(opened.WorkspacePath, "feature.txt");
         File.WriteAllText(sourceFile, "keep me");
 
@@ -2489,7 +2489,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Snapshot_MissingOrUnsupportedManifestVersionIsRejectedBeforeAllocation(int? version)
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string localFile = Path.Combine(opened.WorkspacePath, "feature.txt");
         File.WriteAllText(localFile, "keep the original");
 
@@ -2526,7 +2526,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Snapshot_UnmergedIndexFailsBeforeCreatingSnapshotStorage()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string feature = Path.Combine(opened.WorkspacePath, "feature.txt");
 
         await fixture.GitInWorkspaceAsync("config", "user.name", "E2E Fixture");
@@ -2567,7 +2567,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Snapshot_SubmoduleIndexFailsBeforeCreatingSnapshotStorage()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string head = await new GitCliWorkspaceGit().GetWorktreeCommitAsync(
             opened.WorkspacePath, CancellationToken.None
         );
@@ -2608,7 +2608,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Snapshot_FaultsLeaveSourceAndOwnershipUnchanged()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string path = Path.Combine(opened.WorkspacePath, "feature.txt");
         File.WriteAllText(path, "retain user changes");
 
@@ -2648,7 +2648,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Snapshot_RestoreFaultsRetainIsolatedOrphansAndOriginalFiles()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string original = Path.Combine(opened.WorkspacePath, "feature.txt");
         File.WriteAllText(original, "recoverable contents");
 
@@ -2693,7 +2693,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Snapshot_RealProcessKillPreservesSourceAndCanRetry()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string changed = Path.Combine(opened.WorkspacePath, "feature.txt");
         File.WriteAllText(changed, "unsaved contents");
         WorkspaceSession owner = await fixture.OwnedSessionAsync();
@@ -2733,7 +2733,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Snapshot_RealProcessKillLeavesRecoverableIsolatedWorktree()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string changed = Path.Combine(opened.WorkspacePath, "feature.txt");
         File.WriteAllText(changed, "original user work");
         WorkspaceSnapshotReceipt receipt = await fixture.SnapshotAsync();
@@ -2772,7 +2772,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Restore_RefusesInterveningGitIndexUpdateWithoutLosingStagedChanges()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string source = Path.Combine(opened.WorkspacePath, "feature.txt");
         File.WriteAllText(source, "source staged content");
         await fixture.GitInWorkspaceAsync("add", "feature.txt");
@@ -2826,7 +2826,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Restore_RejectsInterveningTrackedCheckoutEditsWithoutOverwriting()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string sourceReadme = Path.Combine(opened.WorkspacePath, "README.md");
         string sourceFeature = Path.Combine(opened.WorkspacePath, "feature.txt");
         File.WriteAllText(sourceReadme, "saved readme");
@@ -2893,7 +2893,7 @@ public sealed class GitWorkspaceE2ETests
     )
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string original = Path.Combine(opened.WorkspacePath, "feature.txt");
         File.WriteAllText(original, "preserved staged bytes");
         await fixture.GitInWorkspaceAsync("add", "feature.txt");
@@ -2937,7 +2937,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Snapshot_RefusesOversizedManifestBeforePublication()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string userPath = Path.Combine(opened.WorkspacePath, "feature.txt");
         File.WriteAllText(userPath, "keep the source unchanged");
 
@@ -2974,7 +2974,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Restore_RejectsOversizedManifestBeforeRecordingIntent()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string original = Path.Combine(opened.WorkspacePath, "feature.txt");
         File.WriteAllText(original, "preserved source data");
         WorkspaceSnapshotReceipt receipt = await fixture.SnapshotAsync();
@@ -3004,7 +3004,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Snapshot_RejectsWorkingFileMutationImmediatelyBeforePublish()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string changed = Path.Combine(opened.WorkspacePath, "feature.txt");
         File.WriteAllText(changed, "first user change");
 
@@ -3038,7 +3038,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Snapshot_RejectsGitIndexMutationDuringCapture()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string changed = Path.Combine(opened.WorkspacePath, "feature.txt");
         File.WriteAllText(changed, "unstaged v1");
 
@@ -3068,7 +3068,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task RecoveryInventory_DiscoversPendingAndUnjournalledSnapshotAfterFailure()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string sourceFile = Path.Combine(opened.WorkspacePath, "feature.txt");
         File.WriteAllText(sourceFile, "user edits must survive");
 
@@ -3097,7 +3097,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task RecoveryInventory_FindsUnmanagedRestoreAndMissingJournalledSnapshot()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string sourceFile = Path.Combine(opened.WorkspacePath, "feature.txt");
         File.WriteAllText(sourceFile, "keep me");
         WorkspaceSnapshotReceipt receipt = await fixture.SnapshotAsync();
@@ -3135,7 +3135,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Snapshot_InsufficientDiskSpaceFailsBeforeStaging()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string userFile = Path.Combine(opened.WorkspacePath, "feature.txt");
         File.WriteAllText(userFile, "important local work");
 
@@ -3154,7 +3154,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Restore_InsufficientDiskSpaceDoesNotAllocateOrReserve()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         File.WriteAllText(Path.Combine(opened.WorkspacePath, "feature.txt"), "important local work");
         WorkspaceSnapshotReceipt snapshot = await fixture.SnapshotAsync();
 
@@ -3181,7 +3181,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Snapshot_MidCopyIoFailureRetainsIncompleteSnapshotAndUserFiles()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string original = Path.Combine(opened.WorkspacePath, "local-large.bin");
         byte[] userBytes = Enumerable.Repeat((byte)0xA5, 256 * 1024).ToArray();
         File.WriteAllBytes(original, userBytes);
@@ -3221,7 +3221,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Restore_MidCopyIoFailureRetainsJournalledOrphanAndAllowsRetry()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string original = Path.Combine(opened.WorkspacePath, "local-large.bin");
         byte[] userBytes = Enumerable.Repeat((byte)0x5A, 256 * 1024).ToArray();
         File.WriteAllBytes(original, userBytes);
@@ -3265,7 +3265,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Snapshot_ConfiguredByteLimitRefusesBeforeStorageAndAllowsRetry()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string source = Path.Combine(opened.WorkspacePath, "local-budget.bin");
         byte[] bytes = new byte[4096];
         File.WriteAllBytes(source, bytes);
@@ -3287,7 +3287,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Snapshot_ConfiguredBudgetIncludesStagedOnlyPayloadAndRetainsEvidence()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string source = Path.Combine(opened.WorkspacePath, "staged-budget.bin");
         byte[] bytes = new byte[256 * 1024];
         File.WriteAllBytes(source, bytes);
@@ -3322,7 +3322,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Snapshot_ConfiguredEntryLimitRefusesBeforeStorage()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         File.WriteAllText(Path.Combine(opened.WorkspacePath, "local-one.txt"), "one");
         File.WriteAllText(Path.Combine(opened.WorkspacePath, "local-two.txt"), "two");
 
@@ -3341,7 +3341,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Snapshot_EntryLimitIncludesMissingPaths()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         File.Delete(Path.Combine(opened.WorkspacePath, "feature.txt"));
         File.WriteAllText(Path.Combine(opened.WorkspacePath, "local-budget.txt"), "keep");
 
@@ -3359,7 +3359,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Snapshot_EntryLimitBoundsIgnoredDirectoryDescendants()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string directory = Path.Combine(opened.WorkspacePath, "node_modules");
         Directory.CreateDirectory(directory);
         for (int i = 0; i < 8; i++)
@@ -3381,7 +3381,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task StagedBlobExporter_StopsAtByteBudgetWithoutChangingIndexOrUserData()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         byte[] userBytes = Enumerable.Repeat((byte)0x3C, 256 * 1024).ToArray();
         string changed = Path.Combine(opened.WorkspacePath, "oversize.bin");
         File.WriteAllBytes(changed, userBytes);
@@ -3423,7 +3423,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task StagedBlobExporter_RejectsNegativeBudgetBeforeAllocating()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string source = Path.Combine(opened.WorkspacePath, "feature.txt");
         File.WriteAllText(source, "staged value");
         await fixture.GitInWorkspaceAsync("add", "feature.txt");
@@ -3448,7 +3448,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task StagedBlobExporter_RefusesOccupiedDestinationAndAllowsNextExport()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string source = Path.Combine(opened.WorkspacePath, "feature.txt");
         File.WriteAllText(source, "staged and protected");
         await fixture.GitInWorkspaceAsync("add", "feature.txt");
@@ -3486,7 +3486,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Snapshot_CancellationDuringCopyPreservesOriginalAndPendingEvidence()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         byte[] userBytes = Enumerable.Repeat((byte)0x35, 256 * 1024).ToArray();
         string source = Path.Combine(opened.WorkspacePath, "cancel.bin");
         File.WriteAllBytes(source, userBytes);
@@ -3517,7 +3517,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Restore_CancellationDuringCopyRetainsUnverifiedRestore()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         byte[] userBytes = Enumerable.Repeat((byte)0x76, 256 * 1024).ToArray();
         string source = Path.Combine(opened.WorkspacePath, "cancel.bin");
         File.WriteAllBytes(source, userBytes);
@@ -3558,7 +3558,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Recovery_VerifiedRestoreGitHeadDriftIsFlaggedWithoutMutation()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string source = Path.Combine(opened.WorkspacePath, "notes.local");
         File.WriteAllText(source, "never remove this");
         WorkspaceSnapshotReceipt snapshot = await fixture.SnapshotAsync();
@@ -3594,7 +3594,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Restore_UnexpectedFileAfterGitCheckoutIsNotOverwritten()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string source = Path.Combine(opened.WorkspacePath, "personal.bin");
         File.WriteAllBytes(source, [1, 2, 3, 4]);
         WorkspaceSnapshotReceipt receipt = await fixture.SnapshotAsync();
@@ -3642,7 +3642,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Restore_LateFileCreationBetweenCopiesIsNotOverwritten()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string original = Path.Combine(opened.WorkspacePath, "aaa.bin");
         File.WriteAllBytes(original, [1, 2, 3]);
         File.WriteAllBytes(Path.Combine(opened.WorkspacePath, "zzz.bin"), [4, 5, 6]);
@@ -3686,7 +3686,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Recovery_NewIgnoredFileMakesVerifiedDirectoryDiverged()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         File.WriteAllText(Path.Combine(opened.WorkspacePath, ".gitignore"), "generated/\n");
         string generated = Path.Combine(opened.WorkspacePath, "generated");
         Directory.CreateDirectory(generated);
@@ -3721,7 +3721,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Recovery_ChangedIgnoredBinaryIsFlaggedEvenIfGitStatusDoesNotChange()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string ignore = Path.Combine(opened.WorkspacePath, ".gitignore");
         File.WriteAllText(ignore, "generated/\n");
         string ignored = Path.Combine(opened.WorkspacePath, "generated", "cache.bin");
@@ -3753,7 +3753,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Recovery_ChangedGitIndexIsFlaggedWithoutChangingOriginal()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string original = Path.Combine(opened.WorkspacePath, "feature.txt");
         File.WriteAllText(original, "local edits");
         WorkspaceSnapshotReceipt receipt = await fixture.SnapshotAsync();
@@ -3776,7 +3776,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Recovery_CorruptStoredStagedBlobIsUnverifiableWithoutChangingSource()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string original = Path.Combine(opened.WorkspacePath, "feature.txt");
         File.WriteAllText(original, "staged value");
         await fixture.GitInWorkspaceAsync("add", "feature.txt");
@@ -3812,7 +3812,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Recovery_DuplicateRecordedFilesAreUnverifiableDespiteMatchingHashes()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         File.WriteAllText(Path.Combine(opened.WorkspacePath, ".gitignore"), "generated/\n");
         string dir = Path.Combine(opened.WorkspacePath, "generated");
         Directory.CreateDirectory(dir);
@@ -3851,7 +3851,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Recovery_ManifestByteCountDriftIsUnverifiable()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string source = Path.Combine(opened.WorkspacePath, "note.local");
         File.WriteAllText(source, "important user content");
         WorkspaceSnapshotReceipt snapshot = await fixture.SnapshotAsync();
@@ -3880,7 +3880,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Recovery_ReducedManifestFileListIsUnverifiableWithoutChangingFiles()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string original = Path.Combine(opened.WorkspacePath, "notes.local");
         File.WriteAllText(original, "keep original");
         WorkspaceSnapshotReceipt receipt = await fixture.SnapshotAsync();
@@ -3914,7 +3914,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Recovery_MissingManifestMakesVerifiedRestoreUnverifiableWithoutDeletion()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string original = Path.Combine(opened.WorkspacePath, "notes.local");
         File.WriteAllText(original, "keep all data");
         WorkspaceSnapshotReceipt snapshot = await fixture.SnapshotAsync();
@@ -3945,7 +3945,7 @@ public sealed class GitWorkspaceE2ETests
     public async Task Snapshot_RefusesLockedUserFileWithoutPublishing()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.OpenAsync(PullRequestUrl);
+        OpenWorkspaceResult opened = await fixture.OpenAsync(PullRequestUrl);
         string changedFile = Path.Combine(opened.WorkspacePath, "feature.txt");
         File.WriteAllText(changedFile, "important work");
 
@@ -4448,7 +4448,7 @@ public sealed class GitWorkspaceE2ETests
             await GitAsync(seed, "push", "origin", "HEAD:refs/pull/" + number + "/head");
         }
 
-        public Task<OpenPullRequestResult> OpenInReadySlotAsync(
+        public Task<OpenWorkspaceResult> OpenInReadySlotAsync(
             string url,
             Guid slotId,
             long generation
@@ -4475,7 +4475,7 @@ public sealed class GitWorkspaceE2ETests
             );
         }
 
-        public Task<OpenPullRequestResult> OpenInReadySlotWithHandlerAsync(
+        public Task<OpenWorkspaceResult> OpenInReadySlotWithHandlerAsync(
             string url,
             Guid slotId,
             long generation
@@ -4551,10 +4551,10 @@ public sealed class GitWorkspaceE2ETests
             );
         }
 
-        public Task<OpenPullRequestResult> OpenAsync(string url) =>
+        public Task<OpenWorkspaceResult> OpenAsync(string url) =>
             _handler.HandleAsync(url, CancellationToken.None);
 
-        public Task<OpenPullRequestResult> OpenWithFreshHandlerAsync(string url) =>
+        public Task<OpenWorkspaceResult> OpenWithFreshHandlerAsync(string url) =>
             CreateHandler().HandleAsync(url, CancellationToken.None);
 
         public async Task SimulateInterruptedPreparationAsync(int pullRequestNumber)

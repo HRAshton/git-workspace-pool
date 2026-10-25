@@ -15,6 +15,9 @@ public sealed class RefreshConfiguredBaselinesService
     private readonly IGitBaselineFetcher _fetch;
     private readonly SemaphoreSlim _running = new(1, 1);
     private readonly object _gate = new();
+    private sealed record Discovery(DateTimeOffset AttemptedAt, IReadOnlyList<string> Branches);
+    private readonly Dictionary<string, Discovery> _discoveries = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, BaselineRefreshStatus> _discoveryStatus = new(StringComparer.Ordinal);
     private readonly Dictionary<string, BaselineRefreshStatus> _latest = new(StringComparer.Ordinal);
 
     /// <summary>Uses the same trusted Git origin and non-interactive fetch boundaries as opening a workspace.</summary>
@@ -27,7 +30,7 @@ public sealed class RefreshConfiguredBaselinesService
     /// <summary>Returns a snapshot of the bounded status inventory.</summary>
     public IReadOnlyList<BaselineRefreshStatus> Latest()
     {
-        lock (_gate) return _latest.Values.OrderBy(value => value.CloneUrl).ThenBy(value => value.Branch).ToArray();
+        lock (_gate) return _latest.Values.Concat(_discoveryStatus.Values).OrderBy(value => value.CloneUrl).ThenBy(value => value.Branch).ToArray();
     }
 
     /// <summary>Validates resource bounds and exact branch names before any scheduled fetch.</summary>
@@ -40,6 +43,7 @@ public sealed class RefreshConfiguredBaselinesService
             _ = GitBranchRequest.NormalizeCloneUrl(repository.CloneUrl);
             if (!Path.IsPathFullyQualified(repository.LocalPath) || !Path.IsPathFullyQualified(repository.WorkspaceRoot))
                 throw new InvalidOperationException("Baseline source and workspace paths must be absolute.");
+            if (repository.BaselinePatterns is not null) _ = BaselineBranchPolicy.Compile(repository.BaselinePatterns);
             if (repository.BaselineBranches is null || repository.BaselineBranches.Count > 16
                 || repository.BaselineBranches.Any(branch => !GitBranchRequest.IsSafeBranch(branch))
                 || repository.BaselineBranches.Distinct(StringComparer.Ordinal).Count() != repository.BaselineBranches.Count)
@@ -62,8 +66,64 @@ public sealed class RefreshConfiguredBaselinesService
         if (!await _running.WaitAsync(0, cancellationToken)) return new([], true, false);
         try
         {
-            var configured = repositories.SelectMany(repository => repository.BaselineBranches.Select(branch =>
-                (Repository: repository, Branch: branch, Key: GitBranchRequest.NormalizeCloneUrl(repository.CloneUrl) + "\0" + branch))).ToArray();
+            List<(GitRepositoryRegistration Repository, string Branch, string Key)> configured = [];
+            int discoveryBudget = 4;
+            bool discoveryMoreDue = false;
+            HashSet<string> discoveryKeys = new(StringComparer.Ordinal);
+            foreach (GitRepositoryRegistration repository in repositories)
+            {
+                IReadOnlyList<string> branches = repository.BaselineBranches;
+                if (repository.BaselinePatterns is not null)
+                {
+                    string discoveryKey = repository.RepositoryIdentity + "\0" + repository.LocalPath + "\0"
+                        + string.Join("\0", repository.BaselinePatterns);
+                    discoveryKeys.Add(discoveryKey);
+                    if (repository.BaselinePatterns.Count == 0) branches = [];
+                    else
+                    {
+                        bool discoveryDue = !_discoveries.TryGetValue(discoveryKey, out Discovery? cached)
+                            || force || now - cached.AttemptedAt >= TimeSpan.FromMinutes(intervalMinutes);
+                        if (discoveryDue && discoveryBudget-- > 0)
+                        {
+                            // Discovery failures also back off. Never retain stale matched refs after a failed discovery.
+                            _discoveries[discoveryKey] = new Discovery(now, []);
+                            BaselineRefreshStatus discoveryStatus = new(repository.CloneUrl, "Remote baseline discovery", now, false, null, true);
+                            lock (_gate) _discoveryStatus[discoveryKey] = discoveryStatus;
+                            try
+                            {
+                                using CancellationTokenSource deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                                deadline.CancelAfter(TimeSpan.FromMinutes(2));
+                                string origin = await _remotes.GetOriginUrlAsync(repository.LocalPath, deadline.Token);
+                                if (!GitBranchRequest.OriginMatches(origin, repository.CloneUrl)) throw new InvalidOperationException("Baseline origin mismatch.");
+                                IGitRemoteBranchReader reader = _fetch as IGitRemoteBranchReader
+                                    ?? throw new InvalidOperationException("Remote branch discovery is unavailable.");
+                                branches = BaselineBranchPolicy.Match(repository.BaselinePatterns,
+                                    await reader.ListRemoteBranchesAsync(repository.LocalPath, deadline.Token));
+                                _discoveries[discoveryKey] = new Discovery(now, branches);
+                                discoveryStatus = discoveryStatus with { Succeeded = true };
+                            }
+                            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { branches = []; }
+                            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException) { branches = []; }
+                            finally
+                            {
+                                lock (_gate) _discoveryStatus[discoveryKey] = discoveryStatus with { InProgress = false };
+                            }
+                        }
+                        else
+                        {
+                            branches = cached?.Branches ?? [];
+                            if (discoveryDue) discoveryMoreDue = true;
+                        }
+                    }
+                }
+                configured.AddRange(branches.Select(branch => (repository, branch,
+                    GitBranchRequest.NormalizeCloneUrl(repository.CloneUrl) + "\0" + branch)));
+            }
+            foreach (string stale in _discoveries.Keys.Where(key => !discoveryKeys.Contains(key)).ToArray()) _discoveries.Remove(stale);
+            lock (_gate)
+            {
+                foreach (string stale in _discoveryStatus.Keys.Where(key => !discoveryKeys.Contains(key)).ToArray()) _discoveryStatus.Remove(stale);
+            }
             HashSet<string> keys = configured.Select(item => item.Key).ToHashSet(StringComparer.Ordinal);
             lock (_gate)
             {
@@ -102,7 +162,7 @@ public sealed class RefreshConfiguredBaselinesService
                 }
                 attempts.Add(status);
             }
-            return new BaselineRefreshBatch(attempts, false, due.Length > 4);
+            return new BaselineRefreshBatch(attempts, false, due.Length > 4 || discoveryMoreDue);
         }
         finally { _running.Release(); }
     }

@@ -1,171 +1,84 @@
 # Git Workspace Pool
 
-A Windows tray application that opens configured Git repositories and branches, or GitHub pull requests, in local VS Code worktrees. A Tampermonkey userscript supplies the browser action.
+A Windows tray app that opens a **Git repository + branch** in an owned VS Code worktree. Works with HTTPS and SSH remotes, including Bitbucket Data Center. No provider API, pull request URL or provider-specific fetch refs are required.
 
-For Bitbucket Data Center 9 or another HTTPS Git server, use the [generic repo + branch workflow](docs/GIT_BRANCH_WORKSPACES.md). It requires no PR or provider API. Use **Settings...** to add your trusted clone and separate workspace root, then use **Open Git branch...** or the v2 browser link. `GitRepositories` JSON configuration remains supported. Git handles username/password authentication through your existing credential helper. Generic branches also use the shared snapshot, parking, release, recovery and compatible npm-transfer lifecycle; [back up before the schema-v9 upgrade](docs/LIFECYCLE_UPGRADE.md).
+## Open a repository
 
-## Status
+1. Install Git and VS Code. Authenticate in your terminal first: `git ls-remote <clone-url>`. For SSH, verify the server host key and configure your SSH agent; the app uses strict known-host verification and noninteractive authentication. For HTTPS, use your trusted named Git credential helper. Never put passwords in clone URLs or settings.
+2. Start the app and choose **Open Git branch...**. Enter a clone URL and short branch name, such as `feature/my-task`.
+3. If the repository is unknown, a registration window appears. Confirm its URL, local source clone, workspace root and baseline regexes. Choose an existing clone, or allow creation of a **new bare clone** at an absent path. Registration requires your explicit confirmation; a browser link never grants repository trust automatically.
+4. The app fetches the branch, pins its commit, creates a detached worktree and opens VS Code. Reopening the same branch preserves local commits and staged, unstaged, untracked and ignored files. It does not reset or silently update an existing owner.
 
-Follow the packaged [Bitbucket acceptance steps](docs/BITBUCKET_ACCEPTANCE.md) to verify the ZIP, install, check company Git authentication and exercise the browser/editor and recovery flow. Every package includes a source/tree/SDK manifest and file hashes; installation refuses corrupt inventories and linked install paths. Builds remain unsigned until a release owner signs them.
+**Why a source clone?** Git worktrees share an object database and worktree registry. The source is that local object store, either an existing normal checkout or a bare clone with no working files. The app can create a bare clone for you; you do not need a separate manually maintained checkout. Keep this source clone in backups along with worktrees, parked data, snapshots and the closed journal.
 
-Experimental Windows preview. Configured local repositories create or reopen a dedicated Git worktree per PR, backed by a durable SQLite journal and pinned commit identity. Separately confirmed parking, release, released-slot checkout, recovery and compatible npm file copying are available. **Automatic** worktree recycling, eviction, dependency installation, project builds and deleting user files remain out of scope.
+Supported URL examples:
 
-## RC2 engineering candidate (0.1.0-rc.2)
+```text
+https://github.com/HRAshton/git-workspace-pool.git
+ssh://git@bitbucket.company.example:7999/TEAM/repository.git
+git@bitbucket.company.example:TEAM/repository.git
+```
 
-The [RC2 Windows candidate workflow](.github/workflows/rc2.yml) builds the next unsigned self-contained Windows x64 package after full real-process crash/recovery and package/backup smoke tests. RC2 adds the included [verified backup-first migration helper](docs/RC2_RELEASE_NOTES.md): stop the tray, run `Backup-PerUserState.ps1 -BackupDirectory <new-safe-location>`, and verify the copied SQLite journal, WAL/SHM files and settings. **Back up worktrees, parked worktrees and snapshots separately.** An actual older-profile migration, GUI acceptance, signed public release and safe rollback are still manual [RC2 acceptance gates](docs/RC2_ACCEPTANCE.md).
+The first is a real existing repository, usable with branch `main`. The company SSH examples are placeholders. Transport, SSH username, repository path case and explicit ports matter; SSH and HTTPS spellings of a repository are separate registrations. scp-style paths are relative to the remote account, so they are not silently equated to absolute `ssh://` paths.
 
-Run the bundled `Test-RC2Prerequisites.ps1` to check the supported Windows environment, Git >=2.40.0 and the **configured VS Code Code.exe path** without launching the app, changing user data or fetching any Git ref. This is a diagnostic, not a full installed UI acceptance test.
+## Browser link contract
 
-The extracted RC2 ZIP also bundles [safe recovery and support guidance](docs/RECOVERY.md) for read-only diagnostics, preservation of unfinished operations and credential-safe support requests.
+Any browser button can open this provider-independent link:
 
-## RC1 engineering candidate
+```javascript
+const link = 'prworkspace://open/?v=2&repo=' + encodeURIComponent(cloneUrl) +
+    '&branch=' + encodeURIComponent(shortBranchName);
+window.location.assign(link);
+```
 
-A dedicated [RC1 Windows candidate workflow](.github/workflows/rc1.yml) builds an unsigned, self-contained Windows x64 package with app version `0.1.0-rc.1`, source provenance and a SHA-256 checksum. It also runs extended real-process recovery/crash tests. Download the `GitWorkspacePool-win-x64-rc1-candidate` artifact from a successful RC1 workflow run. This is **not** a signed GitHub Release.
+Example for the existing project repository:
 
-[RC1 release notes](docs/RC1_RELEASE_NOTES.md) describe the supported GitHub PR → VS Code flow and deferred capabilities. [RC1 acceptance and upgrade/rollback](docs/RC1_ACCEPTANCE.md) lists mandatory manual Windows tests before approval as an actual release. Passing package CI alone does not certify browser/tray/editor integration, real prior-profile migration, security edge cases or code signing. Use verified backups of your workspaces and SQLite journal for RC1 evaluation.
+```text
+prworkspace://open/?v=2&repo=https%3A%2F%2Fgithub.com%2FHRAshton%2Fgit-workspace-pool.git&branch=main
+```
 
-## Windows preview ZIP (no .NET SDK required)
+The bundled `git-branch-workspace.user.js` is a minimal Tampermonkey button. Replace its placeholder `@match` with your exact site. No GitHub/Bitbucket page API is used. The old GitHub PR userscript, PR settings tab and v1 PR-link entrypoint are retired. Existing journal/settings evidence is retained; legacy records are not automatically adopted as new branch owners. Provider parsers, origin adapters and PR fetch code exist only in a test-support project outside the shipped app dependency graph.
 
-A PR Windows CI run produces a **self-contained, unsigned win-x64 preview ZIP** as a downloadable workflow artifact, plus a SHA-256 checksum. The installer only uses the current user's profile and does not need administrator rights.
+## Baseline regexes
 
-1. Download the `GitWorkspacePool-win-x64-preview` artifact from a successful PR workflow run. Verify `GitWorkspacePool-win-x64-preview.zip` using the adjacent `.sha256` file and PowerShell `Get-FileHash -Algorithm SHA256`.
-2. Extract the ZIP to a temporary folder. Review and run `.\Install-PerUser.ps1` from that folder. The installer copies the app into `%LOCALAPPDATA%\Programs\GitWorkspacePool\versions\<exe-hash>`, runs a no-UI startup smoke test, then registers the **current-user** `prworkspace:` protocol. It never starts the tray automatically.
-3. Start the installed `GitWorkspacePool.Tray.exe` printed by the installer. It creates (if absent) `%APPDATA%\GitWorkspacePool\settings.json`; configure the trusted repository root there. Install the included `git-workspace-pool.user.js` into Tampermonkey. Git and VS Code must be installed and on the appropriate PATH.
-4. When upgrading, **exit the old tray** before running the new ZIP's installer, then start the new path. The old version directory and all data stay in place for rollback. The new startup performs the existing conservative SQLite journal migration. Do not restore a newer SQLite journal with an older application without a backup.
-5. To disable the protocol registration, run `.\Unregister-PerUser.ps1` from the extracted package, using the matching `-InstallRoot` if customized. It refuses to unregister a handler outside the install root and **does not delete installed binaries, user settings, snapshots, parked worktrees, or any other data**. Remove unused versioned binaries manually only after verifying backups and that the tray is not running.
+New registration defaults to `^master$`. Use one regex per line, for example:
 
-**Distribution limitations:** The preview ZIP is unsigned and not an MSI/MSIX installer. Windows SmartScreen may flag unsigned executables. The automated packaging smoke test proves only that the self-contained executable launches, the upgrade-safe files can be staged twice, and existing files remain untouched. It does **not** run an actual Windows tray UI, browser userscript, protocol round-trip, VS Code, or AV/ACL/power-loss testing. CI artifacts are temporary and are not signed GitHub Release downloads.
+```text
+^master$
+^20\d\d[rR]\d{3}$
+```
 
-For maintainers, the same package can be built with:
+The production pattern matches names such as `2026r150` and `2026R151`. Matching is against advertised remote short branch names, never a fetch refspec or a local checkout. Empty patterns disable background refresh. Existing exact-name settings remain readable and are converted to anchored literal regexes when saved in Settings.
+
+Regexes use a bounded linear-time engine without lookarounds/backreferences. Discovery and fetch have deadlines and interval backoff; inventories and matches are bounded. Fetch updates only dedicated app refs, with no checkout, pruning, builds or dependency installation. See [baseline and reuse details](docs/VERIFIED_REUSE.md).
+
+## Tray and editor
+
+- **Open Git branch... / Register repository...** for opening and trust configuration. Double-clicking the tray opens the branch dialog.
+- **Workspaces** for suspend, park/unpark and retained workspaces.
+- **Reuse and baselines** for explicit released-slot selection, compatible npm copying and baseline status/refresh.
+- **Snapshots and recovery** for capture, isolated restore, interrupted checkout and release recovery.
+- **Diagnostics** for local storage and opt-in timings; **Settings** for repositories, limits and editor.
+
+The editor setting defaults to `code.exe`. The app resolves it on PATH, including VS Code's usual `bin` entry, and launches the actual executable directly. An absolute executable path is also supported. Shell aliases, commands and `code.cmd` are not executed.
+
+## Attested candidate
+
+A trusted-main [Attested Windows candidate workflow](.github/workflows/attest.yml) runs normal/extended tests and package/backup checks, builds the self-contained ZIP, creates SLSA provenance in an in-toto attestation with Sigstore identity, then verifies repository, workflow, main ref and exact source commit. It archives the ZIP, checksum, manifest and attestation bundle. PR preview ZIPs are development artifacts, not trusted-main attested candidates.
+
+No Authenticode certificate or MSI signing is required for this RC. Executables remain unsigned, so Windows may show publisher/SmartScreen warnings. A checksum or package manifest alone is not an attestation. Follow [verification instructions](docs/ATTESTATION.md) before running the installer. No SLSA level or overall OpenSSF certification is claimed.
+
+Extract a verified ZIP and run `.\Install-PerUser.ps1`. It stages a versioned per-user install, verifies its complete file inventory and startup probe, preserves old versions/data, then registers `prworkspace:` for the current user. No .NET SDK is needed to run the packaged app. Stop the old tray and back up closed state/worktrees before upgrading. `Unregister-PerUser.ps1` removes only the matching protocol registration and never deletes data.
+
+## RC completion
+
+Use [the current roadmap](ROADMAP.md) and [Windows/Bitbucket acceptance](docs/BITBUCKET_ACCEPTANCE.md). Live company SSH/HTTPS authentication, browser/tray/editor integration, real upgrade/rollback and representative failure/performance checks require the target machine. Automatic cleanup/eviction, extra artifact classes and ReFS acceleration are outside this RC scope.
+
+For development on Windows with the pinned .NET SDK and PowerShell 7:
 
 ```powershell
-.\scripts\Build-WindowsPackage.ps1 -OutputDirectory C:\gwp-artifacts\preview-build
-.\scripts\Test-WindowsPackage.ps1 -PackagePath C:\gwp-artifacts\preview-build\GitWorkspacePool-win-x64-preview.zip -TestRoot C:\gwp-artifacts\isolated-install-smoke
+.\scripts\Test-Changes.ps1 -IncludeSlow
+.\scripts\Test-Changes.ps1 -IncludeSlow -IncludePackage -OutputDirectory C:\gwp-artifacts\new-validation
 ```
 
-Build from a clean committed checkout; keep output outside the repository so provenance identifies the packaged source. Both output and isolated smoke directories must be new. The smoke's `-SkipProtocolRegistration` path never changes HKCU registry associations. `PACKAGE_MANIFEST.json` records provenance and file integrity, not byte-for-byte ZIP reproducibility or publisher authentication.
-
-## Getting started (Windows, .NET 10 SDK)
-
-1. Build the solution: `dotnet build GitWorkspacePool.slnx`.
-2. Start `GitWorkspacePool.Tray` once to create `%APPDATA%\GitWorkspacePool\settings.json` and register the per-user `prworkspace:` handler.
-3. Configure a local repository and workspace root in `settings.json` using the documented example there.
-4. Run the tray application and install `userscript/git-workspace-pool.user.js` in Tampermonkey.
-5. Open a GitHub PR and click **Open locally**. The first request fetches that PR and creates a detached worktree. Subsequent requests reopen it without checkout, protecting local edits.
-
-Session ownership data is stored in `%LOCALAPPDATA%\\GitWorkspacePool\\sessions.db`. The app can reconcile a previously interrupted checkout; it will **refuse to overwrite unknown or previously untracked existing worktrees**, including worktrees created by older preview builds. Manual adoption is not implemented yet. Back up existing preview workspaces before upgrading.
-
-The configured clone's actual `origin` must identify the GitHub repository in the PR URL (HTTPS or SSH). A mismatched clone is rejected before the session journal or filesystem is changed.
-
-No admin rights or background Windows service are required. The browser protocol is untrusted input: only recognized GitHub PR URLs matching configured repositories are accepted.
-
-## Verified branch reuse and baselines
-
-**Open branch with reuse choices...** previews verified empty released slots and retained donors for an exact fetched commit. Existing owners reopen first. Optional npm copying stays explicit and rechecks compatibility after checkout. Settings can offer the chooser for browser opens and configure exact baseline branches for bounded background fetches. [Details and limits](docs/VERIFIED_REUSE.md).
-
-## Operation controls and local diagnostics
-
-Long-running opens, snapshots, restores, parking, release and dependency transfers show a progress window with **Cancel** and a configurable timeout. Cancellation preserves journalled ownership and unfinished evidence. **Settings...** configures repositories, VS Code and limits; saves retain a previous copy and reject stale edits. Optional **Local operation timings...** reports local application durations without recording URLs, paths or branches. See [operation controls](docs/OPERATIONS.md).
-
-## Snapshot resource limits
-
-`settings.json` accepts an optional `SnapshotLimits` object. Restart the tray after changing it:
-
-```json
-"SnapshotLimits": { "MaxBytes": 536870912, "MaxEntries": 10000 }
-```
-
-Omitted values retain the existing 2 GiB / 50,000 limits. `MaxBytes` covers the combined Git index, working files and independent staged blobs; it must be 1 through 2,147,483,648. `MaxEntries` must be 1 through 50,000 and bounds both changed-path traversal (including directories and missing paths) and copied payload entries. Invalid settings fail closed. Lower limits reject oversized new exports while preserving source files and any interrupted export evidence; they do not invalidate older snapshots or authorize cleanup.
-
-## Testing
-
-Use the exact .NET SDK in `global.json` (10.0.402; roll-forward disabled), Git >=2.40 and PowerShell 7 on Windows. Run the same pre-push build, syntax, unit, offline E2E and focused subprocess-kill checks used by standard CI:
-
-```powershell
-./scripts/Test-Changes.ps1
-# Before a release milestone, also run all crash tests and RC2 package/backup smoke:
-./scripts/Test-Changes.ps1 -IncludeSlow -IncludePackage -OutputDirectory C:\temp\gwp-validation-new
-```
-
-The output directory must not exist. These checks do not install the userscript, change user protocol registration, open VS Code or replace installed GUI acceptance. Batch related changes locally and push the reviewed milestone once; Windows CI still gates its merge.
-
-The fast E2E suite uses a temporary local Git remote with GitHub-style PR refs, real Git worktrees, the versioned URL protocol, and real Windows Named Pipes. It uses a fake editor and **does not launch VS Code, the tray UI, or a browser**.
-
-```powershell
-dotnet test tests/GitWorkspacePool.Tests/GitWorkspacePool.Tests.csproj --filter "Category!=FastE2E"
-dotnet test tests/GitWorkspacePool.Tests/GitWorkspacePool.Tests.csproj --filter "Category=FastE2E"
-```
-
-These tests run on every PR in Windows CI. The fast suite also launches **two real tray processes** in a disposable IPC probe mode to check mutex ownership, protocol forwarding and a missing pipe listener. That mode does not start the UI, open settings or register HKCU protocols; build the full solution before running the standalone tests locally. [Roadmap and acceptance gates](ROADMAP.md) distinguish this from the later installed-browser-and-editor smoke test.
-
-## Explicit session suspension
-
-The tray menu provides **Suspend active PR (keep worktree)...**. This only changes the durable activity state: the original Git worktree, all local modifications and exclusive PR ownership stay untouched. Opening the same PR resumes it. **Suspension does not free disk space, release a warm slot or enable recycling.** A worktree in `RecoveryRequired` can no longer be reactivated by normal PR opening.
-
-## Initial non-destructive worktree parking
-
-The tray offers **Park PR worktree (move, no deletion)...** and **Unpark PR worktree...**. Parking uses `git worktree move` to relocate the complete linked worktree to `<workspace-root>/.gwp-parked/<session-id>`, preserving staged, unstaged, untracked and ignored files. A durable SQLite intent precedes every move and interrupted moves are retried only after checking source/destination registration. Unparking rejects an occupied original path. This is not automatic release, eviction or warm-pool reuse.
-
-## Explicit release and reuse of an empty workspace slot (opt-in)
-
-The tray supports a **manual**, non-destructive cross-PR slot handoff:
-
-1. **Park PR worktree (move, no deletion)...** to move the entire Git linked worktree into private parking. All staged, unstaged, ignored and untracked files stay in the parked directory.
-2. **Release parked PR slot (keep user files)...** to relinquish the PR's *former* workspace path. Read the confirmation: once released, that PR cannot unpark back into the original slot. Its parked worktree and published snapshots remain preserved. If the release is interrupted, inspect recovery diagnostics; **Cancel pending slot release...** can cancel an uncommitted preparation.
-3. **Open PR in a released slot...** and select a listed Ready slot for a configured repository. Enter the new GitHub HTTPS pull-request URL and confirm. The app rechecks trusted Git origin, slot identity and generation, refuses occupied/unregistered/unsafe destinations, and creates a fresh Git worktree with a new exclusive PR lease. The editor opens only after successful checkout.
-4. If allocation is interrupted, review **Recovery diagnostics...**, then choose **Finish interrupted PR checkout (verified only)...** for the exact configured PR, inspect its path, generation and pinned Git commit, and explicitly confirm. Recovery promotes only a still-matching Reserved lease with an already existing, registered, **completely clean** checkout at the pinned commit, then opens VS Code. No checkout, fetch, reset, repair, deletion or automatic cleanup is performed. Missing, unpinned, dirty, altered or stale reservations remain Reserved/Preparing with all their files retained for manual inspection. The normal PR opener never silently reassigns them.
-
-Opening the original released PR's GitHub URL through the browser button also reopens its verified retained parked worktree directly in VS Code, after checking the configured repository origin. The URL opener never reallocates the old slot, creates a worktree or moves parked files.
-
-The tray also provides **Open retained released PR (without moving files)...**. Select the original released PR to verify its preserved `.gwp-parked` Git worktree and open it directly in VS Code, even after another PR has taken its former slot. This does not unpark or reclaim the original path, change leases, restore snapshots, or move/delete files. You may continue editing and committing in the retained worktree; if its Git registration or path cannot be verified, the editor is not launched.
-
-This reuses the **former directory/slot**, not cached build outputs or `node_modules`. It does not automatically choose slots, reclaim disk, delete user data or predict PRs. The released PR remains parked under its original session identity. An actual speed benefit and artifact-preserving warm reuse are still separate milestones.
-
-## Experimental npm artifact reuse (opt-in)
-
-The tray now exposes **Reuse compatible npm dependencies (copy only)...** after manually parking/releasing PR A and opening PR B in its former slot. Select the active PR/donor pair and confirm. The adapter:
-
-- Requires both PRs to use the same trusted Git repository and original slot, with the old PR in `Released` and the new PR `Active`, and verifies both Git worktree registrations and pinned commits under OS locks.
-- Requires identical `package.json` and `package-lock.json` files; transfers **only** ignored, untracked `node_modules` regular files. Both Git check-ignore rules must cover the cache path.
-- Refuses symlinks/junctions, destination collisions, tracked paths, more than 20,000 files or 512 MiB, and unsupported filesystem states. Uses independent copies and `CreateNew`; **never deletes or moves source files**.
-- Reports file count, bytes and transfer duration. An interrupted copy leaves its incomplete destination for inspection; a retry will not overwrite it. No rollback, automatic cleanup or cross-branch dependency execution is attempted.
-
-This is an **experimental manual feature**, not automatically selected warm reuse. Compatibility is strict and limited to npm; it makes no claim that file transfer is faster than dependency installation. To collect reproducible local timings, run the offline synthetic benchmark via `dotnet test tests/GitWorkspacePool.Tests/GitWorkspacePool.Tests.csproj --filter "FullyQualifiedName~WarmNpm_BenchmarkColdCheckoutVsVerifiedArtifactCopy" --logger "console;verbosity=detailed"`. Timings are environment-specific and exclude `npm install`, VS Code startup and web-to-tray latency.
-
-## Opt-in Windows performance measurements
-
-Run the **Manual reuse benchmark** workflow from GitHub Actions when you want repeatable Windows-runner evidence without consuming CI time on every PR. The workflow is **manual-only**, produces a downloadable `manual-warm-reuse-results` JSON/log artifact, and takes 3, 5, or 10 samples. It uses temporary offline Git fixture repositories, real SQLite ownership transitions and the **production verified npm artifact copier** with 1,024 synthetic files. It does not install npm packages or launch VS Code.
-
-For reference hardware, PowerShell 7, .NET 10, Git and optionally Node/npm:
-
-```powershell
-.\scripts\Benchmark-WarmReuse.ps1 -OutputDirectory "$env:TEMP\gwp-git-benchmark-$(Get-Date -Format yyyyMMdd-HHmmss)" -Iterations 5
-```
-
-Add `-NpmProjectPath 'C:\src\trusted-npm-project'` for **a second, separate comparison** of warmed-cache `npm ci --offline --ignore-scripts` versus ordinary `node_modules` file copying using a trusted, standalone project with `package-lock.json`. The benchmark copies only manifests and never runs npm lifecycle scripts or touches the supplied project's `node_modules`. Its initial disposable donor install may access the package registry to prime an isolated cache; later timed installs run offline. Local file/Git dependencies, npm workspaces and symlinked payloads are refused.
-
-The runner saves every raw timing sample, p50/p95 (nearest rank), file count, logical copied bytes and caveats in `benchmark-results.json`. It refuses existing output directories and **does not automatically clean up** the output folder or its npm trial directories (the Git E2E fixture cleans up its own disposable worktrees). Inspect the output and delete it manually when finished; large npm projects consume extra disk space.
-
-**Interpretation:** A reused *empty slot* still needs a fresh Git checkout. The standalone npm baseline measures ordinary file copy, not the app's integrity-verified copying; compare it alongside, not as if the two copy implementations are identical. Git fixture timings use a fake editor. Neither benchmark proves actual browser-click-to-visible-editor latency, lifecycle-script/install equivalence, physical NTFS disk savings or a user-visible speedup. Installed Windows browser/VS Code measurements on representative projects remain a release gate.
-
-## Read-only local evidence disk usage
-
-The tray provides **Local disk usage (read-only)...** to count logical bytes and regular files held in the app's snapshot and isolated recovery directories. Inspection is bounded, runs off the UI thread and refuses links, inaccessible/unknown stores and excessive entries instead of showing a misleading zero. The readout does not inspect arbitrary repositories, authorize eviction or deletion, or promise NTFS physical allocated bytes; **automatic cleanup remains disabled**.
-
-## Experimental workspace snapshots
-
-The tray menu provides **Snapshot active PR...** for an explicit, non-destructive snapshot. Captures include the Git index, staged blobs independently from unstaged working files, tracked changes, untracked and ignored files (including binary data), deletions and a SHA-256 manifest. Snapshots are stored under `%LOCALAPPDATA%\\GitWorkspacePool\\snapshots`. Only explicitly selected active sessions are eligible.
-
-A snapshot has a conservative **50,000-file / 2 GiB** budget and refuses symlinks/junctions. It does not clean, release, rename, or recycle a worktree. Incomplete snapshots remain marked `.pending-*` for inspection; a published snapshot remains intact if journal registration fails. Use **Restore snapshot to new worktree...** to reconstruct an isolated worktree under `%LOCALAPPDATA%\\GitWorkspacePool\\recovered`. The restore checks the manifest, file hashes and original Git index, then verifies that the recovered Git status matches the saved status. It never writes to or switches the original PR session.
-
-**Limitations:** recovery worktrees are deliberately outside the managed pool and are not automatically adopted or cleaned. Interrupted restores may leave a separate worktree for inspection. Snapshots still do not authorize automatic release, move, cleanup or recycling until the remaining fault-injection and recovery cases are implemented.
-
-Use **Recovery diagnostics...** to inspect interrupted snapshots, missing journalled data, and isolated recovery worktrees. This is **read-only** and does not reclaim storage. See the [safe recovery runbook](docs/RECOVERY.md).
-
-## Non-goals
-
-The app never runs build, npm install, dotnet restore or untrusted PR scripts. Worktree recycling, automatic snapshot adoption, artifact policies, GitLab/Bitbucket adapters and intelligent selection are planned later; **do not use this preview to auto-clean or reassign worktrees**.
-
-## Engineering principles
-
-C# style follows [WinCfApiWrapper](https://github.com/HRAshton/WinCfApiWrapper): CSharpier formatting, StyleCop analyzers, file-scoped namespaces, explicit types unless evident, and `_field` naming. See [architecture](docs/ARCHITECTURE.md).
+Build outputs must be new and outside a clean committed checkout. See [recovery](docs/RECOVERY.md), [operations](docs/OPERATIONS.md) and [journal upgrades](docs/LIFECYCLE_UPGRADE.md). Configuration is under `%APPDATA%\GitWorkspacePool`; journal/snapshot state is under `%LOCALAPPDATA%\GitWorkspacePool`.

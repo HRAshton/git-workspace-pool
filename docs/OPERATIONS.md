@@ -2,11 +2,11 @@
 
 ## Repository and editor setup
 
-Open **Settings...** in the tray. The **Git repositories** tab accepts a credential-free HTTPS clone URL, existing local clone folder and separate workspace root. The optional **GitHub PR repositories** tab preserves the original PR workflow. Use **Browse selected folder...** for a path cell. **Check selected origin** runs a read-only Git origin/configuration check, with a 20-second deadline; it does not fetch or modify a worktree.
+Open **Settings...** in the tray. The **Git repositories** tab accepts an HTTPS/SSH clone URL, a local normal/bare source clone and a separate workspace root. **Register repository...** can create a new bare source clone after confirmation. Provider-specific PR controls are retired. Use **Browse selected folder...** for a path cell. **Check selected origin** runs a read-only Git origin/configuration check, with a 20-second deadline; it does not fetch or modify a worktree.
 
-Authentication remains in Git's trusted named credential helper. No password field or provider API login is added. Configure Git Credential Manager and complete `git ls-remote origin` from your own terminal first.
+SSH uses the configured agent and known_hosts; HTTPS authentication remains in Git's trusted named credential helper. No password field or provider API login is added. Configure Git Credential Manager and complete `git ls-remote origin` from your own terminal first.
 
-The editor tab accepts an existing VS Code executable path; blank selects the standard current-user installation. Snapshot byte/entry limits cannot exceed the existing tested ceilings. Limits apply after restarting the tray. New repository/editor settings and operation controls are read for future operations; existing worktrees are never moved by editing their settings. Changing a source/root for an existing owner is refused when it is reopened; it is not an automatic migration.
+The editor tab accepts an existing VS Code executable path; blank selects `code.exe` resolved on PATH (including the usual VS Code bin entry), without executing a shell. Snapshot byte/entry limits cannot exceed the existing tested ceilings. Limits apply after restarting the tray. New repository/editor settings and operation controls are read for future operations; existing worktrees are never moved by editing their settings. Changing a source/root for an existing owner is refused when it is reopened; it is not an automatic migration.
 
 New profiles start with empty repository lists, rather than an unusable example clone. Existing JSON settings remain supported. Unknown top-level settings are preserved when saving through the window.
 

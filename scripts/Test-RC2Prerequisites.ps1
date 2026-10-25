@@ -47,9 +47,21 @@ if (-not $PSBoundParameters.ContainsKey('EditorExecutable')) {
     }
 }
 
-if ([string]::IsNullOrWhiteSpace($EditorExecutable)) {
-    # Match VsCodeLauncher, which uses this path and does not inspect PATH.
-    $EditorExecutable = Join-Path $env:LOCALAPPDATA 'Programs/Microsoft VS Code/Code.exe'
+if ([string]::IsNullOrWhiteSpace($EditorExecutable)) { $EditorExecutable = 'code.exe' }
+if ($EditorExecutable -eq 'code.exe') {
+    $resolvedEditor = $null
+    foreach ($entry in $env:PATH.Split([System.IO.Path]::PathSeparator)) {
+        $directory = $entry.Trim().Trim('"')
+        if (-not [System.IO.Path]::IsPathFullyQualified($directory)) { continue }
+        $candidate = Join-Path $directory 'code.exe'
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { $resolvedEditor = $candidate; break }
+        if ([System.IO.Path]::GetFileName($directory.TrimEnd('\')) -eq 'bin') {
+            $candidate = [System.IO.Path]::GetFullPath((Join-Path $directory '../Code.exe'))
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) { $resolvedEditor = $candidate; break }
+        }
+    }
+    if (-not $resolvedEditor) { throw 'code.exe not found on PATH; select the absolute VS Code Code.exe path.' }
+    $EditorExecutable = $resolvedEditor
 }
 
 if (-not [System.IO.Path]::IsPathFullyQualified($EditorExecutable) -or

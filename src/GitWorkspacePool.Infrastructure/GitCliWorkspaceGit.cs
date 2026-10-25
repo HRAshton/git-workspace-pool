@@ -8,7 +8,7 @@ namespace GitWorkspacePool.Infrastructure;
 /// <summary>
 /// Runs bounded Git CLI commands without shell expansion.
 /// </summary>
-public sealed class GitCliWorkspaceGit : IWorkspaceGit, IGitRemoteReader, IGitBranchFetcher, IGitBranchPreview, IGitBaselineFetcher
+public sealed class GitCliWorkspaceGit : IWorkspaceGit, IGitRemoteReader, IGitBranchFetcher, IGitBranchPreview, IGitBaselineFetcher, IGitRemoteBranchReader
 {
     /// <inheritdoc/>
     public async Task<bool> IsRegisteredWorktreeAsync(
@@ -43,6 +43,7 @@ public sealed class GitCliWorkspaceGit : IWorkspaceGit, IGitRemoteReader, IGitBr
         CancellationToken cancellationToken
     )
     {
+        await ValidateSourceCloneAsync(repositoryPath, cancellationToken);
         await EnsureSafeFetchConfigurationAsync(repositoryPath, cancellationToken);
         string output = await RunAsync(
             repositoryPath,
@@ -50,6 +51,29 @@ public sealed class GitCliWorkspaceGit : IWorkspaceGit, IGitRemoteReader, IGitBr
             cancellationToken
         );
         return output.Trim();
+    }
+
+    /// <summary>Requires the selected source to be an actual normal or bare clone root, not a discovered parent or linked checkout.</summary>
+    public async Task ValidateSourceCloneAsync(string repositoryPath, CancellationToken cancellationToken)
+    {
+        string source = Path.TrimEndingDirectorySeparator(Path.GetFullPath(repositoryPath));
+        Snapshots.WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(source);
+        string gitDirectory = (await RunAsync(source, ["rev-parse", "--absolute-git-dir"], cancellationToken)).Trim();
+        Snapshots.WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(gitDirectory);
+        string bare = (await RunAsync(source, ["rev-parse", "--is-bare-repository"], cancellationToken)).Trim();
+        StringComparison comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        if (bare == "true")
+        {
+            if (Path.GetFullPath(gitDirectory).Equals(source, comparison)) return;
+        }
+        else if (bare == "false")
+        {
+            string top = (await RunAsync(source, ["rev-parse", "--show-toplevel"], cancellationToken)).Trim();
+            if (Path.GetFullPath(top).Equals(source, comparison)
+                && Path.GetFullPath(gitDirectory).Equals(Path.Combine(source, ".git"), comparison)
+                && Directory.Exists(gitDirectory)) return;
+        }
+        throw new InvalidOperationException("Choose the root of a normal clone or a bare object store, not a subfolder or linked worktree.");
     }
 
     /// <inheritdoc/>
@@ -75,6 +99,42 @@ public sealed class GitCliWorkspaceGit : IWorkspaceGit, IGitRemoteReader, IGitBr
         return FetchBranchToRefAsync(repositoryPath, branch, "refs/git-workspace-pool/baselines/" + identity, cancellationToken);
     }
 
+    /// <inheritdoc/>
+    public async Task<IReadOnlyList<string>> ListRemoteBranchesAsync(string repositoryPath, CancellationToken cancellationToken)
+    {
+        await EnsureSafeFetchConfigurationAsync(repositoryPath, cancellationToken);
+        string output = await RunAsync(repositoryPath,
+            ["-c", "http.followRedirects=false", "ls-remote", "--heads", "--refs", "origin"], cancellationToken);
+        List<string> branches = [];
+        foreach (string line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            string[] fields = line.TrimEnd('\r').Split('\t');
+            if (fields.Length != 2 || fields[0].Length is not (40 or 64) || !fields[0].All(Uri.IsHexDigit)
+                || !fields[1].StartsWith("refs/heads/", StringComparison.Ordinal))
+                throw new InvalidOperationException("Unexpected advertised Git head.");
+            string branch = fields[1]["refs/heads/".Length..];
+            if (!GitBranchRequest.IsSafeBranch(branch) || branches.Count >= 10000)
+                throw new InvalidOperationException("Unsafe or excessive advertised branch inventory.");
+            branches.Add(branch);
+        }
+        return branches;
+    }
+
+    /// <summary>Creates a new bare source clone only at an absent, independently selected path.</summary>
+    public async Task CloneBareAsync(string cloneUrl, string destination, CancellationToken cancellationToken)
+    {
+        _ = GitBranchRequest.NormalizeCloneUrl(cloneUrl);
+        string path = Path.GetFullPath(destination);
+        string parent = Path.GetDirectoryName(path) ?? throw new InvalidOperationException("Choose a clone folder.");
+        Snapshots.WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(path);
+        if (Directory.Exists(path) || File.Exists(path)) throw new InvalidOperationException("Clone destination is occupied; nothing was overwritten.");
+        Directory.CreateDirectory(parent);
+        await EnsureSafeFetchConfigurationAsync(parent, cancellationToken);
+        await RunAsync(parent, ["-c", "http.followRedirects=false", "clone", "--bare", "--no-hardlinks", "--", cloneUrl, path], cancellationToken);
+        if (!GitBranchRequest.OriginMatches(await GetOriginUrlAsync(path, cancellationToken), cloneUrl))
+            throw new InvalidOperationException("New clone origin did not match; clone evidence retained.");
+    }
+
     private async Task<string> FetchBranchToRefAsync(
         string repositoryPath, string branch, string targetRef, CancellationToken cancellationToken
     )
@@ -88,51 +148,6 @@ public sealed class GitCliWorkspaceGit : IWorkspaceGit, IGitRemoteReader, IGitBr
                 "--no-write-fetch-head", "origin", $"+{sourceRef}:{targetRef}"], cancellationToken);
         return (await RunAsync(repositoryPath,
             ["rev-parse", "--verify", targetRef + "^{commit}"], cancellationToken)).Trim();
-    }
-
-    /// <inheritdoc/>
-    public async Task FetchPullRequestAsync(
-        string repositoryPath,
-        int pullRequestNumber,
-        CancellationToken cancellationToken
-    )
-    {
-        // Recheck immediately before fetch even if the caller validated origin
-        // earlier. A changed local/conditional Git config must fail closed.
-        await EnsureSafeFetchConfigurationAsync(repositoryPath, cancellationToken);
-        await RunAsync(
-            repositoryPath,
-            [
-                "fetch",
-                "--no-tags",
-                "--no-auto-maintenance",
-                "--no-recurse-submodules",
-                "--no-prune",
-                "--refmap=",
-                "origin",
-                $"refs/pull/{pullRequestNumber}/head:refs/git-workspace-pool/pr/{pullRequestNumber}",
-            ],
-            cancellationToken
-        );
-    }
-
-    /// <inheritdoc/>
-    public async Task<string> GetPullRequestCommitAsync(
-        string repositoryPath,
-        int pullRequestNumber,
-        CancellationToken cancellationToken
-    )
-    {
-        string output = await RunAsync(
-            repositoryPath,
-            [
-                "rev-parse",
-                "--verify",
-                $"refs/git-workspace-pool/pr/{pullRequestNumber}^{{commit}}",
-            ],
-            cancellationToken
-        );
-        return output.Trim();
     }
 
     /// <inheritdoc/>

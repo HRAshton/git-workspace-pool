@@ -36,7 +36,6 @@ function Invoke-Checked {
 Push-Location $root
 try {
     Invoke-Checked git @('diff', '--check')
-    Invoke-Checked node @('--check', 'userscript/git-workspace-pool.user.js')
     Invoke-Checked node @('--check', 'userscript/git-branch-workspace.user.js')
     Invoke-Checked node @('userscript/git-branch-workspace.test.cjs')
     # Parse every script, including packaging and negative test fixtures, before a build.

@@ -14,13 +14,13 @@ Optional npm-copy eligibility compares the donor's manifests against the capture
 
 Settings can optionally offer this chooser for browser/new branch opens. This enables an explicit choice, not unattended worktree recycling. Performance acceptance is still needed before claiming an actual workflow speedup.
 
-## Exact baseline branches
+## Baseline regexes
 
-In **Settings → Git repositories**, the baseline cell accepts exact branch names, one per line (Shift+Enter). An empty list disables background fetching. Examples: `main`, `master`, `release/9.0`. Wildcards and guessed/predicted PRs are not accepted.
+New registration uses `^master$`. Configure one regex per line (Shift+Enter in the Settings grid); for example `^20\d\d[rR]\d{3}$` matches `2026r150` and `2026R151`. Empty regexes disable refresh. The regexes select only safe advertised remote short heads; they are never passed as refspecs. Old exact-name lists remain readable and become escaped anchored literal patterns when saved in Settings, retaining an old empty list as disabled.
 
-Configured refs refresh into `refs/git-workspace-pool/baselines/*`, independently of preview and session refs. They never switch a worktree, run a project, release a lease or prune other refs. The default interval is 30 minutes (15–1440 supported), with at most 64 repositories and 16 baselines each. Passes run one fetch at a time, at most four due refs per pass, with a two-minute per-ref deadline. Remaining due refs run in later passes. A failed attempt observes the interval; it does not create a retry loop. Overlapping manual/timer passes do not duplicate fetches.
+The engine is linear-time with bounded pattern length/count, without lookarounds/backreferences. At most 10,000 advertised heads and 256 matches per repository are allowed; excessive/invalid input fails closed. Discovery is cached for the configured interval (30 minutes by default, 15–1440 supported), failed discovery backs off, and removed configurations are pruned from status. A pass discovers at most four due repositories and fetches at most four due refs sequentially; each network operation has a two-minute deadline. More work is handled in later passes, and quitting cancels it.
 
-**Refresh configured baselines now...** requests a bounded pass. **Configured baseline status...** distinguishes an active fetch from success/failure and reports the last attempt in the machine's local time. Authenticate through Git in a terminal and check the configured origin if a fetch fails. Quitting the tray cancels outstanding work.
+Fetched commits live only in dedicated `refs/git-workspace-pool/baselines/*` refs. Checked-out files, source HEAD, unrelated tracking refs and user work are unchanged. No pruning, project execution, dependency installation or predictions run. **Reuse and baselines** contains manual refresh and status, including discovery failures. Authentication stays in Git, using SSH agent/known-hosts or an HTTPS credential helper.
 
 ## Evidence-storage warnings
 

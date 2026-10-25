@@ -31,7 +31,7 @@ public sealed class WorkspaceAcquisitionService
     /// <summary>
     /// Opens or safely recovers a workspace without editing an allocated tree.
     /// </summary>
-    public async Task<OpenPullRequestResult> AcquireAsync(
+    public async Task<OpenWorkspaceResult> AcquireAsync(
         PullRequestReference request,
         RepositoryRegistration registration,
         CancellationToken cancellationToken
@@ -196,7 +196,7 @@ public sealed class WorkspaceAcquisitionService
             throw new InvalidOperationException("Workspace recovery is required.");
         }
 
-        return new OpenPullRequestResult(workspacePath, reused);
+        return new OpenWorkspaceResult(workspacePath, reused);
     }
 
     private async Task QuarantineAsync(

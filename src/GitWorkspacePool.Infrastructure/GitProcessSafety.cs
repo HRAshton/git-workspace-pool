@@ -64,9 +64,14 @@ internal static class GitProcessSafety
         // the browser/parent process. Standard SSH agent auth still works.
         startInfo.Environment.Remove("GIT_SSH_COMMAND");
         startInfo.Environment.Remove("GIT_SSH");
+        startInfo.Environment["GIT_SSH_VARIANT"] = "ssh";
         startInfo.Environment.Remove("GIT_PROXY_COMMAND");
         startInfo.Environment.Remove("GIT_ASKPASS");
         startInfo.Environment.Remove("SSH_ASKPASS");
+        // App-owned SSH options, never concatenated with protocol fields. The user's
+        // known_hosts and SSH agent remain authoritative; no interactive trust bypass.
+        startInfo.ArgumentList.Add("-c");
+        startInfo.ArgumentList.Add("core.sshCommand=ssh -oBatchMode=yes -oStrictHostKeyChecking=yes");
         startInfo.Environment["GIT_TERMINAL_PROMPT"] = "0";
         startInfo.Environment["GIT_LFS_SKIP_SMUDGE"] = "1";
     }
@@ -107,7 +112,8 @@ internal static class GitProcessSafety
             bool urlRewrite = key.StartsWith("url.", StringComparison.OrdinalIgnoreCase)
                 && (key.EndsWith(".insteadof", StringComparison.OrdinalIgnoreCase)
                     || key.EndsWith(".pushinsteadof", StringComparison.OrdinalIgnoreCase));
-            bool externalTransport = key.Equals("core.sshcommand", StringComparison.OrdinalIgnoreCase)
+            bool externalTransport = (key.Equals("core.sshcommand", StringComparison.OrdinalIgnoreCase)
+                    && value != "ssh -oBatchMode=yes -oStrictHostKeyChecking=yes")
                 || key.Equals("core.gitproxy", StringComparison.OrdinalIgnoreCase)
                 || key.Equals("remote.origin.vcs", StringComparison.OrdinalIgnoreCase)
                 || key.Equals("remote.origin.uploadpack", StringComparison.OrdinalIgnoreCase)
