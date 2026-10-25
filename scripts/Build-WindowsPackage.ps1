@@ -56,6 +56,8 @@ Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Test-RC2Prerequisites.ps1') -De
 Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/RECOVERY.md') -Destination $package
 Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/ATTESTATION.md') -Destination $package
 Copy-Item -LiteralPath (Join-Path $projectRoot 'userscript/git-branch-workspace.user.js') -Destination $package
+# Distribute the exact first-party license alongside the self-contained executable.
+Copy-Item -LiteralPath (Join-Path $projectRoot 'LICENSE') -Destination $package
 
 # Preserve relative links in the bundled guides as well as flat compatibility copies.
 Copy-Item -LiteralPath (Join-Path $projectRoot 'README.md') -Destination $package
