@@ -1,3 +1,7 @@
+# Historical candidate planning
+
+Superseded by [the Git-only RC roadmap](../ROADMAP.md) and [current acceptance](RC2_ACCEPTANCE.md). Provider PR integrations and certificate signing below are historical requirements, not active gates.
+
 # Release Candidate Plan (RC1)
 
 **RC1 build versus release approval:** The scope-limited Windows GitHub PR → VS Code `0.1.0-rc.1` engineering candidate and its explicit remaining manual release gates are tracked in [RC1 release notes](RC1_RELEASE_NOTES.md) and [RC1 acceptance](RC1_ACCEPTANCE.md). A passing candidate workflow is not a signed or publicly approved release, and does not imply later automatic warm-pool, eviction or provider milestones have been completed.

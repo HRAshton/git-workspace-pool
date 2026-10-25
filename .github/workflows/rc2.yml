@@ -33,7 +33,7 @@ jobs:
       - name: Validate userscript JavaScript
         shell: pwsh
         run: |
-          node --check ./userscript/git-workspace-pool.user.js
+          node --check ./userscript/git-branch-workspace.user.js
           if ($LASTEXITCODE -ne 0) { throw 'Tampermonkey script failed JavaScript syntax validation.' }
 
       - name: Inspect RC2 Git and editor prerequisites in isolated fixture

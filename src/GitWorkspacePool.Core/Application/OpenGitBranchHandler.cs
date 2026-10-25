@@ -36,7 +36,7 @@ public sealed class OpenGitBranchHandler
     }
 
     /// <summary>Opens the exact registered repository/branch and preserves an existing owner's edits.</summary>
-    public async Task<OpenPullRequestResult> HandleAsync(GitBranchRequest request, CancellationToken cancellationToken)
+    public async Task<OpenWorkspaceResult> HandleAsync(GitBranchRequest request, CancellationToken cancellationToken)
     {
         if (!request.IsValid) throw new ArgumentException("Invalid Git clone URL or branch name.");
         GitRepositoryRegistration repository = _catalog.Find(request)
@@ -56,7 +56,7 @@ public sealed class OpenGitBranchHandler
                 throw new InvalidOperationException("Retained-worktree opening is not configured.");
             }
             string parked = await _retained.OpenAsync(previous.OperationId, cancellationToken);
-            return new OpenPullRequestResult(parked, true);
+            return new OpenWorkspaceResult(parked, true);
         }
 
         await using IAsyncDisposable ownership = await _locks.AcquireAsync(path, cancellationToken);
@@ -129,11 +129,11 @@ public sealed class OpenGitBranchHandler
             throw new InvalidOperationException("Branch workspace recovery is required.");
         }
         await _editor.OpenAsync(path, cancellationToken);
-        return new OpenPullRequestResult(path, reused);
+        return new OpenWorkspaceResult(path, reused);
     }
 
     /// <summary>Opens an existing owner first, or explicitly acquires the selected released slot for a new branch.</summary>
-    public async Task<OpenPullRequestResult> HandleInReadySlotAsync(
+    public async Task<OpenWorkspaceResult> HandleInReadySlotAsync(
         GitBranchRequest request,
         Guid slotId,
         long expectedGeneration,
@@ -158,7 +158,7 @@ public sealed class OpenGitBranchHandler
             throw new InvalidOperationException("Released-slot allocation is not configured.");
         }
         int reference = await _store.GetReferenceNumberAsync(request, cancellationToken);
-        OpenPullRequestResult result = await _ready.AcquireBranchAsync(
+        OpenWorkspaceResult result = await _ready.AcquireBranchAsync(
             request, repository, reference, slotId, expectedGeneration, _fetch, cancellationToken, pinnedPreviewCommit
         );
         await _editor.OpenAsync(result.WorkspacePath, cancellationToken);

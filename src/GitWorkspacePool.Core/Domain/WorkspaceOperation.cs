@@ -17,6 +17,7 @@ public enum WorkspaceOperation
     InspectStorage = 11,
     RefreshBaseline = 12,
     InspectPool = 13,
+    RegisterRepository = 14,
 }
 
 /// <summary>The observed outcome of a user operation.</summary>

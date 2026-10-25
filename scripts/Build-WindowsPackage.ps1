@@ -56,12 +56,17 @@ Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Test-PackageIntegrity.ps1') -De
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Test-RC2Prerequisites.ps1') -Destination $package
 Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/BITBUCKET_ACCEPTANCE.md') -Destination $package
 Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/RECOVERY.md') -Destination $package
-Copy-Item -LiteralPath (Join-Path $projectRoot 'userscript/git-workspace-pool.user.js') -Destination $package
 Copy-Item -LiteralPath (Join-Path $projectRoot 'userscript/git-branch-workspace.user.js') -Destination $package
 Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/GIT_BRANCH_WORKSPACES.md') -Destination $package
 Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/LIFECYCLE_UPGRADE.md') -Destination $package
 Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/OPERATIONS.md') -Destination $package
 Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/VERIFIED_REUSE.md') -Destination $package
+Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/ATTESTATION.md') -Destination $package
+
+# Preserve relative links in the bundled guides as well as flat compatibility copies.
+Copy-Item -LiteralPath (Join-Path $projectRoot 'README.md') -Destination $package
+Copy-Item -LiteralPath (Join-Path $projectRoot 'ROADMAP.md') -Destination $package
+Copy-Item -LiteralPath (Join-Path $projectRoot 'docs') -Destination $package -Recurse
 
 if ($PackageVersion) {
     Copy-Item -LiteralPath (Join-Path $projectRoot ("docs/" + $ReleaseDocsPrefix + "_RELEASE_NOTES.md")) -Destination $package

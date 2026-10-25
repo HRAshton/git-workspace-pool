@@ -8,13 +8,11 @@ namespace GitWorkspacePool.Tray.Infrastructure;
 
 internal sealed class AppSettings
 {
-    public List<RepositoryRegistration> Repositories { get; set; } = [];
-
     public List<GitRepositoryRegistration> GitRepositories { get; set; } = [];
 
     public SnapshotExportLimits SnapshotLimits { get; set; } = new();
 
-    public string? EditorExecutable { get; set; }
+    public string? EditorExecutable { get; set; } = "code.exe";
 
     public int OperationTimeoutMinutes { get; set; } = 15;
 

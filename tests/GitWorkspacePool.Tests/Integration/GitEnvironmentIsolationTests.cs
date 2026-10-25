@@ -54,6 +54,50 @@ public sealed class GitEnvironmentIsolationTests
         }
     }
 
+    [Fact]
+    public void DefaultEditorResolvesVSCodeBinOnPathWithoutExecutingCommands()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "gwp-editor-" + Guid.NewGuid().ToString("N"));
+        string? previous = Environment.GetEnvironmentVariable("PATH");
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(root, "bin"));
+            File.WriteAllText(Path.Combine(root, "Code.exe"), "fixture only; never executed");
+            Environment.SetEnvironmentVariable("PATH", Path.Combine(root, "bin"));
+            Assert.Equal(Path.Combine(root, "Code.exe"), EditorExecutableResolver.Resolve(null));
+            Assert.Throws<InvalidOperationException>(() => EditorExecutableResolver.Resolve("code.exe --command untrusted"));
+            Assert.Throws<InvalidOperationException>(() => EditorExecutableResolver.Resolve("code.cmd"));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", previous);
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task OriginInspectionRefusesASubfolderThatWouldDiscoverItsParentsClone()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "gwp-source-root-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            await GitAsync(root, "init");
+            await GitAsync(root, "remote", "add", "origin", "https://example.com/team/repo.git");
+            string child = Path.Combine(root, "child");
+            Directory.CreateDirectory(child);
+            GitCliWorkspaceGit git = new();
+            Assert.Equal("https://example.com/team/repo.git", await git.GetOriginUrlAsync(root, CancellationToken.None));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => git.GetOriginUrlAsync(child, CancellationToken.None));
+        }
+        finally
+        {
+            foreach (string file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)) File.SetAttributes(file, FileAttributes.Normal);
+            Directory.Delete(root, true);
+        }
+    }
+
     private static async Task GitAsync(string directory, params string[] arguments)
     {
         ProcessStartInfo start = new("git") { WorkingDirectory = directory, UseShellExecute = false,

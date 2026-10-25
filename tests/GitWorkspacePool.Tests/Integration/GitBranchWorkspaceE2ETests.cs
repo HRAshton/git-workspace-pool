@@ -22,7 +22,7 @@ public sealed class GitBranchWorkspaceE2ETests
     {
         using Fixture fixture = await Fixture.CreateAsync();
         Assert.True(GitBranchProtocol.TryParse(GitBranchProtocolTests.Link(CloneUrl, Request.Branch), out GitBranchRequest? request));
-        OpenPullRequestResult first = await fixture.Handler().HandleAsync(request, CancellationToken.None);
+        OpenWorkspaceResult first = await fixture.Handler().HandleAsync(request, CancellationToken.None);
         Assert.False(first.Reused);
         Assert.Equal(fixture.Commit, await Fixture.GitAsync(first.WorkspacePath, "rev-parse", "HEAD"));
         File.WriteAllText(Path.Combine(first.WorkspacePath, "tracked.txt"), "staged");
@@ -33,7 +33,7 @@ public sealed class GitBranchWorkspaceE2ETests
         string before = await Fixture.GitAsync(first.WorkspacePath, "status", "--porcelain", "--ignored");
         // A new handler and store simulate tray restart. A nonexistent remote must not be fetched on reopen.
         await Fixture.GitAsync(fixture.Source, "remote", "set-url", "origin", Path.Combine(fixture.Root, "missing.git"));
-        OpenPullRequestResult reopened = await fixture.Handler().HandleAsync(request, CancellationToken.None);
+        OpenWorkspaceResult reopened = await fixture.Handler().HandleAsync(request, CancellationToken.None);
         Assert.True(reopened.Reused);
         Assert.Equal(first.WorkspacePath, reopened.WorkspacePath);
         Assert.Equal(before, await Fixture.GitAsync(first.WorkspacePath, "status", "--porcelain", "--ignored"));
@@ -55,7 +55,7 @@ public sealed class GitBranchWorkspaceE2ETests
         Assert.Null(pending.PinnedCommit);
         Assert.False(Directory.Exists(pending.WorkspacePath));
         await Fixture.GitAsync(fixture.Source, "push", "origin", "HEAD:refs/heads/missing");
-        OpenPullRequestResult opened = await fixture.Handler().HandleAsync(missing, CancellationToken.None);
+        OpenWorkspaceResult opened = await fixture.Handler().HandleAsync(missing, CancellationToken.None);
         Assert.False(opened.Reused);
         Assert.Equal(WorkspaceSessionState.Active, (await fixture.Store().FindAsync(missing, CancellationToken.None))!.State);
     }
@@ -97,7 +97,7 @@ public sealed class GitBranchWorkspaceE2ETests
         await Fixture.GitAsync(fixture.Source, "add", "tracked.txt");
         await Fixture.GitAsync(fixture.Source, "commit", "-m", "advance branch");
         await Fixture.GitAsync(fixture.Source, "push", "origin", "HEAD:refs/heads/feature/work");
-        OpenPullRequestResult result = await fixture.Handler().HandleAsync(Request, CancellationToken.None);
+        OpenWorkspaceResult result = await fixture.Handler().HandleAsync(Request, CancellationToken.None);
         Assert.Equal(fixture.Commit, await Fixture.GitAsync(result.WorkspacePath, "rev-parse", "HEAD"));
         Assert.Equal("original", File.ReadAllText(Path.Combine(result.WorkspacePath, "tracked.txt")));
     }
@@ -131,7 +131,7 @@ public sealed class GitBranchWorkspaceE2ETests
     public async Task ConcurrentClicksShareOneDurableOwnerAndOneCheckout()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult[] results = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ =>
+        OpenWorkspaceResult[] results = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ =>
             Task.Run(() => fixture.Handler().HandleAsync(Request, CancellationToken.None))));
         Assert.Single(results.Where(r => !r.Reused));
         Assert.Single(results.Select(r => r.WorkspacePath).Distinct());
@@ -174,7 +174,7 @@ public sealed class GitBranchWorkspaceE2ETests
     public async Task MissingActiveWorktreeIsQuarantinedInsteadOfRecreated()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult first = await fixture.Handler().HandleAsync(Request, CancellationToken.None);
+        OpenWorkspaceResult first = await fixture.Handler().HandleAsync(Request, CancellationToken.None);
         string retained = first.WorkspacePath + "-retained";
         Directory.Move(first.WorkspacePath, retained);
         await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Handler().HandleAsync(Request, CancellationToken.None));
@@ -202,12 +202,12 @@ public sealed class GitBranchWorkspaceE2ETests
         using Fixture fixture = await Fixture.CreateAsync();
         await Fixture.GitAsync(fixture.Source, "config", "credential.helper", "manager");
         await Fixture.GitAsync(fixture.Source, "push", "origin", "HEAD:refs/heads/other");
-        OpenPullRequestResult[] opened = await Task.WhenAll(
+        OpenWorkspaceResult[] opened = await Task.WhenAll(
             Task.Run(() => fixture.Handler().HandleAsync(Request, CancellationToken.None)),
             Task.Run(() => fixture.Handler().HandleAsync(new(CloneUrl, "other"), CancellationToken.None)));
         Assert.NotEqual(opened[0].WorkspacePath, opened[1].WorkspacePath);
         Assert.All(opened, result => Assert.False(result.Reused));
-        foreach (OpenPullRequestResult result in opened)
+        foreach (OpenWorkspaceResult result in opened)
             Assert.Equal(fixture.Commit, await Fixture.GitAsync(result.WorkspacePath, "rev-parse", "HEAD"));
     }
 
@@ -216,7 +216,7 @@ public sealed class GitBranchWorkspaceE2ETests
     public async Task SharedLifecycleSuspendsSnapshotsRestoresAndParksBranchWithoutChangingEdits()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.Handler().HandleAsync(Request, CancellationToken.None);
+        OpenWorkspaceResult opened = await fixture.Handler().HandleAsync(Request, CancellationToken.None);
         GitBranchSession branch = (await fixture.Store().FindAsync(Request, CancellationToken.None))!;
         File.WriteAllText(Path.Combine(opened.WorkspacePath, "tracked.txt"), "staged branch data");
         await Fixture.GitAsync(opened.WorkspacePath, "add", "tracked.txt");
@@ -264,7 +264,7 @@ public sealed class GitBranchWorkspaceE2ETests
         await Fixture.GitAsync(fixture.Source, "add", ".");
         await Fixture.GitAsync(fixture.Source, "commit", "-m", "npm manifests");
         await Fixture.GitAsync(fixture.Source, "push", "origin", "HEAD:refs/heads/feature/work", "HEAD:refs/heads/other");
-        OpenPullRequestResult first = await fixture.Handler().HandleAsync(Request, CancellationToken.None);
+        OpenWorkspaceResult first = await fixture.Handler().HandleAsync(Request, CancellationToken.None);
         GitBranchSession donor = (await fixture.Store().FindAsync(Request, CancellationToken.None))!;
         Directory.CreateDirectory(Path.Combine(first.WorkspacePath, "node_modules", "fixture"));
         File.WriteAllText(Path.Combine(first.WorkspacePath, "node_modules", "fixture", "index.js"), "preserve cached dependency");
@@ -273,7 +273,7 @@ public sealed class GitBranchWorkspaceE2ETests
         WorkspaceSlot slot = await fixture.ReleaseAsync(donor.OperationId);
         Assert.Equal(WorkspaceSlotState.Ready, slot.State);
         GitBranchRequest other = new(CloneUrl, "other");
-        OpenPullRequestResult second = await fixture.Handler().HandleInReadySlotAsync(
+        OpenWorkspaceResult second = await fixture.Handler().HandleInReadySlotAsync(
             other, slot.SlotId, slot.Generation, CancellationToken.None);
         Assert.Equal(first.WorkspacePath, second.WorkspacePath);
         Assert.Equal("donor edits", File.ReadAllText(Path.Combine(parked, "tracked.txt")));
@@ -374,7 +374,7 @@ public sealed class GitBranchWorkspaceE2ETests
     public async Task ReusePlanPrefersExistingOwnerWithoutFetchingOrSelectingAnySlot()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.Handler().HandleAsync(Request, CancellationToken.None);
+        OpenWorkspaceResult opened = await fixture.Handler().HandleAsync(Request, CancellationToken.None);
         File.WriteAllText(Path.Combine(opened.WorkspacePath, "tracked.txt"), "preserve user work");
         await Fixture.GitAsync(fixture.Source, "remote", "set-url", "origin", Path.Combine(fixture.Root, "missing.git"));
         GitBranchReusePlan plan = await fixture.Planner().PlanAsync(Request, CancellationToken.None);
@@ -390,7 +390,7 @@ public sealed class GitBranchWorkspaceE2ETests
     {
         using Fixture fixture = await Fixture.CreateAsync();
         await Fixture.GitAsync(fixture.Source, "push", "origin", "HEAD:refs/heads/other");
-        OpenPullRequestResult first = await fixture.Handler().HandleAsync(Request, CancellationToken.None);
+        OpenWorkspaceResult first = await fixture.Handler().HandleAsync(Request, CancellationToken.None);
         GitBranchSession donor = (await fixture.Store().FindAsync(Request, CancellationToken.None))!;
         File.WriteAllText(Path.Combine(first.WorkspacePath, "tracked.txt"), "donor work");
         string parked = await fixture.Parking().ParkAsync(donor.OperationId, CancellationToken.None);
@@ -408,7 +408,7 @@ public sealed class GitBranchWorkspaceE2ETests
         await Fixture.GitAsync(fixture.Source, "add", "tracked.txt");
         await Fixture.GitAsync(fixture.Source, "commit", "-m", "advance after preview");
         await Fixture.GitAsync(fixture.Source, "push", "origin", "HEAD:refs/heads/other");
-        OpenPullRequestResult opened = await fixture.Handler().HandleInReadySlotAsync(target,
+        OpenWorkspaceResult opened = await fixture.Handler().HandleInReadySlotAsync(target,
             candidate.SlotId, candidate.Generation, CancellationToken.None, plan.TargetCommit);
         Assert.Equal(plan.TargetCommit, await Fixture.GitAsync(opened.WorkspacePath, "rev-parse", "HEAD"));
         Assert.Equal("original", File.ReadAllText(Path.Combine(opened.WorkspacePath, "tracked.txt")));
@@ -471,7 +471,7 @@ public sealed class GitBranchWorkspaceE2ETests
     public async Task SnapshotPinsLaterUserCommitSoOrdinaryGitPruningCannotBreakRestore()
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.Handler().HandleAsync(Request, CancellationToken.None);
+        OpenWorkspaceResult opened = await fixture.Handler().HandleAsync(Request, CancellationToken.None);
         GitBranchSession owner = (await fixture.Store().FindAsync(Request, CancellationToken.None))!;
         File.WriteAllText(Path.Combine(opened.WorkspacePath, "tracked.txt"), "later user commit");
         await Fixture.GitAsync(opened.WorkspacePath, "add", "tracked.txt");
@@ -500,7 +500,7 @@ public sealed class GitBranchWorkspaceE2ETests
     public async Task SnapshotStatusRejectsOrDisablesExecutableFiltersBeforeRunningThem(string driver, bool reject)
     {
         using Fixture fixture = await Fixture.CreateAsync();
-        OpenPullRequestResult opened = await fixture.Handler().HandleAsync(Request, CancellationToken.None);
+        OpenWorkspaceResult opened = await fixture.Handler().HandleAsync(Request, CancellationToken.None);
         string marker = Path.Combine(fixture.Root, "filter-ran").Replace('\\', '/');
         string quoted = "'" + marker.Replace("'", "'\\''", StringComparison.Ordinal) + "'";
         await Fixture.GitAsync(fixture.Source, "config", "filter." + driver + ".clean", "printf unsafe > " + quoted + "; cat");
@@ -528,7 +528,7 @@ public sealed class GitBranchWorkspaceE2ETests
         await Fixture.GitAsync(fixture.Source, "add", ".");
         await Fixture.GitAsync(fixture.Source, "commit", "-m", "npm manifests for preview");
         await Fixture.GitAsync(fixture.Source, "push", "origin", "HEAD:refs/heads/feature/work", "HEAD:refs/heads/other");
-        OpenPullRequestResult opened = await fixture.Handler().HandleAsync(Request, CancellationToken.None);
+        OpenWorkspaceResult opened = await fixture.Handler().HandleAsync(Request, CancellationToken.None);
         GitBranchSession donor = (await fixture.Store().FindAsync(Request, CancellationToken.None))!;
         Directory.CreateDirectory(Path.Combine(opened.WorkspacePath, "node_modules", "fixture"));
         File.WriteAllText(Path.Combine(opened.WorkspacePath, "node_modules", "fixture", "index.js"), "cache data");
@@ -542,10 +542,41 @@ public sealed class GitBranchWorkspaceE2ETests
         Assert.Equal("cache data", File.ReadAllText(Path.Combine(parked, "node_modules", "fixture", "index.js")));
     }
 
+    [Fact]
+    [Trait("Category", "FastE2E")]
+    public async Task BareSourceOwnsWorktreesAndSnapshotsWithoutAWorkingCheckout()
+    {
+        using Fixture fixture = await Fixture.CreateAsync();
+        await fixture.UseBareSourceAsync();
+        GitCliWorkspaceGit git = new();
+        Assert.Equal("feature/work", Assert.Single(await git.ListRemoteBranchesAsync(fixture.Source, CancellationToken.None)));
+        OpenWorkspaceResult opened = await fixture.Handler().HandleAsync(Request, CancellationToken.None);
+        Assert.Equal(fixture.Commit, await Fixture.GitAsync(opened.WorkspacePath, "rev-parse", "HEAD"));
+        File.WriteAllText(Path.Combine(opened.WorkspacePath, "tracked.txt"), "bare source user edit");
+        GitBranchSession owner = (await fixture.Store().FindAsync(Request, CancellationToken.None))!;
+        SqliteWorkspaceSessionJournal journal = fixture.Journal();
+        WorkspaceSnapshotReceipt snapshot = await new CaptureWorkspaceSnapshotService(journal, fixture.Locks(), git,
+            new VerifiedWorkspaceSnapshotExporter(Path.Combine(fixture.Root, "snapshots"), new GitWorktreeSnapshotScanner()))
+            .CaptureAsync(owner.OperationId, CancellationToken.None);
+        string recovered = await new RestoreWorkspaceSnapshotService(journal, new VerifiedWorkspaceSnapshotRestorer(
+            Path.Combine(fixture.Root, "recovered"), git, new GitWorktreeSnapshotScanner(), journal)).RestoreAsync(snapshot.SnapshotId, CancellationToken.None);
+        Assert.Equal("bare source user edit", File.ReadAllText(Path.Combine(recovered, "tracked.txt")));
+        Assert.Equal("bare source user edit", File.ReadAllText(Path.Combine(opened.WorkspacePath, "tracked.txt")));
+        Assert.Equal("true", await Fixture.GitAsync(fixture.Source, "rev-parse", "--is-bare-repository"));
+    }
+
     private sealed class Fixture : IDisposable
     {
         public string Root { get; } = Path.Combine(Path.GetTempPath(), "gwp-branch-" + Guid.NewGuid().ToString("N"));
-        public string Source => Path.Combine(Root, "source");
+        private string? _bareSource;
+        public string Source => _bareSource ?? Path.Combine(Root, "source");
+        public async Task UseBareSourceAsync()
+        {
+            string bare = Path.Combine(Root, "source.git");
+            await GitAsync(Root, "clone", "--bare", Source, bare);
+            await GitAsync(bare, "remote", "set-url", "origin", Path.Combine(Root, "remote.git"));
+            _bareSource = bare;
+        }
         public string Database => Path.Combine(Root, "state", "sessions.db");
         public string Commit { get; private set; } = "";
         public Editor Editor { get; } = new();

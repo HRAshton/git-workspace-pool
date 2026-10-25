@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using GitWorkspacePool.Core.Application;
+using GitWorkspacePool.Infrastructure;
 
 namespace GitWorkspacePool.Tray.Infrastructure;
 
@@ -9,30 +10,11 @@ internal sealed class VsCodeLauncher : IEditorLauncher
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        string? configured = SettingsStore.Read().EditorExecutable;
-        string executable = configured ?? string.Empty;
-
-        if (string.IsNullOrWhiteSpace(executable))
-        {
-            executable = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "Programs",
-                "Microsoft VS Code",
-                "Code.exe"
-            );
-        }
-
-        if (!File.Exists(executable))
-        {
-            throw new InvalidOperationException(
-                "VS Code not found. Set editorExecutable to the absolute path of Code.exe in settings.json."
-            );
-        }
-
+        string executable = EditorExecutableResolver.Resolve(SettingsStore.Read().EditorExecutable);
         ProcessStartInfo startInfo = new(executable)
         {
             UseShellExecute = false,
-            WorkingDirectory = Path.GetDirectoryName(executable)!,
+            WorkingDirectory = workspacePath,
         };
         startInfo.ArgumentList.Add("--new-window");
         startInfo.ArgumentList.Add(workspacePath);

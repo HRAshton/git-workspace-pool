@@ -44,7 +44,7 @@ public sealed class OpenPullRequestHandler
     /// <summary>
     /// Opens an existing or safely prepared PR workspace in the configured editor.
     /// </summary>
-    public async Task<OpenPullRequestResult> HandleAsync(
+    public async Task<OpenWorkspaceResult> HandleAsync(
         string requestUrl,
         CancellationToken cancellationToken
     )
@@ -97,11 +97,11 @@ public sealed class OpenPullRequestHandler
                 string parked = await _retained!.OpenAsync(
                     existing.OperationId, cancellationToken
                 );
-                return new OpenPullRequestResult(parked, true);
+                return new OpenWorkspaceResult(parked, true);
             }
         }
 
-        OpenPullRequestResult result = await _acquisition.AcquireAsync(
+        OpenWorkspaceResult result = await _acquisition.AcquireAsync(
             request,
             registration,
             cancellationToken

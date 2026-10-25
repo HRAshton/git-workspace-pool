@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Git Workspace Pool - Open Git Branch
 // @namespace    https://github.com/HRAshton/git-workspace-pool
-// @version      0.1.0
+// @version      0.2.0
 // @description  Open a configured Git repository and branch locally, without a PR or API.
 // @match        https://bitbucket.example.com/*
 // @grant        none
@@ -33,7 +33,7 @@
         'padding:10px 16px;border:1px solid #6e7681;border-radius:8px;' +
         'background:#238636;color:#fff;font:600 14px system-ui;cursor:pointer';
     button.addEventListener('click', () => {
-        const repo = window.prompt('Configured HTTPS Git clone URL (no username/password in URL):');
+        const repo = window.prompt('Git clone URL (HTTPS or SSH; unknown repositories open registration):');
         if (!repo?.trim()) {
             return;
         }

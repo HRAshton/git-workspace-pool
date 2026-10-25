@@ -29,8 +29,8 @@ public sealed class SingleInstanceProcessE2ETests
         try
         {
             await WaitForReadyAsync(ready, primary, timeout.Token);
-            string url = "https://github.com/owner/repo/pull/17";
-            string message = "prworkspace://open?url=" + Uri.EscapeDataString(url) + "&v=1";
+            string url = "ssh://git@example.com:7999/team/repo.git";
+            string message = GitBranchProtocolTests.Link(url, "feature/task");
             using Process secondary = StartTray("--ipc-e2e-forward", nonce, message);
 
             await secondary.WaitForExitAsync(timeout.Token);
@@ -40,8 +40,9 @@ public sealed class SingleInstanceProcessE2ETests
 
             string forwarded = File.ReadAllText(received);
             Assert.Equal(message, forwarded);
-            Assert.True(OpenRequestProtocol.TryExtract(forwarded, out string parsed));
-            Assert.Equal(url, parsed);
+            Assert.True(GitBranchProtocol.TryParse(forwarded, out var parsed));
+            Assert.Equal(url, parsed.CloneUrl);
+            Assert.Equal("feature/task", parsed.Branch);
         }
         finally
         {
@@ -68,9 +69,7 @@ public sealed class SingleInstanceProcessE2ETests
         try
         {
             await WaitForReadyAsync(ready, primary, timeout.Token);
-            string message = "prworkspace://open?url="
-                + Uri.EscapeDataString("https://github.com/owner/repo/pull/17")
-                + "&v=1";
+            string message = GitBranchProtocolTests.Link("git@example.com:team/repo.git", "master");
             using Process secondary = StartTray("--ipc-e2e-forward", nonce, message);
             await secondary.WaitForExitAsync(timeout.Token);
             Assert.Equal(1, secondary.ExitCode);
