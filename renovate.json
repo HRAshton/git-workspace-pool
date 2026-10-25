@@ -1,0 +1,37 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "timezone": "Europe/Belgrade",
+  "schedule": [
+    "* * * * 1"
+  ],
+  "prCreation": "immediate",
+  "automergeType": "pr",
+  "platformAutomerge": false,
+  "automergeStrategy": "squash",
+  "packageRules": [
+    {
+      "description": "Create exactly one Monday group for all non-major upgrades; a single available update is sufficient. Merge only when GitHub checks are green.",
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "pin",
+        "digest"
+      ],
+      "groupName": "weekly non-major dependencies",
+      "groupSlug": "weekly-non-major",
+      "minimumGroupSize": 1,
+      "groupSingleUpdates": true,
+      "automerge": true
+    },
+    {
+      "description": "Major upgrades require manual review, never automerge.",
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "automerge": false
+    }
+  ]
+}

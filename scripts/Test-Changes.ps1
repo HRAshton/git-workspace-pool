@@ -38,6 +38,7 @@ try {
     Invoke-Checked git @('diff', '--check')
     Invoke-Checked node @('--check', 'userscript/git-branch-workspace.user.js')
     Invoke-Checked node @('userscript/git-branch-workspace.test.cjs')
+    Invoke-Checked node @('scripts/Test-RenovateConfig.cjs')
     # Parse every script, including packaging and negative test fixtures, before a build.
     foreach ($script in Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.ps1') {
         $tokens = $null
