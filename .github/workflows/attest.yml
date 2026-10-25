@@ -1,15 +1,20 @@
 name: Attested Windows candidate
 
-# Explicit distribution builds only; PR CI is the single automatic validation gate.
+# A change to this workflow on trusted main publishes one testing prerelease.
+# Later candidates are deliberately opt-in via workflow_dispatch on main.
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/attest.yml'
 
 permissions:
   contents: read
 
 concurrency:
   group: attested-candidate-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   candidate:
@@ -34,27 +39,140 @@ jobs:
         shell: pwsh
         run: |
           & ./scripts/Test-Changes.ps1 -IncludeSlow -IncludePackage -OutputDirectory (Join-Path $env:RUNNER_TEMP 'gwp-attested')
-      - name: Attest the verified ZIP with SLSA provenance
-        id: attest
+          if ($LASTEXITCODE -ne 0) { throw 'Candidate test and package validation failed.' }
+      - name: Stage standalone EXE and its checksum
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dist = Join-Path $env:RUNNER_TEMP 'gwp-attested/artifacts'
+          $exe = Join-Path $dist 'package/app/GitWorkspacePool.Tray.exe'
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'Single-file Windows EXE missing from verified package.' }
+          $copy = Join-Path $dist 'GitWorkspacePool.Tray.exe'
+          Copy-Item -LiteralPath $exe -Destination $copy
+          $hash = (Get-FileHash -LiteralPath $copy -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -LiteralPath ($copy + '.sha256') -Value "$hash  GitWorkspacePool.Tray.exe" -Encoding ascii
+      - name: Attest verified ZIP (SLSA provenance)
+        id: attest-zip
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
           subject-path: ${{ runner.temp }}/gwp-attested/artifacts/GitWorkspacePool-win-x64-0.1.0-rc.2.zip
-      - name: Verify repository, workflow, source ref and exact commit
+      - name: Attest standalone Windows EXE (SLSA provenance)
+        id: attest-exe
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: ${{ runner.temp }}/gwp-attested/artifacts/GitWorkspacePool.Tray.exe
+      - name: Verify signer, source ref, commit and both artifact digests
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $zip = Join-Path $env:RUNNER_TEMP 'gwp-attested/artifacts/GitWorkspacePool-win-x64-0.1.0-rc.2.zip'
-          gh attestation verify $zip --repo HRAshton/git-workspace-pool --signer-workflow HRAshton/git-workspace-pool/.github/workflows/attest.yml --source-ref refs/heads/main --source-digest $env:GITHUB_SHA --deny-self-hosted-runners --bundle '${{ steps.attest.outputs.bundle-path }}'
-          if ($LASTEXITCODE -ne 0) { throw 'Candidate attestation verification failed.' }
-      - name: Archive candidate, provenance and verification guidance
+          $ErrorActionPreference = 'Stop'
+          $dist = Join-Path $env:RUNNER_TEMP 'gwp-attested/artifacts'
+          $zip = Join-Path $dist 'GitWorkspacePool-win-x64-0.1.0-rc.2.zip'
+          $exe = Join-Path $dist 'GitWorkspacePool.Tray.exe'
+          $args = @('--repo', 'HRAshton/git-workspace-pool',
+              '--signer-workflow', 'HRAshton/git-workspace-pool/.github/workflows/attest.yml',
+              '--source-ref', 'refs/heads/main', '--source-digest', $env:GITHUB_SHA,
+              '--deny-self-hosted-runners')
+          gh attestation verify $zip @args --bundle '${{ steps.attest-zip.outputs.bundle-path }}'
+          if ($LASTEXITCODE -ne 0) { throw 'ZIP attestation verification failed.' }
+          gh attestation verify $exe @args --bundle '${{ steps.attest-exe.outputs.bundle-path }}'
+          if ($LASTEXITCODE -ne 0) { throw 'EXE attestation verification failed.' }
+          Copy-Item -LiteralPath '${{ steps.attest-zip.outputs.bundle-path }}' -Destination ($zip + '.sigstore.json')
+          Copy-Item -LiteralPath '${{ steps.attest-exe.outputs.bundle-path }}' -Destination ($exe + '.sigstore.json')
+      - name: Export signed SLSA attestation in JSONL release format
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dist = Join-Path $env:RUNNER_TEMP 'gwp-attested/artifacts'
+          $zip = Join-Path $dist 'GitWorkspacePool-win-x64-0.1.0-rc.2.zip'
+          $sha = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          Push-Location $dist
+          try {
+            gh attestation download $zip --repo HRAshton/git-workspace-pool --predicate-type 'https://slsa.dev/provenance/v1'
+            if ($LASTEXITCODE -ne 0) { throw 'Could not retrieve signed SLSA provenance from GitHub.' }
+            $downloaded = Join-Path $dist ("sha256-" + $sha + ".jsonl")
+            if (-not (Test-Path -LiteralPath $downloaded)) { throw 'GitHub did not return the attestation JSONL.' }
+            $bundle = $zip + '.intoto.jsonl'
+            Move-Item -LiteralPath $downloaded -Destination $bundle
+            gh attestation verify $zip --repo HRAshton/git-workspace-pool --bundle $bundle --signer-workflow HRAshton/git-workspace-pool/.github/workflows/attest.yml --source-ref refs/heads/main --source-digest $env:GITHUB_SHA --deny-self-hosted-runners
+            if ($LASTEXITCODE -ne 0) { throw 'Exported SLSA JSONL verification failed.' }
+          } finally { Pop-Location }
+      - name: Archive attested ZIP, standalone EXE, checksums and provenance
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: GitWorkspacePool-attested-candidate
           path: |
             ${{ runner.temp }}/gwp-attested/artifacts/*.zip
+            ${{ runner.temp }}/gwp-attested/artifacts/*.exe
             ${{ runner.temp }}/gwp-attested/artifacts/*.sha256
+            ${{ runner.temp }}/gwp-attested/artifacts/*.sigstore.json
+            ${{ runner.temp }}/gwp-attested/artifacts/*.intoto.jsonl
             ${{ runner.temp }}/gwp-attested/artifacts/package/PACKAGE_MANIFEST.json
-            ${{ steps.attest.outputs.bundle-path }}
           if-no-files-found: error
           retention-days: 30
+
+  publish-preview:
+    needs: candidate
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Download attested candidate from this exact workflow run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          gh run download "${{ github.run_id }}" --repo "${{ github.repository }}" --name GitWorkspacePool-attested-candidate --dir release-assets
+      - name: Re-verify downloaded EXE and ZIP before publishing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-assets
+          sha256sum -c GitWorkspacePool-win-x64-0.1.0-rc.2.zip.sha256
+          sha256sum -c GitWorkspacePool.Tray.exe.sha256
+          for artifact in GitWorkspacePool-win-x64-0.1.0-rc.2.zip GitWorkspacePool.Tray.exe; do
+            gh attestation verify "$artifact" \
+              --repo "${{ github.repository }}" \
+              --signer-workflow HRAshton/git-workspace-pool/.github/workflows/attest.yml \
+              --source-ref refs/heads/main \
+              --source-digest "${{ github.sha }}" \
+              --deny-self-hosted-runners \
+              --bundle "$artifact.sigstore.json"
+          done
+          gh attestation verify GitWorkspacePool-win-x64-0.1.0-rc.2.zip \
+            --repo "${{ github.repository }}" \
+            --signer-workflow HRAshton/git-workspace-pool/.github/workflows/attest.yml \
+            --source-ref refs/heads/main --source-digest "${{ github.sha }}" \
+            --deny-self-hosted-runners \
+            --bundle GitWorkspacePool-win-x64-0.1.0-rc.2.zip.intoto.jsonl
+      - name: Publish explicitly marked testing prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="preview-${{ github.run_id }}-${{ github.run_attempt }}"
+          notes="Unsigned Windows application testing preview. Built from ${{ github.sha }} with Windows CI, package smoke tests and independently verified GitHub/Sigstore SLSA provenance. This is NOT a production release or Authenticode-signed executable. Download the ZIP for installer/browser integration, or the standalone EXE for quick launch. Verify downloads using the published SHA-256 and provenance bundles as documented in docs/ATTESTATION.md. Installed Windows acceptance remains open in issue #39."
+          gh release create "$tag" \
+            release-assets/GitWorkspacePool-win-x64-0.1.0-rc.2.zip \
+            release-assets/GitWorkspacePool-win-x64-0.1.0-rc.2.zip.sha256 \
+            release-assets/GitWorkspacePool-win-x64-0.1.0-rc.2.zip.sigstore.json \
+            release-assets/GitWorkspacePool-win-x64-0.1.0-rc.2.zip.intoto.jsonl \
+            release-assets/GitWorkspacePool.Tray.exe \
+            release-assets/GitWorkspacePool.Tray.exe.sha256 \
+            release-assets/GitWorkspacePool.Tray.exe.sigstore.json \
+            release-assets/package/PACKAGE_MANIFEST.json \
+            --repo "${{ github.repository }}" --target "${{ github.sha }}" \
+            --prerelease --latest=false \
+            --title "Attested Windows testing preview ($tag)" \
+            --notes "$notes"
