@@ -70,13 +70,18 @@ public sealed class RefreshConfiguredBaselinesService
             int discoveryBudget = 4;
             bool discoveryMoreDue = false;
             HashSet<string> discoveryKeys = new(StringComparer.Ordinal);
-            foreach (GitRepositoryRegistration repository in repositories)
+            // A bounded pass must not let repeatedly due early repositories starve
+            // an uninspected repository when the interval is shorter than a full sweep.
+            foreach (GitRepositoryRegistration repository in repositories.OrderBy(repository =>
+            {
+                string key = DiscoveryKey(repository);
+                return _discoveries.TryGetValue(key, out Discovery? previous) ? previous.AttemptedAt : DateTimeOffset.MinValue;
+            }))
             {
                 IReadOnlyList<string> branches = repository.BaselineBranches;
                 if (repository.BaselinePatterns is not null)
                 {
-                    string discoveryKey = repository.RepositoryIdentity + "\0" + repository.LocalPath + "\0"
-                        + string.Join("\0", repository.BaselinePatterns);
+                    string discoveryKey = DiscoveryKey(repository);
                     discoveryKeys.Add(discoveryKey);
                     if (repository.BaselinePatterns.Count == 0) branches = [];
                     else
@@ -133,7 +138,13 @@ public sealed class RefreshConfiguredBaselinesService
             {
                 lock (_gate) return force || !_latest.TryGetValue(item.Key, out BaselineRefreshStatus? status)
                     || now - status.AttemptedAt >= TimeSpan.FromMinutes(intervalMinutes);
-            }).ToArray();
+            }).OrderBy(item =>
+            {
+                // Serve never-attempted refs first, then the oldest attempts. Failure
+                // backoff still applies above; no newer ref jumps ahead indefinitely.
+                lock (_gate) return _latest.TryGetValue(item.Key, out BaselineRefreshStatus? status)
+                    ? status.AttemptedAt : DateTimeOffset.MinValue;
+            }).ThenBy(item => item.Key, StringComparer.Ordinal).ToArray();
             List<BaselineRefreshStatus> attempts = [];
             foreach (var item in due.Take(4))
             {
@@ -166,4 +177,7 @@ public sealed class RefreshConfiguredBaselinesService
         }
         finally { _running.Release(); }
     }
+    private static string DiscoveryKey(GitRepositoryRegistration repository) => repository.RepositoryIdentity + "\0"
+        + repository.LocalPath + "\0" + string.Join("\0", repository.BaselinePatterns ?? []);
+
 }
