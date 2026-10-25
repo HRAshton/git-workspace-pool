@@ -1,6 +1,5 @@
 using System.Security.Cryptography;
 using System.Text;
-using GitWorkspacePool.Infrastructure.Snapshots;
 
 namespace GitWorkspacePool.Infrastructure.Configuration;
 
@@ -22,7 +21,7 @@ public sealed class AtomicConfigurationFile
     /// <summary>Reads a bounded UTF-8 file and fingerprints the exact bytes, including any BOM.</summary>
     public ConfigurationSnapshot Read()
     {
-        WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(_path);
+        WorkspacePathSafety.EnsureNoLinksInAncestors(_path);
         using FileStream stream = new(_path, FileMode.Open, FileAccess.Read, FileShare.Read);
         long length = stream.Length;
         if (length > MaxBytes)
@@ -43,9 +42,9 @@ public sealed class AtomicConfigurationFile
         {
             throw new InvalidOperationException("Settings exceed the 1 MiB safety limit.");
         }
-        WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(_path);
-        WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(_path + ".lock");
-        WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(_path + ".previous");
+        WorkspacePathSafety.EnsureNoLinksInAncestors(_path);
+        WorkspacePathSafety.EnsureNoLinksInAncestors(_path + ".lock");
+        WorkspacePathSafety.EnsureNoLinksInAncestors(_path + ".previous");
         using FileStream ownership = new(_path + ".lock", FileMode.OpenOrCreate,
             FileAccess.ReadWrite, FileShare.None);
         ConfigurationSnapshot current = Read();

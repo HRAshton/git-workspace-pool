@@ -1,9 +1,7 @@
 name: Attested Windows candidate
 
-# Only trusted main builds receive the identity used for candidate provenance.
+# Explicit distribution builds only; PR CI is the single automatic validation gate.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:

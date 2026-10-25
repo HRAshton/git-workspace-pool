@@ -8,7 +8,7 @@ namespace GitWorkspacePool.Infrastructure;
 /// <summary>
 /// Runs bounded Git CLI commands without shell expansion.
 /// </summary>
-public sealed class GitCliWorkspaceGit : IWorkspaceGit, IGitRemoteReader, IGitBranchFetcher, IGitBranchPreview, IGitBaselineFetcher, IGitRemoteBranchReader
+public sealed class GitCliWorkspaceGit
 {
     /// <inheritdoc/>
     public async Task<bool> IsRegisteredWorktreeAsync(
@@ -57,9 +57,9 @@ public sealed class GitCliWorkspaceGit : IWorkspaceGit, IGitRemoteReader, IGitBr
     public async Task ValidateSourceCloneAsync(string repositoryPath, CancellationToken cancellationToken)
     {
         string source = Path.TrimEndingDirectorySeparator(Path.GetFullPath(repositoryPath));
-        Snapshots.WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(source);
+        WorkspacePathSafety.EnsureNoLinksInAncestors(source);
         string gitDirectory = (await RunAsync(source, ["rev-parse", "--absolute-git-dir"], cancellationToken)).Trim();
-        Snapshots.WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(gitDirectory);
+        WorkspacePathSafety.EnsureNoLinksInAncestors(gitDirectory);
         string bare = (await RunAsync(source, ["rev-parse", "--is-bare-repository"], cancellationToken)).Trim();
         StringComparison comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         if (bare == "true")
@@ -85,48 +85,13 @@ public sealed class GitCliWorkspaceGit : IWorkspaceGit, IGitRemoteReader, IGitBr
         return await FetchBranchToRefAsync(repositoryPath, branch, targetRef, cancellationToken);
     }
 
-    /// <inheritdoc/>
-    public Task<string> FetchBranchPreviewAsync(string repositoryPath, string branch, CancellationToken cancellationToken)
-    {
-        string identity = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(branch)));
-        return FetchBranchToRefAsync(repositoryPath, branch, "refs/git-workspace-pool/previews/" + identity, cancellationToken);
-    }
-
-    /// <inheritdoc/>
-    public Task<string> FetchBaselineCommitAsync(string repositoryPath, string branch, CancellationToken cancellationToken)
-    {
-        string identity = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(branch)));
-        return FetchBranchToRefAsync(repositoryPath, branch, "refs/git-workspace-pool/baselines/" + identity, cancellationToken);
-    }
-
-    /// <inheritdoc/>
-    public async Task<IReadOnlyList<string>> ListRemoteBranchesAsync(string repositoryPath, CancellationToken cancellationToken)
-    {
-        await EnsureSafeFetchConfigurationAsync(repositoryPath, cancellationToken);
-        string output = await RunAsync(repositoryPath,
-            ["-c", "http.followRedirects=false", "ls-remote", "--heads", "--refs", "origin"], cancellationToken);
-        List<string> branches = [];
-        foreach (string line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-        {
-            string[] fields = line.TrimEnd('\r').Split('\t');
-            if (fields.Length != 2 || fields[0].Length is not (40 or 64) || !fields[0].All(Uri.IsHexDigit)
-                || !fields[1].StartsWith("refs/heads/", StringComparison.Ordinal))
-                throw new InvalidOperationException("Unexpected advertised Git head.");
-            string branch = fields[1]["refs/heads/".Length..];
-            if (!GitBranchRequest.IsSafeBranch(branch) || branches.Count >= 10000)
-                throw new InvalidOperationException("Unsafe or excessive advertised branch inventory.");
-            branches.Add(branch);
-        }
-        return branches;
-    }
-
     /// <summary>Creates a new bare source clone only at an absent, independently selected path.</summary>
     public async Task CloneBareAsync(string cloneUrl, string destination, CancellationToken cancellationToken)
     {
         _ = GitBranchRequest.NormalizeCloneUrl(cloneUrl);
         string path = Path.GetFullPath(destination);
         string parent = Path.GetDirectoryName(path) ?? throw new InvalidOperationException("Choose a clone folder.");
-        Snapshots.WorkspaceSnapshotPathPolicy.EnsureNoLinksInAncestors(path);
+        WorkspacePathSafety.EnsureNoLinksInAncestors(path);
         if (Directory.Exists(path) || File.Exists(path)) throw new InvalidOperationException("Clone destination is occupied; nothing was overwritten.");
         Directory.CreateDirectory(parent);
         await EnsureSafeFetchConfigurationAsync(parent, cancellationToken);
@@ -184,23 +149,6 @@ public sealed class GitCliWorkspaceGit : IWorkspaceGit, IGitRemoteReader, IGitBr
         await RunAsync(
             repositoryPath,
             ["worktree", "add", "--detach", workspacePath, commitSha],
-            cancellationToken
-        );
-    }
-
-    /// <summary>
-    /// Moves a registered worktree through Git so its administrative metadata stays valid.
-    /// </summary>
-    public static async Task MoveWorktreeAsync(
-        string repository,
-        string source,
-        string destination,
-        CancellationToken cancellationToken
-    )
-    {
-        await RunAsync(
-            repository,
-            ["worktree", "move", source, destination],
             cancellationToken
         );
     }

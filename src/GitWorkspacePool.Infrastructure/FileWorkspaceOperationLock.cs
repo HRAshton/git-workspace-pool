@@ -28,7 +28,8 @@ public sealed class FileWorkspaceOperationLock : IWorkspaceOperationLock
     )
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(workspacePath);
-        string canonicalPath = Path.GetFullPath(workspacePath).ToUpperInvariant();
+        string canonicalPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(workspacePath));
+        if (OperatingSystem.IsWindows()) canonicalPath = canonicalPath.ToUpperInvariant();
         string name = Convert.ToHexString(
             SHA256.HashData(Encoding.UTF8.GetBytes(canonicalPath))
         );

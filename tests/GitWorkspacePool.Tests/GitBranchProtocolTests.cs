@@ -19,7 +19,6 @@ public sealed class GitBranchProtocolTests
         Assert.True(GitBranchProtocol.TryParse(Link(Repo, branch), out GitBranchRequest? request));
         Assert.Equal(Repo, request.CloneUrl);
         Assert.Equal(branch, request.Branch);
-        Assert.False(OpenRequestProtocol.TryExtract(Link(Repo, branch), out _));
     }
 
     [Theory]

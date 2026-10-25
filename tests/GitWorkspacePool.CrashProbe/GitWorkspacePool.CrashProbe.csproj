@@ -6,6 +6,5 @@
     <ItemGroup>
         <ProjectReference Include="../../src/GitWorkspacePool.Core/GitWorkspacePool.Core.csproj" />
         <ProjectReference Include="../../src/GitWorkspacePool.Infrastructure/GitWorkspacePool.Infrastructure.csproj" />
-        <ProjectReference Include="../GitWorkspacePool.LegacyTestSupport/GitWorkspacePool.LegacyTestSupport.csproj" />
     </ItemGroup>
 </Project>

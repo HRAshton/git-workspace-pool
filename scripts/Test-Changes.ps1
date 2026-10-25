@@ -49,24 +49,13 @@ try {
     }
     Invoke-Checked dotnet @('restore', 'GitWorkspacePool.slnx')
     Invoke-Checked dotnet @('build', 'GitWorkspacePool.slnx', '--configuration', 'Release', '--no-restore', '-p:ContinuousIntegrationBuild=true')
-    $filters = @(
-        'Category!=FastE2E&Category!=SlowE2E',
-        'Category=FastE2E',
-        'FullyQualifiedName~Release_RealProcessKillAtBothDurableBoundariesNeverLosesParkedUserWork|FullyQualifiedName~ReadySlot_RealProcessKillAtEachBoundaryPreservesBothOwners'
-    )
-    if ($IncludeSlow) {
-        # SlowE2E already contains the focused handoff kill tests.
-        $filters = @($filters[0], $filters[1], 'Category=SlowE2E')
-    }
-    foreach ($filter in $filters) {
-        Invoke-Checked dotnet @('test', $tests, '--configuration', 'Release', '--no-build', '--no-restore', '--filter', $filter)
-    }
+    Invoke-Checked dotnet @('test', $tests, '--configuration', 'Release', '--no-build', '--no-restore')
     if ($IncludePackage) {
         $output = [System.IO.Path]::GetFullPath($OutputDirectory)
         $packageRoot = Join-Path $output 'artifacts'
         & "$PSScriptRoot/Test-RC2Prerequisites-Fixture.ps1" -TestRoot (Join-Path $output 'prerequisites')
-        & "$PSScriptRoot/Build-WindowsPackage.ps1" -OutputDirectory $packageRoot -PackageBaseName 'GitWorkspacePool-win-x64-0.1.0-rc.2' -PackageVersion '0.1.0-rc.2' -ReleaseDocsPrefix 'RC2'
-        & "$PSScriptRoot/Test-WindowsPackage.ps1" -PackagePath (Join-Path $packageRoot 'GitWorkspacePool-win-x64-0.1.0-rc.2.zip') -TestRoot (Join-Path $output 'install') -RequiredDocs @('RC2_RELEASE_NOTES.md', 'RC2_ACCEPTANCE.md', 'RECOVERY.md', 'Test-RC2Prerequisites.ps1')
+        & "$PSScriptRoot/Build-WindowsPackage.ps1" -OutputDirectory $packageRoot -PackageBaseName 'GitWorkspacePool-win-x64-0.1.0-rc.2' -PackageVersion '0.1.0-rc.2'
+        & "$PSScriptRoot/Test-WindowsPackage.ps1" -PackagePath (Join-Path $packageRoot 'GitWorkspacePool-win-x64-0.1.0-rc.2.zip') -TestRoot (Join-Path $output 'install')
         & "$PSScriptRoot/Test-Backup-PerUserState.ps1" -PackageDirectory (Join-Path $packageRoot 'package') -TestRoot (Join-Path $output 'backup')
     }
     Write-Host 'Requested local validation passed. Installed browser/editor acceptance remains separate.'

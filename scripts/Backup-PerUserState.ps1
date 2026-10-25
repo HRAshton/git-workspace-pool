@@ -59,6 +59,9 @@ Assert-NoReparse $state
 Assert-NoReparse $settings
 
 $items = @(
+    @{ Source = (Join-Path $state 'warm-v1/workspaces.db'); Relative = 'state/warm-v1/workspaces.db' },
+    @{ Source = (Join-Path $state 'warm-v1/workspaces.db-wal'); Relative = 'state/warm-v1/workspaces.db-wal' },
+    @{ Source = (Join-Path $state 'warm-v1/workspaces.db-shm'); Relative = 'state/warm-v1/workspaces.db-shm' },
     @{ Source = (Join-Path $state 'sessions.db'); Relative = 'state/sessions.db' },
     @{ Source = (Join-Path $state 'sessions.db-wal'); Relative = 'state/sessions.db-wal' },
     @{ Source = (Join-Path $state 'sessions.db-shm'); Relative = 'state/sessions.db-shm' },

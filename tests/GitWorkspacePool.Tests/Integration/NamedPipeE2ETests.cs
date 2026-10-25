@@ -16,10 +16,8 @@ public sealed class NamedPipeE2ETests
     public async Task NamedPipe_TransportsBrowserProtocolRequestToReceiver()
     {
         string name = "GitWorkspacePool.E2E." + Guid.NewGuid().ToString("N");
-        string pullRequest = "https://github.com/owner/repo/pull/17";
-        string message = "prworkspace://open?url="
-            + Uri.EscapeDataString(pullRequest)
-            + "&v=1";
+        string pullRequest = "https://github.com/owner/repo.git";
+        string message = GitBranchProtocolTests.Link(pullRequest, "feature/task");
 
         TaskCompletionSource<string> received = new(
             TaskCreationOptions.RunContinuationsAsynchronously
@@ -36,7 +34,8 @@ public sealed class NamedPipeE2ETests
         await client.SendAsync(name, message, shutdown.Token);
         string forwarded = await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-        Assert.True(OpenRequestProtocol.TryExtract(forwarded, out string requestUrl));
+        Assert.True(GitBranchProtocol.TryParse(forwarded, out var parsed));
+        string requestUrl = parsed.CloneUrl;
         Assert.Equal(pullRequest, requestUrl);
 
         await shutdown.CancelAsync();

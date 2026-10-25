@@ -48,13 +48,12 @@ internal sealed class SettingsStore : IGitBranchCatalog
             JsonOptions
         );
 
-        if (settings is null || settings.SnapshotLimits is null)
+        if (settings is null)
         {
-            throw new InvalidOperationException("Invalid settings.json or SnapshotLimits.");
+            throw new InvalidOperationException("Invalid settings.json.");
         }
 
         ValidateLimits(settings);
-        settings.SnapshotLimits.Validate();
         if (settings.GitRepositories is null) throw new InvalidOperationException("Invalid GitRepositories settings.");
         foreach (GitRepositoryRegistration repository in settings.GitRepositories)
         {
@@ -73,13 +72,15 @@ internal sealed class SettingsStore : IGitBranchCatalog
     public static string Save(AppSettings settings, string expectedFingerprint)
     {
         ValidateLimits(settings);
-        settings.SnapshotLimits.Validate();
         HashSet<string> urls = new(StringComparer.Ordinal);
         foreach (GitRepositoryRegistration repository in settings.GitRepositories)
         {
             string url = GitBranchRequest.NormalizeCloneUrl(repository.CloneUrl);
             if (!urls.Add(url)) throw new InvalidOperationException("Each Git clone URL must be registered once.");
             ValidatePaths(repository.LocalPath, repository.WorkspaceRoot);
+            if (repository.ArtifactInputs is null || repository.BaselineBranches is null
+                || repository.BaselineBranches.Any(branch => !GitBranchRequest.IsSafeBranch(branch)))
+                throw new InvalidOperationException("Use literal manual branch names and artifact input paths.");
         }
         if (!string.IsNullOrWhiteSpace(settings.EditorExecutable)
             && !settings.EditorExecutable.Equals("code.exe", StringComparison.OrdinalIgnoreCase)
@@ -93,11 +94,7 @@ internal sealed class SettingsStore : IGitBranchCatalog
 
     private static void ValidateLimits(AppSettings settings)
     {
-        if (settings.GitRepositories is null || settings.SnapshotLimits is null)
-            throw new InvalidOperationException("Repository lists and snapshot limits cannot be null.");
-        if (settings.StorageWarningLimits is null) throw new InvalidOperationException("Storage warning settings cannot be null.");
-        settings.StorageWarningLimits.Validate();
-        RefreshConfiguredBaselinesService.Validate(settings.GitRepositories, settings.BaselineRefreshMinutes);
+        if (settings.GitRepositories is null) throw new InvalidOperationException("Repository list cannot be null.");
         if (settings.OperationTimeoutMinutes is < 1 or > 120)
             throw new InvalidOperationException("Operation timeout must be between 1 and 120 minutes.");
     }
@@ -106,7 +103,7 @@ internal sealed class SettingsStore : IGitBranchCatalog
     {
         if (!Path.IsPathFullyQualified(source) || !Path.IsPathFullyQualified(root) || !Directory.Exists(source))
             throw new InvalidOperationException("Use absolute paths and an existing local clone.");
-        new WorkspaceReadySlotSafety().EnsureSafe(source, root, Path.Combine(root, "settings-preflight"));
+        new ManagedWorkspacePaths().EnsureSafe(source, root, Path.Combine(root, "settings-preflight"));
     }
 
 }

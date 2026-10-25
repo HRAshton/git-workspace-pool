@@ -172,9 +172,10 @@ internal static class GitProcessSafety
                 || name.EndsWith(".smudge", StringComparison.OrdinalIgnoreCase)
                 || name.EndsWith(".clean", StringComparison.OrdinalIgnoreCase);
 
-            // Even a globally configured LFS filter cannot run: Configure()
+            // Filter subsection names are case-sensitive. Only lowercase lfs is disabled.
+            // Even a globally configured lowercase LFS filter cannot run: Configure()
             // overrides its process/smudge commands with empty values.
-            if (executable && !name.StartsWith("filter.lfs.", StringComparison.OrdinalIgnoreCase))
+            if (executable && !name.StartsWith("filter.lfs.", StringComparison.Ordinal))
             {
                 throw new InvalidOperationException(
                     "The Git clone configures an external filter driver. "

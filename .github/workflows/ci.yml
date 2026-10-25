@@ -18,6 +18,7 @@ permissions:
 jobs:
   build-and-test:
     runs-on: windows-latest
+    timeout-minutes: 35
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -29,6 +30,8 @@ jobs:
           global-json-file: global.json
       - name: Build and validate milestone (same entry point as local pre-push)
         shell: pwsh
+        env:
+          GWP_BENCHMARK_REPORT: ${{ runner.temp }}/synthetic-warm-benchmark.json
         run: |
           if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
             & ./scripts/Test-Changes.ps1 -IncludeSlow
@@ -41,6 +44,7 @@ jobs:
           $output = Join-Path $env:RUNNER_TEMP "gwp-preview-package"
           & ./scripts/Build-WindowsPackage.ps1 -OutputDirectory $output
           & ./scripts/Test-WindowsPackage.ps1 -PackagePath (Join-Path $output "GitWorkspacePool-win-x64-preview.zip") -TestRoot (Join-Path $env:RUNNER_TEMP "gwp-preview-smoke")
+          & ./scripts/Test-Backup-PerUserState.ps1 -PackageDirectory (Join-Path $output 'package') -TestRoot (Join-Path $env:RUNNER_TEMP 'gwp-backup-smoke')
       - name: Attach verified Windows preview ZIP
         if: github.event_name == 'pull_request'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -52,3 +56,10 @@ jobs:
             ${{ runner.temp }}/gwp-preview-package/package/PACKAGE_MANIFEST.json
           if-no-files-found: error
           retention-days: 14
+      - name: Preserve synthetic benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: synthetic-warm-benchmark
+          path: ${{ runner.temp }}/synthetic-warm-benchmark.json
+          if-no-files-found: warn
