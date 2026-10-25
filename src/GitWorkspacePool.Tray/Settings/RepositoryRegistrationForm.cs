@@ -12,10 +12,10 @@ internal sealed class RepositoryRegistrationForm : Form
     private readonly TextBox _patterns = new() { Dock = DockStyle.Fill, Multiline = true, Height = 70, Text = "main" };
     private readonly CheckBox _create = new() { AutoSize = true, Checked = true, Text = "Create a new bare clone (Git object store, no working files)" };
 
-    public RepositoryRegistrationForm(string? cloneUrl)
+    public RepositoryRegistrationForm(string? cloneUrl, string? requestedBranch = null)
     {
-        Text = cloneUrl is null ? "Register Git repository" : "Repository is not registered";
-        Width = 800; Height = 450; MinimumSize = new(650, 400);
+        Text = cloneUrl is null ? "Register Git repository" : "Approve repository from browser link";
+        Width = 800; Height = cloneUrl is null ? 450 : 365; MinimumSize = new(650, 340);
         StartPosition = FormStartPosition.CenterScreen;
         _url.Text = cloneUrl ?? "";
         _url.ReadOnly = cloneUrl is not null;
@@ -31,17 +31,21 @@ internal sealed class RepositoryRegistrationForm : Form
         Add(layout, "Source clone", _source, true);
         Add(layout, "Workspace root", _workspaces, true);
         Add(layout, "Clone mode", _create);
-        Add(layout, "Manual warm branches", _patterns);
+        if (cloneUrl is null) Add(layout, "Manual warm branches", _patterns);
         Label note = new() { AutoSize = true, MaximumSize = new(650, 0), Text =
-            "To use an existing normal or bare clone, clear Create a new bare clone and select its folder. "
+            (cloneUrl is null
+                ? "To use an existing normal or bare clone, clear Create a new bare clone and select its folder. "
+                : "This URL came from the browser link. Approve it only if you trust the Git server. "
+                    + "The app will clone into the shown new folder, register it, then open branch "
+                    + requestedBranch + ". To use an existing trusted source, clear the clone option and browse to it. ")
             + "SSH uses your configured agent and known_hosts; establish trust in a terminal first. "
             + "HTTPS uses your Git credential helper. No passwords are stored here. "
-            + "Confirming registers this repository and allows explicit branch preparation; no background fetches run." };
+            + "No repository scripts or background fetches will run." };
         int row = layout.RowCount++;
         layout.Controls.Add(note, 0, row); layout.SetColumnSpan(note, 3);
         FlowLayoutPanel actions = new() { Dock = DockStyle.Bottom, Height = 50, FlowDirection = FlowDirection.RightToLeft };
         Button cancel = new() { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true };
-        Button register = new() { Text = "Register repository", AutoSize = true };
+        Button register = new() { Text = cloneUrl is null ? "Register repository" : "Register and open", AutoSize = true };
         register.Click += (_, _) => Confirm();
         actions.Controls.AddRange([cancel, register]);
         Controls.Add(layout); Controls.Add(actions); AcceptButton = register; CancelButton = cancel;
