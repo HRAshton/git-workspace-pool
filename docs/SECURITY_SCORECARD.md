@@ -9,7 +9,7 @@ The live [OpenSSF Scorecard](https://scorecard.dev/viewer/?uri=github.com/HRAsht
 - [x] Pin external GitHub Actions to full immutable commit SHAs.
 - [x] Give CI read-only permissions by default; isolate elevated permissions to attestation and Scorecard publication jobs.
 - [x] Renovate is configured to propose one grouped non-major dependency PR each Monday (even when only one update exists) and automatically merge it after checks pass. Major upgrades remain manual. Renovate must also be installed on the repository for updates to run.
-- [x] Signed GitHub artifact *attestation/provenance* workflow for manually triggered candidate builds. This is not code-signing of the Windows executable.
+- [x] Signed GitHub/Sigstore SLSA attestation for Windows candidate ZIP **and executable**, with verification before publishing both to a prerelease. This is not Authenticode code-signing of the Windows executable.
 - [x] Scorecard job on `main` push and weekly, using GitHub OIDC to publish results and upload SARIF.
 - [x] CodeQL default setup is enabled in GitHub settings by the maintainer; the redundant custom CodeQL workflow has been removed. GitHub's default setup owns scanning frequency and languages.
 
@@ -23,7 +23,7 @@ These are **not enabled merely by committing files**. Confirm each in GitHub rep
 - [ ] Monitor [the latest measured Scorecard](https://github.com/HRAshton/git-workspace-pool/actions/runs/40211443714): **6.3/10** after introducing CodeQL, before removing the custom workflow in favor of GitHub-managed default setup. Verify default scanning coverage and review findings; SAST scoring measures recent commits and may change. Branch-Protection and Code-Review remain 0/10 until real governance controls exist.
 - [ ] Check authorship/licensing of repository image assets and any third-party snippets before claiming that the blanket first-party 0BSD declaration covers them.
 - [ ] Record installed Windows browser → repo/branch → editor acceptance and real monorepo warm/reopen vs fresh median/p95 as tracked in [issue #39](https://github.com/HRAshton/git-workspace-pool/issues/39).
-- [ ] For a public candidate, run the manually gated Windows attestation workflow from trusted `main` and verify source/digest/provenance before publishing.
+- [ ] Download the first attested testing prerelease, independently verify the ZIP and EXE provenance, and complete installed Windows acceptance. For later previews, run the attestation workflow manually from trusted `main`; it republishes only if cryptographic checks pass.
 
 The baseline score is measured, not a target or certification; it will evolve with CodeQL coverage, protected-branch reviews, project maturity, contributors, releases and vulnerability monitoring. Prefer genuine controls over badge-driven changes.
 
