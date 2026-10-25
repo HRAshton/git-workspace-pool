@@ -34,7 +34,7 @@ Expand-Archive -LiteralPath $PackagePath -DestinationPath $extracted
 
 # A candidate archive must contain the documented user safety procedures;
 # validate the actual ZIP contents, not only repository file existence.
-foreach ($document in @($RequiredDocs) + @('git-branch-workspace.user.js', 'RECOVERY.md', 'PACKAGE_MANIFEST.json', 'Test-PackageIntegrity.ps1', 'Test-RC2Prerequisites.ps1', 'ATTESTATION.md')) {
+foreach ($document in @($RequiredDocs) + @('git-branch-workspace.user.js', 'RECOVERY.md', 'LICENSE', 'PACKAGE_MANIFEST.json', 'Test-PackageIntegrity.ps1', 'Test-RC2Prerequisites.ps1', 'ATTESTATION.md')) {
     if ([System.IO.Path]::GetFileName($document) -ne $document) {
         throw "Unsafe RC documentation name: $document"
     }
