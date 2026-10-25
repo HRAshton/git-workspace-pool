@@ -31,7 +31,7 @@ Optional `ArtifactInputs` per registration accepts **literal repository-relative
 
 ## Validation
 
-`scripts/Test-Changes.ps1` builds once and runs the test suite once. PR CI adds a self-contained Windows package and isolated installer smoke test. Windows build/test CI runs on PRs; REUSE lint runs on PRs and main, while Scorecard runs on main and weekly. Candidate attestation is an explicit manual distribution operation.
+`scripts/Test-Changes.ps1` builds once and runs the test suite once. PR CI adds a self-contained Windows package and isolated installer smoke test. Windows build/test CI runs on PRs; REUSE lint runs on PRs and main, while Scorecard runs on main and weekly. GitHub-managed CodeQL default setup performs code scanning. Renovate is configured for grouped Monday dependency updates with non-major automerge after checks pass (requires the Renovate GitHub App). Candidate attestation is an explicit manual distribution operation.
 
 Tests cover real disposable Git transitions, assigned dirty/local-commit reopen, artifact collisions, ranking, durable SQLite ownership, concurrent locks, failure quarantine and killed application processes at intent/checkout publication boundaries. A synthetic 10,000-file benchmark reports median/p95 fresh, warm and reopen workspace-ready timings plus tracked-file timestamp changes and retained artifact bytes. Its artifact is evidence for that fixture only. **Full application timing on representative Windows repositories and installed browser-to-visible-editor Windows acceptance remain outstanding.** No real-world speedup is claimed.
 
