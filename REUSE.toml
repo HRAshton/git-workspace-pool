@@ -1,0 +1,9 @@
+# REUSE Specification 3.3: default license for first-party project files.
+# Keep file-specific SPDX headers when adding third-party or differently licensed works.
+version = 1
+
+[[annotations]]
+path = ["*", "**/*"]
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 HRAshton"
+SPDX-License-Identifier = "0BSD"

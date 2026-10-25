@@ -1,5 +1,8 @@
 # Git Workspace Pool
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/HRAshton/git-workspace-pool/badge)](https://scorecard.dev/viewer/?uri=github.com/HRAshton/git-workspace-pool)
+[![REUSE lint](https://github.com/HRAshton/git-workspace-pool/actions/workflows/reuse.yml/badge.svg)](https://github.com/HRAshton/git-workspace-pool/actions/workflows/reuse.yml)
+
 A Windows tray application that opens a trusted Git repository and branch in VS Code from a browser link:
 
 ```text
@@ -28,8 +31,14 @@ Optional `ArtifactInputs` per registration accepts **literal repository-relative
 
 ## Validation
 
-`scripts/Test-Changes.ps1` builds once and runs the test suite once. PR CI adds a self-contained Windows package and isolated installer smoke test. Automatic CI runs only on PRs; main does not repeat those gates. Candidate attestation is an explicit manual distribution operation.
+`scripts/Test-Changes.ps1` builds once and runs the test suite once. PR CI adds a self-contained Windows package and isolated installer smoke test. Windows build/test CI runs on PRs; REUSE lint runs on PRs and main, while Scorecard runs on main and weekly. Candidate attestation is an explicit manual distribution operation.
 
 Tests cover real disposable Git transitions, assigned dirty/local-commit reopen, artifact collisions, ranking, durable SQLite ownership, concurrent locks, failure quarantine and killed application processes at intent/checkout publication boundaries. A synthetic 10,000-file benchmark reports median/p95 fresh, warm and reopen workspace-ready timings plus tracked-file timestamp changes and retained artifact bytes. Its artifact is evidence for that fixture only. **Full application timing on representative Windows repositories and installed browser-to-visible-editor Windows acceptance remain outstanding.** No real-world speedup is claimed.
 
 The previous snapshot/parking implementation is preserved on [`archive/pre-in-place-rewrite`](https://github.com/HRAshton/git-workspace-pool/tree/archive/pre-in-place-rewrite). Historical documentation under [docs/archive](docs/archive) applies only to that version. See [architecture](docs/ARCHITECTURE.md), [recovery](docs/RECOVERY.md) and [roadmap](ROADMAP.md).
+
+## License and supply-chain status
+
+First-party source and documentation are licensed under the [Zero-Clause BSD License (0BSD)](LICENSE). File-level licensing is documented in [REUSE.toml](REUSE.toml) and [LICENSES/0BSD.txt](LICENSES/0BSD.txt), with an automated REUSE check. Third-party dependencies keep their own licenses.
+
+The dynamic [OpenSSF Scorecard](https://scorecard.dev/viewer/?uri=github.com/HRAshton/git-workspace-pool) is published after a Scorecard workflow run. See [prerelease security checklist](docs/SECURITY_SCORECARD.md) for controls requiring maintainer settings and [security reporting](SECURITY.md). A badge does not certify a release.
